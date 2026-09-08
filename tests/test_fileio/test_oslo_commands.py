@@ -352,3 +352,38 @@ def test_chief_angle_solve(tmp_path, set_test_backend):
     path.write_text(path.read_text().replace('RD -20', 'RD -20\nPUC .03'))
     optic = load_oslo_file(path, strict=True)
     assert_allclose(optic.paraxial.chief_ray()[1][2], .03, atol=1e-9)
+
+
+def test_explicit_field_table_signed_xy_weights_and_vignetting(tmp_path, set_test_backend):
+    path = simple_lens(tmp_path, system='ANG 10')
+    path.write_text(path.read_text() + 'RST NEW\nF 1 -.5 .25 0 0 0 -.8 .8 -.9 .9 2\nF 2 0 0 0 0 0 -1 1 -1 1 0\nEND\n')
+    optic = load_oslo_file(path, strict=True)
+    import math
+    assert len(optic.fields) == 2
+    assert_allclose(optic.fields[0].y, math.degrees(math.atan(-.5 * math.tan(math.radians(10)))))
+    assert_allclose(optic.fields[0].x, math.degrees(math.atan(.25 * math.tan(math.radians(10)))))
+    assert_allclose([optic.fields[0].vy, optic.fields[0].vx], [.2, .1])
+    assert [f.weight for f in optic.fields] == [2, 0]
+
+
+@pytest.mark.parametrize('footer', ['CFG NEW\nEND\n', 'RST NEW\nF 1 0 0 1 0 0 -1 1 -1 1 1\nEND\n'])
+def test_unsupported_configuration_and_field_aiming_are_diagnosed(tmp_path, footer):
+    path = simple_lens(tmp_path)
+    path.write_text(path.read_text() + footer)
+    with pytest.raises(ValueError, match='CFG|field'):
+        load_oslo_file(path, strict=True)
+
+
+@pytest.mark.parametrize('command,target', [('FNO 5', .1), ('PUK .1', .1)])
+def test_image_aperture_definitions_at_finite_conjugates(tmp_path, set_test_backend, command, target):
+    path = simple_lens(tmp_path, system=command)
+    path.write_text(path.read_text().replace('TH 1e20', 'TH 100'))
+    optic = load_oslo_file(path, strict=True)
+    assert_allclose(abs(optic.paraxial.marginal_ray()[1][-2]), target)
+
+
+def test_gaussian_image_height_uses_focal_plane(tmp_path, set_test_backend):
+    optic = load_oslo_file(simple_lens(tmp_path, system='GIH 2'), strict=True)
+    import math
+    expected = math.degrees(math.atan(2 / float(optic.paraxial.f2())))
+    assert_allclose(optic.fields[-1].y, abs(expected))

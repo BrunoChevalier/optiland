@@ -7,6 +7,7 @@ Kramer Harrison, 2026
 
 from __future__ import annotations
 
+import math
 import warnings
 from copy import deepcopy
 from typing import TYPE_CHECKING, Any
@@ -309,15 +310,24 @@ class OsloToOpticConverter(BaseOpticReader):
 
     def _configure_aperture(self) -> None:
         aperture_data = self.data.aperture
+        if (
+            "FNO" in aperture_data
+            and self.optic.object_surface.is_infinite
+            and float(
+                self.optic.surfaces[-1]
+                .material_pre.n(self.optic.primary_wavelength)
+                .item()
+            )
+            == 1.0
+        ):
+            self.optic.set_aperture("imageFNO", aperture_data["FNO"])
+            return
         if "EPD" in aperture_data:
             self.optic.set_aperture("EPD", aperture_data["EPD"] * self.data.units)
 
-        if "FNO" in aperture_data:
-            self.optic.set_aperture("imageFNO", aperture_data["FNO"])
-
         if "NAO" in aperture_data:
             self.optic.set_aperture("objectNA", aperture_data["NAO"])
-        if "NAP" in aperture_data:
+        if any(key in aperture_data for key in ("NAP", "FNO", "PUK")):
             # OSLO's image NA is an aplanatic paraxial specification. Scale a
             # unit pupil using its image-space reduced slope (n * u).
             self.optic.set_aperture("EPD", 1.0)
@@ -326,9 +336,14 @@ class OsloToOpticConverter(BaseOpticReader):
                 self.optic.primary_wavelength
             )
             reduced_slope = abs(float((n_image * slopes[-2]).item()))
+            target = aperture_data.get("NAP")
+            if "FNO" in aperture_data:
+                target = 1 / (2 * aperture_data["FNO"])
+            elif "PUK" in aperture_data:
+                target = aperture_data["PUK"] * float(n_image.item())
             if reduced_slope == 0:
                 raise ValueError("NAP cannot define an aperture for an afocal system")
-            self.optic.set_aperture("EPD", aperture_data["NAP"] / reduced_slope)
+            self.optic.set_aperture("EPD", target / reduced_slope)
         if not aperture_data:
             self.optic.set_aperture("EPD", 2.0 * self.data.units)
 
@@ -336,6 +351,21 @@ class OsloToOpticConverter(BaseOpticReader):
         field_data = self.data.fields
         field_type = field_data.get("type", "angle")
         y_coords = field_data.get("y", [0.0])
+
+        if field_type == "gaussian_image_height":
+            height = y_coords[0] * self.data.units
+            if self.optic.object_surface.is_infinite:
+                field_type = "angle"
+                y_coords = [
+                    math.degrees(math.atan(height / float(self.optic.paraxial.f2())))
+                ]
+            else:
+                field_type = "object_height"
+                y_coords = [
+                    height
+                    / float(self.optic.paraxial.magnification())
+                    / self.data.units
+                ]
 
         # If object is at infinity, ObjectHeightField is invalid in Optiland.
         # OSLO often uses OBH even for infinite objects, encoding the angle.
@@ -353,6 +383,23 @@ class OsloToOpticConverter(BaseOpticReader):
             y_coords = [y * self.data.units for y in y_coords]
 
         self.optic.fields.set_type(field_type)
+
+        if "points" in field_data:
+            maximum = y_coords[0]
+            for point in field_data["points"].values():
+                coords = dict(point)
+                for axis in ("x", "y"):
+                    fraction = point[axis]
+                    coords[axis] = (
+                        math.degrees(
+                            math.atan(fraction * math.tan(math.radians(maximum)))
+                        )
+                        if field_type == "angle"
+                        else fraction * maximum
+                    )
+                self.optic.fields.add(**coords)
+            if self.optic.fields.num_fields:
+                return
 
         # OSLO stores only the maximum field value.  Expand to three standard
         # field points (on-axis, 0.7×max, full field) for usable analysis.

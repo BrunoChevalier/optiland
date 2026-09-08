@@ -33,6 +33,7 @@ class OsloDataParser:
         self._wavelength_weights: list[float] = []
         self._line = 0
         self._ended = False
+        self._field_table = False
 
         # Command dispatch table
         self._dispatch_table = {
@@ -40,6 +41,7 @@ class OsloDataParser:
             "EBR": self._read_ebr,
             "OBH": self._read_obh,
             "ANG": self._read_ang,
+            "GIH": self._read_gih,
             "UNI": self._read_uni,
             "AIR": self._read_medium,
             "RFL": self._read_medium,
@@ -103,6 +105,7 @@ class OsloDataParser:
             "FNO": self._read_fno,
             "NAO": self._read_nao,
             "NAP": self._read_nap,
+            "PUK": self._read_puk,
             "TELE": self._read_tele,
             "DES": self._read_des,
             "PFL": self._read_paraxial,
@@ -121,18 +124,16 @@ class OsloDataParser:
         except UnicodeDecodeError:
             source = raw.decode("cp1252")
         for self._line, line in enumerate(source.splitlines(), 1):
-            if self._ended:
-                break  # Analysis/variable/CCL blocks are not lens prescriptions.
             try:
                 for statement in self._statements(line):
-                    if self._ended:
-                        break
                     tokens = self._tokenize(statement)
                     if not tokens:
                         continue
                     cmd = tokens[0].upper()
                     tokens[0] = cmd
-                    if re.fullmatch(r"SNO\d+", cmd):
+                    if self._ended:
+                        self._read_footer(tokens)
+                    elif re.fullmatch(r"SNO\d+", cmd):
                         self._read_sno(tokens)
                     elif re.fullmatch(r"W[VW][1-9]\d*", cmd):
                         self._validate_numbers(tokens)
@@ -237,6 +238,54 @@ class OsloDataParser:
 
     def _read_nap(self, tokens: list[str]) -> None:
         self.data_model.aperture = {"NAP": float(tokens[1])}
+
+    def _read_puk(self, tokens: list[str]) -> None:
+        self.data_model.aperture = {"PUK": abs(float(tokens[1]))}
+
+    def _read_gih(self, tokens: list[str]) -> None:
+        self.data_model.fields = {
+            "type": "gaussian_image_height",
+            "y": [float(tokens[1])],
+        }
+
+    def _read_footer(self, tokens: list[str]) -> None:
+        """Read declarative field data without executing analysis or CCL blocks."""
+        cmd = tokens[0]
+        if cmd in {"CFG", "LEN"}:
+            self._unsupported(cmd, "additional configurations are not imported")
+        elif cmd == "RST":
+            self._field_table = len(tokens) == 2 and tokens[1].upper() == "NEW"
+            if self._field_table:
+                self.data_model.fields["points"] = {}
+        elif cmd == "END":
+            self._field_table = False
+        elif cmd == "F" and self._field_table:
+            self._validate_numbers(tokens)
+            if len(tokens) not in {12, 14}:
+                raise ValueError("F requires an index and ten field-table values")
+            index = int(tokens[1])
+            values = [float(v) for v in tokens[2:]]
+            if index < 1 or values[9] < 0:
+                raise ValueError("F requires a positive index and nonnegative weight")
+            if any(values[2:5]) or any(values[10:]):
+                self._unsupported(
+                    "F",
+                    "field depth, reference-ray aiming or extended flags "
+                    "are not mapped",
+                )
+            ymin, ymax, xmin, xmax = values[5:9]
+            if not (ymin < ymax and xmin < xmax):
+                raise ValueError("F pupil bounds must be increasing")
+            if ymin != -ymax or xmin != -xmax:
+                self._unsupported("F", "asymmetric field pupil bounds are not mapped")
+                ymin, ymax, xmin, xmax = -1, 1, -1, 1
+            self.data_model.fields["points"][index] = {
+                "y": values[0],
+                "x": values[1],
+                "weight": values[9],
+                "vy": 1 - ymax,
+                "vx": 1 - xmax,
+            }
 
     def _read_tele(self, tokens: list[str]) -> None:
         if tokens[1].upper() not in {"ON", "OFF", "0", "1"}:

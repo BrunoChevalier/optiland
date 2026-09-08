@@ -382,7 +382,8 @@ class OsloDataParser:
         """The latest aperture specification replaces the previous one."""
         command, value = tokens[0], float(tokens[1])
         if command == "EBR":
-            command, value = "EPD", 2 * value  # Legacy model key for beam diameter.
+            # The shared model represents OSLO's beam radius as a diameter.
+            command, value = "EPD", 2 * value
         elif command == "PUK":
             value = abs(value)
         self.data_model.aperture = {command: value}

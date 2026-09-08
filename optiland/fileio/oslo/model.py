@@ -1,7 +1,8 @@
 """OSLO Data Model
 
-Defines OsloDataModel, the shared intermediate representation used by both
-the OSLO reader (parser -> model) and writer (optic -> model) paths.
+Defines OsloDataModel, the shared parsed prescription. The reader fills it
+from .len commands before converting it to an Optic; the writer builds it
+from an Optic before formatting .len text.
 
 Kramer Harrison, 2026
 """
@@ -24,7 +25,7 @@ class OsloDiagnostic:
 
 @dataclass
 class OsloDataModel:
-    """Intermediate representation of an OSLO .len optical system.
+    """Parsed OSLO prescription shared by the reader and writer.
 
     Attributes:
         name: System name from the LEN NEW command.

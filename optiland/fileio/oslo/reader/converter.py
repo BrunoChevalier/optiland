@@ -416,9 +416,9 @@ class OsloToOpticConverter(BaseOpticReader):
             self.optic.set_aperture("imageFNO", aperture_data["FNO"])
             return
         if "EPD" in aperture_data:
-            # The intermediate model stores twice OSLO's EBR under its legacy
-            # EPD key. EBR is measured at surface 1 (Program Reference p. 120),
-            # which need not coincide with the entrance pupil for finite objects.
+            # The shared model's EPD is twice OSLO's EBR, the radius at surface 1
+            # (Program Reference p. 120). For finite objects, this plane need
+            # not coincide with the entrance pupil.
             diameter = aperture_data["EPD"] * self.data.units
             self.optic.set_aperture("EPD", 1.0)
             if not self.optic.object_surface.is_infinite:

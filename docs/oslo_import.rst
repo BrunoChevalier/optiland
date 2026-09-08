@@ -10,8 +10,9 @@ result. To reject unsupported commands and known approximations, use::
     optic = load_oslo_file("design.len", strict=True)
 
 Malformed data raises ``ValueError``. Parser errors and unsupported-command
-warnings identify the file, line and surface. The intermediate
-``OsloDataParser(...).parse()`` model also exposes structured ``diagnostics``.
+warnings identify the file, line and surface. ``OsloDataParser(...).parse()``
+returns an ``OsloDataModel`` containing the parsed prescription before conversion
+to an ``Optic``. This model also exposes structured ``diagnostics``.
 Strict import is a compatibility check, not a certificate of agreement with OSLO.
 No CCL, include file, optimization program or external executable is executed.
 

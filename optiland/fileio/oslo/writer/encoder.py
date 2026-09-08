@@ -77,7 +77,7 @@ class OpticToOsloEncoder:
         infinite = self.optic.object_surface.is_infinite
         try:
             # OSLO EBR is the axial beam radius at surface 1, not at the
-            # entrance pupil. Store its diameter under the model's legacy key.
+            # entrance pupil. The shared model stores this diameter as EPD.
             diameter = (
                 float(self.optic.paraxial.EPD())
                 if infinite

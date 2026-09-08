@@ -8,7 +8,7 @@ Kramer Harrison, 2026
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from typing import Any
 
 
@@ -59,14 +59,4 @@ class OsloDataModel:
             A plain dict representation suitable for use with
             ``OsloToOpticConverter``.
         """
-        return {
-            "name": self.name,
-            "scaling": self.scaling,
-            "num_surfaces": self.num_surfaces,
-            "aperture": self.aperture,
-            "fields": self.fields,
-            "wavelengths": self.wavelengths,
-            "surfaces": self.surfaces,
-            "units": self.units,
-            "notes": self.notes,
-        }
+        return asdict(self)

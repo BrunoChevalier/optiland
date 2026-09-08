@@ -233,6 +233,8 @@ class OsloToOpticConverter(BaseOpticReader):
             surface_params.update(self._coordinates[index])
 
         self.optic.surfaces.add(**surface_params)
+        if has_coord_transform:
+            self.optic.surfaces[index].thickness = th * scale
 
     def _resolve_material(
         self, material_raw: str, wavelengths: list[float] | None = None
@@ -399,7 +401,7 @@ class OsloToOpticConverter(BaseOpticReader):
         # If object is at infinity, ObjectHeightField is invalid in Optiland.
         # OSLO often uses OBH even for infinite objects, encoding the angle.
         # OSLO OBH sign convention: negative means below axis - take abs().
-        if field_type == "object_height" and be.isinf(self.optic.surfaces[0].thickness):
+        if field_type == "object_height" and self.optic.object_surface.is_infinite:
             field_type = "angle"
             distance = self.data.surfaces[0].get("TH", 1e10)
             y_coords = [

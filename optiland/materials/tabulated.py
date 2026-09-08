@@ -36,6 +36,8 @@ class TabulatedMaterial(BaseMaterial):
 
     def _calculate_n(self, wavelength: Any, **kwargs: Any) -> Any:
         wave = be.asarray(wavelength)
+        if not be.all(be.isfinite(wave)):
+            raise ValueError("Tabulated wavelengths must be finite")
         if be.any(wave < self.wavelengths[0]) or be.any(wave > self.wavelengths[-1]):
             raise ValueError(f"Wavelength outside tabulated range for {self.name!r}")
         return be.atleast_1d(

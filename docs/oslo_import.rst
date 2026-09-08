@@ -77,6 +77,8 @@ UTF-8 (including BOM) and legacy Windows-1252 text are accepted.
      - Static preceding-surface pickups, relative references and chains.
        Curvature and length constants are additive. Forward/self references are
        rejected. The result is an imported prescription, not live OSLO constraints.
+       Solved values feed downstream pickups. TD/TDM retain local pivot data;
+       pickups involving global references, coordinate returns or bends are rejected.
    * - ``PY``, ``PYC``, ``PU``, ``PUC``, ``EC``
      - Targeted marginal/chief height, outgoing slope and edge-contact solves.
        Targets are checked after solving. Unsupported or unsatisfiable solves
@@ -114,7 +116,10 @@ user-surface examples as faithful optical models.
 Import coverage is broader than OSLO export coverage. Native Optiland JSON is the
 preferred way to retain imported general geometry, aperture composition and poses.
 The OSLO writer supports its documented surface subset, direct spectral samples,
-correct even-asphere powers and radial aperture checking flags.
+correct even-asphere powers, explicit angular/object-height fields and radial
+aperture checking flags. Unsupported transformed surfaces, phase profiles and
+non-radial apertures raise before the destination file is opened, preventing
+silent loss of those features. Use native JSON for those systems.
 
 Specification and real-file validation
 -------------------------------------
@@ -144,8 +149,12 @@ indices, poses, aperture clipping, grating directions and solve targets.
 The 2026-09-08 audit used archive SHA-256
 ``d5d43924d945a0ef5a200a0e5f12e459095b7504c59c946770fe75711814f8cc``.
 Both NumPy and Torch imported all 101 files in permissive mode (5 without
-warnings, 96 with warnings); 14 passed strict import. The on-axis smoke trace
-transmitted at least one finite ray in 74 files, transmitted none in 22, and
-raised an error in 5. None of the strict imports raised a trace error. These
+warnings, 96 with warnings); 10 passed strict import. The on-axis smoke trace
+transmitted at least one finite ray in 80 files, transmitted none in 20, and
+raised an error in 1. None of the strict imports raised a trace error. These
 figures include deliberately unsupported examples and are compatibility results,
 not 101 validated optical designs. The audit JSON lists every filename and reason.
+The remaining trace error is ``demos/edu/ebert.len``: its finite object-height
+field and off-axis entry combination is unsupported by Optiland's field launcher.
+Legacy ``RCO 0`` records in the demo archive are interpreted as the default undo
+of the current local transform, consistently with the examples' surface placement.

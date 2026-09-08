@@ -54,7 +54,7 @@ def test_unknown_optical_command_is_reported_and_strict_rejects(tmp_path):
 
 @pytest.mark.parametrize("command", ["RD", "TH nope", "AP nan", 'DES "unterminated'])
 def test_malformed_command_has_source_context(tmp_path, command):
-    path = write_lens(tmp_path, f'LEN NEW "bad" 1 0\n{command}\nEND 0\n')
+    path = write_lens(tmp_path, f'LEN NEW "bad" 1 1\n{command}\nNXT\nEND 1\n')
     with pytest.raises(ValueError, match=r"commands.len:2"):
         OsloDataParser(path).parse()
 
@@ -478,3 +478,101 @@ def test_review1_historical_glass_approximation_is_explicit(tmp_path, monkeypatc
         load_oslo_file(path, strict=True)
     with pytest.warns(UserWarning, match='approximate'):
         load_oslo_file(path)
+
+
+@pytest.mark.parametrize('text', ['', 'LEN NEW "bad" 1 3\nNXT\nEND 3\n', 'LEN WRONG "bad" 1 1\nNXT\nEND 1\n'])
+def test_review2_invalid_lens_structure(tmp_path, text):
+    with pytest.raises(ValueError, match='LEN|surface|prescription'):
+        load_oslo_file(write_lens(tmp_path, text), strict=True)
+
+
+@pytest.mark.parametrize('commands', ['RD 10 extra', 'DT 2', 'GC .5', 'EBR 0', 'FNO 0', 'NAP -1', 'GLA', 'GLA MOD', 'PK TH', 'AS1 .1'])
+def test_review2_invalid_or_incomplete_commands(tmp_path, commands):
+    with pytest.raises(ValueError):
+        load_oslo_file(simple_lens(tmp_path, surface=commands), strict=True)
+
+
+def test_review2_last_stop_and_diagnostic_model_serialization(tmp_path):
+    path = simple_lens(tmp_path, surface='AST')
+    path.write_text(path.read_text().replace('RD -20', 'RD -20\nAST'))
+    optic = load_oslo_file(path, strict=True)
+    assert not optic.surfaces[1].is_stop
+    assert optic.surfaces[2].is_stop
+    with pytest.warns(UserWarning, match='MAGIC'):
+        model = OsloDataParser(simple_lens(tmp_path, system='TELE ON', surface='MAGIC')).parse()
+    assert model.to_dict()['settings']['telecentric']
+    assert model.to_dict()['diagnostics'][0]['command'] == 'MAGIC'
+
+
+def test_review2_tilt_pickup_retains_pivot(tmp_path, set_test_backend):
+    path = write_lens(tmp_path, 'LEN NEW "pivot inverse" 1 3\nEBR 1\nANG 0\nTH 1e20\nNXT\nAIR\nTLA 20\nDCY 2\nTOZ 4\nNXT\nAIR\nPK TDM -1\nTH 5\nNXT\nAIR\nEND 3\n')
+    optic = load_oslo_file(path, strict=True)
+    position, rotation = optic.surfaces[2].geometry.cs.get_effective_transform()
+    assert_allclose(position, [0, 0, 0], atol=1e-12)
+    assert_allclose(rotation, be.eye(3), atol=1e-12)
+
+
+def test_review2_invalid_tabulated_query(set_test_backend):
+    from optiland.materials import TabulatedMaterial
+    material = TabulatedMaterial([.4, .8], [1.6, 1.4])
+    with pytest.raises(ValueError, match='finite|range'):
+        material.n(float('nan'))
+
+
+@pytest.mark.parametrize('commands', ['GSP .002\nGOR 1', 'DCY 2', 'APN 1\nATP A 2\nAX1 A -1\nAX2 A 1\nAY1 A -2\nAY2 A 2'])
+def test_review2_writer_rejects_unsupported_data_before_overwriting(tmp_path, commands):
+    optic = load_oslo_file(simple_lens(tmp_path, surface=commands), strict=True)
+    output = tmp_path / 'protected.len'
+    output.write_text('existing file')
+    with pytest.raises((ValueError, NotImplementedError), match='export|writer'):
+        save_oslo_file(optic, output)
+    assert output.read_text() == 'existing file'
+
+
+def test_review2_mixed_material_spectra_roundtrip(tmp_path, set_test_backend):
+    from optiland.materials import TabulatedMaterial, AbbeMaterial
+    optic = load_oslo_file(simple_lens(tmp_path, system='WV .4 .5 .6 .7'))
+    optic.surfaces[1].material_post = TabulatedMaterial([.4, .5, .6, .7], [1.6, 1.55, 1.5, 1.45])
+    optic.surfaces[2].material_post = AbbeMaterial(1.6, 50, model='buchdahl')
+    path = tmp_path / 'mixed.len'
+    save_oslo_file(optic, path)
+    restored = load_oslo_file(path, strict=True)
+    wave = be.array([.4, .5, .6, .7])
+    assert_allclose(restored.surfaces[2].material_post.n(wave), optic.surfaces[2].material_post.n(wave), atol=1e-6)
+
+
+def test_review2_names_fields_and_signed_infinity_roundtrip(tmp_path, set_test_backend):
+    optic = load_oslo_file(simple_lens(tmp_path, system='ANG 10'))
+    optic.name = 'a "quoted" lens; // design'
+    optic.fields.fields.clear()
+    optic.fields.add(y=-3, x=2, weight=2, vx=.1, vy=.2)
+    optic.fields.add(y=5, x=-1, weight=0)
+    optic.surfaces[0].thickness = -float('inf')
+    path = tmp_path / 'metadata.len'
+    save_oslo_file(optic, path)
+    restored = load_oslo_file(path, strict=True)
+    assert restored.name == optic.name
+    assert_allclose(restored.fields.x_fields, [2, -1])
+    assert_allclose(restored.fields.y_fields, [-3, 5])
+    assert [f.weight for f in restored.fields] == [2, 0]
+    assert_allclose(restored.fields[0].vx, .1)
+    assert restored.surfaces[0].thickness < 0
+
+
+def test_review2_nonfinite_coordinate_reference_is_rejected(tmp_path):
+    with pytest.raises(ValueError, match='finite|infinite'):
+        load_oslo_file(simple_lens(tmp_path, surface='GC 0'), strict=True)
+
+
+def test_review2_legacy_zero_coordinate_return_undoes_local_decenter(tmp_path, set_test_backend):
+    optic = load_oslo_file(simple_lens(tmp_path, surface='DCY 2\nTLA 15\nRCO 0'), strict=True)
+    assert_allclose(optic.surfaces[2].geometry.cs.get_effective_transform()[0], [0, 0, 2])
+
+
+def test_review2_infinite_object_field_survives_absolute_pose_mapping(tmp_path, set_test_backend):
+    optic = load_oslo_file(simple_lens(tmp_path, system='OBH -1e18', surface='DCY .1\nRCO'), strict=True)
+    import math
+    assert optic.fields.field_definition.__class__.__name__ == 'AngleField'
+    assert_allclose(optic.fields[-1].y, math.degrees(math.atan(.01)))
+    rays = optic.trace(0, 0, optic.primary_wavelength, num_rays=3, distribution='line_y')
+    assert be.any(be.isfinite(rays.y) & (rays.i > 0))

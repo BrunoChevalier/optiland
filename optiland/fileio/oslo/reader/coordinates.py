@@ -45,6 +45,8 @@ def surface_coordinates(
                     f"OSLO GC at surface {index} requires a preceding surface"
                 )
             base_position, base_rotation = (v.copy() for v in frames[ref])
+        if index > 0 and not np.all(np.isfinite(base_position)):
+            raise ValueError("OSLO coordinate reference must have a finite position")
         bases[index] = (base_position, base_rotation)
         order = data.get("DT", 1)
         if order not in {1, -1}:
@@ -85,6 +87,10 @@ def surface_coordinates(
             extra = Rotation.from_euler("XYZ", angles, degrees=True).as_matrix()
             next_rotation = rotation @ extra
         distance = data.get("TH", 0.0)
+        if 0 < index < max(surfaces) and abs(distance) >= 9.9e9:
+            raise ValueError(
+                "OSLO infinite thickness with coordinate transforms is not mapped"
+            )
         if index != 0 and abs(distance) < 9.9e9:
             next_position = next_position + next_rotation[:, 2] * distance * scale
     return result

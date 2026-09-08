@@ -79,11 +79,36 @@ class OpticToOsloEncoder:
                 FIELD_CLASS_TO_TYPE.get(type(fd).__name__, "angle") if fd else "angle"
             )
             self.data_model.fields["type"] = f_type
+            if f_type not in {"angle", "object_height"}:
+                raise NotImplementedError(
+                    "OSLO writer cannot export this field definition; use native JSON"
+                )
             # OSLO convention: store only the maximum absolute field value.
             # The reader expands this to [0, 0.7*max, max] on load.
-            y_values = [f.y for f in self.optic.fields]
+            y_values = [v for f in self.optic.fields for v in (f.x, f.y)]
             max_y = max((abs(y) for y in y_values), default=0.0)
             self.data_model.fields["y"] = [max_y]
+            if f_type == "angle" and max_y >= 90:
+                raise NotImplementedError(
+                    "OSLO writer cannot export wide-angle field tables"
+                )
+            points = {}
+            for index, field in enumerate(self.optic.fields, 1):
+                point = {"weight": field.weight, "vx": field.vx, "vy": field.vy}
+                for axis in ("x", "y"):
+                    value = getattr(field, axis)
+                    point[axis] = (
+                        (
+                            math.tan(math.radians(value))
+                            / math.tan(math.radians(max_y))
+                            if f_type == "angle"
+                            else value / max_y
+                        )
+                        if max_y
+                        else 0.0
+                    )
+                points[index] = point
+            self.data_model.fields["points"] = points
 
     def _encode_wavelengths(self) -> None:
         if self.optic.wavelengths:
@@ -110,6 +135,19 @@ class OpticToOsloEncoder:
 
     def _encode_surfaces(self) -> None:
         for idx, surface in enumerate(self.optic.surfaces):
+            position, rotation = surface.geometry.cs.get_effective_transform()
+            if (
+                abs(float(position[0])) > 1e-12
+                or abs(float(position[1])) > 1e-12
+                or not be.allclose(rotation, be.eye(3))
+            ):
+                raise NotImplementedError(
+                    "OSLO writer cannot export transformed surfaces; use native JSON"
+                )
+            if getattr(surface.interaction_model, "phase_profile", None) is not None:
+                raise NotImplementedError(
+                    "OSLO writer cannot export phase profiles; use native JSON"
+                )
             s_type = getattr(surface, "surface_type", "standard") or "standard"
             handler = get_handler_for_optiland_type(s_type)
             surf_data = handler.format(surface)
@@ -117,7 +155,7 @@ class OpticToOsloEncoder:
             # Common properties
             th = float(surface.thickness)
             if be.isinf(th):
-                th = 1e10
+                th = math.copysign(1e10, th)
             surf_data["TH"] = th
 
             # OSLO assumes surface 1 is the stop if no stop is explicitly marked.
@@ -132,6 +170,10 @@ class OpticToOsloEncoder:
             material_to_encode = "mirror" if is_mirror else surface.material_post
             if isinstance(material_to_encode, TabulatedMaterial):
                 surf_data["glass_wavelengths"] = material_to_encode.wavelengths
+            elif isinstance(material_to_encode, AbbeMaterial):
+                surf_data["glass_wavelengths"] = self.data_model.wavelengths.get(
+                    "values"
+                ) or [0.58756, 0.48613, 0.65627]
             surf_data["material"] = self._encode_material(material_to_encode)
 
             # Aperture
@@ -140,6 +182,12 @@ class OpticToOsloEncoder:
             checked = not isinstance(aperture, UnclippedAperture)
             if not checked:
                 aperture = aperture.aperture
+            if aperture is not None and (
+                not isinstance(aperture, RadialAperture) or aperture.r_min != 0
+            ):
+                raise NotImplementedError(
+                    "OSLO writer cannot export this aperture shape; use native JSON"
+                )
             if idx == 0 and th >= 9.9e9:
                 # Object surface with infinite conjugate: emit a large AP sentinel
                 # matching OSLO EDU convention: AP = tan(max_field_angle) * 1e10
@@ -192,17 +240,14 @@ class OpticToOsloEncoder:
             return f"  GLA {ns} {ns} {ns}"
 
         if isinstance(material, AbbeMaterial):
-            nd = float(material.index.item())
-            # OSLO direct index format: GLA <n_d> <n_F> <n_C>
-            try:
-                w_d, w_F, w_C = 0.58756, 0.48613, 0.65627
-                n_d = f"{float(material.n(w_d).item()):.7g}"
-                n_F = f"{float(material.n(w_F).item()):.7g}"
-                n_C = f"{float(material.n(w_C).item()):.7g}"
-                return f"  GLA {n_d} {n_F} {n_C}"
-            except Exception:
-                ns = f"{nd:.7g}"
-                return f"  GLA {ns} {ns} {ns}"
+            wavelengths = self.data_model.wavelengths.get("values") or [
+                0.58756,
+                0.48613,
+                0.65627,
+            ]
+            return "  GLA " + " ".join(
+                f"{float(material.n(w).item()):.12g}" for w in wavelengths
+            )
 
         # Fallback
         try:

@@ -33,7 +33,7 @@ class OsloDataFormatter:
         lines: list[str] = []
         lines.append("// OSLO 5.00 0 0 0")
         lines.append(
-            f'LEN NEW "{self.model.name}" '
+            f'LEN NEW "{self._quote(self.model.name)}" '
             f"{self._fmt(self.model.scaling)} {self.model.num_surfaces}"
         )
 
@@ -52,6 +52,24 @@ class OsloDataFormatter:
         self._format_wavelength_footer(lines)
 
         lines.append(f"END {self.model.num_surfaces}")
+        points = self.model.fields.get("points", {})
+        if points:
+            lines.append("RST NEW")
+            for index, point in points.items():
+                values = [
+                    point["y"],
+                    point["x"],
+                    0,
+                    0,
+                    0,
+                    point["vy"] - 1,
+                    1 - point["vy"],
+                    point["vx"] - 1,
+                    1 - point["vx"],
+                    point["weight"],
+                ]
+                lines.append(f"F {index} {self._fmt_vals(values)}")
+            lines.append("END")
         lines.append("")
 
         return "\n".join(lines)
@@ -77,7 +95,11 @@ class OsloDataFormatter:
         for cmd, content in self.model.notes.items():
             if cmd == "DES":
                 continue  # already emitted explicitly above
-            lines.append(f'{cmd} "{content}"')
+            lines.append(f'{cmd} "{self._quote(content)}"')
+
+    @staticmethod
+    def _quote(content: str) -> str:
+        return content.replace("\\", "\\\\").replace('"', '\\"')
 
     def _format_wavelength_footer(self, lines: list[str]) -> None:
         """Emit WV/WW footer lines (after surfaces, before END) per convention."""
@@ -93,8 +115,8 @@ class OsloDataFormatter:
             lines.append(f"WW {self._fmt_vals(weights[: len(vals)])}")
 
     def _fmt_vals(self, values: list[float]) -> str:
-        """Format up to the first 3 values, matching OSLO's WV/WW convention."""
-        return " ".join(self._fmt(v) for v in values)
+        """Preserve all spectral and field entries with sufficient precision."""
+        return " ".join(f"{v:.12g}" for v in values)
 
     def _format_surface(
         self, lines: list[str], index: int, data: dict[str, Any]
@@ -116,7 +138,11 @@ class OsloDataFormatter:
             lines.append(f"  RD {self._fmt(data['RD'])}")
 
         if "TH" in data:
-            th = 1e10 if math.isinf(data["TH"]) else data["TH"]
+            th = (
+                math.copysign(1e10, data["TH"])
+                if math.isinf(data["TH"])
+                else data["TH"]
+            )
             lines.append(f"  TH {self._fmt(th)}")  # 1e10 is OSLO's infinity convention
 
         if "AP" in data:
@@ -162,5 +188,5 @@ class OsloDataFormatter:
     def _fmt(self, val: float) -> str:
         """Format float for OSLO using compact decimal notation (≤7 sig figs)."""
         if math.isinf(val):
-            return "1.0e+10"
+            return "-1.0e+10" if val < 0 else "1.0e+10"
         return f"{val:.7g}"

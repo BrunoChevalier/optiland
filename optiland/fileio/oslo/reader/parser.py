@@ -34,6 +34,7 @@ class OsloDataParser:
         self._line = 0
         self._ended = False
         self._field_table = False
+        self._seen_len = False
 
         # Command dispatch table
         self._dispatch_table = {
@@ -165,6 +166,7 @@ class OsloDataParser:
                         self._read_special_aperture(tokens)
                     elif cmd in self._dispatch_table:
                         self._validate_numbers(tokens)
+                        self._validate_command(tokens)
                         self._dispatch_table[cmd](tokens)
                     elif cmd in {
                         "DRW",
@@ -186,11 +188,25 @@ class OsloDataParser:
                 raise ValueError(f"{self.filename}:{self._line}: {exc}") from exc
         if not self._ended:
             self._read_end(["END"])
+        if not self._seen_len:
+            raise ValueError(f"{self.filename}: missing LEN NEW prescription")
+        if set(self.data_model.surfaces) != set(
+            range(self.data_model.num_surfaces + 1)
+        ):
+            raise ValueError(f"{self.filename}: surface records do not match LEN count")
+        for index, data in self.data_model.surfaces.items():
+            if data.get("ASP", "ADO") == "ADO" and any(
+                re.fullmatch(r"AS\d+", k) for k in data
+            ):
+                self._current_surf_idx = index
+                self._unsupported("ASn", "general coefficients require ASP ASR/ARA/ASX")
 
         values = self._wavelength_values or [0.58756, 0.48613, 0.65627]
         weights = self._wavelength_weights + [1.0] * len(values)
         self.data_model.wavelengths["values"] = values
         self.data_model.wavelengths["weights"] = weights[: len(values)]
+        if not any(self.data_model.wavelengths["weights"]):
+            raise ValueError(f"{self.filename}: wavelength weights cannot all be zero")
 
         return self.data_model
 
@@ -216,6 +232,69 @@ class OsloDataParser:
                 continue
             if not math.isfinite(value):
                 raise ValueError(f"{tokens[0]} requires finite numeric input")
+
+    def _validate_command(self, tokens: list[str]) -> None:
+        cmd = tokens[0]
+        scalar = {
+            "EBR",
+            "FNO",
+            "NAO",
+            "NAP",
+            "PUK",
+            "UNI",
+            "ANG",
+            "OBH",
+            "GIH",
+            "RD",
+            "RDF",
+            "CV",
+            "CVF",
+            "TH",
+            "THF",
+            "CC",
+            "CVX",
+            "RDX",
+            "AD",
+            "AE",
+            "AF",
+            "AG",
+            "DCX",
+            "DCY",
+            "DCZ",
+            "TLA",
+            "TLB",
+            "TLC",
+            "DT",
+            "GC",
+            "TOX",
+            "TOY",
+            "TOZ",
+            "APN",
+            "PFL",
+            "PFM",
+            "GSP",
+            "GOR",
+            "PY",
+            "PYC",
+            "PU",
+            "PUC",
+            "EC",
+            "GTO",
+            "TELE",
+            "APCK",
+        }
+        if cmd in scalar and len(tokens) != 2:
+            raise ValueError(f"{cmd} requires exactly one argument")
+        if cmd in {"EBR", "FNO", "NAO", "NAP"} and float(tokens[1]) <= 0:
+            raise ValueError(f"{cmd} must be positive")
+        if cmd == "DT" and float(tokens[1]) not in {-1, 1}:
+            raise ValueError("DT must be -1 or 1")
+        if cmd in {"GC", "GOR"} and not float(tokens[1]).is_integer():
+            raise ValueError(f"{cmd} requires an integer")
+        if cmd in {"GLA", "GLF"} and (
+            len(tokens) < 2 or (tokens[1].upper() == "MOD" and len(tokens) < 3)
+        ):
+            raise ValueError("GLA requires a glass name or index data")
 
     @staticmethod
     def _statements(line: str) -> list[str]:
@@ -248,12 +327,20 @@ class OsloDataParser:
         # This regex finds either strings in quotes or non-whitespace sequences
         return re.findall(r'"(?:\\.|[^"\\])*"|[^\s,]+', line)
 
+    @staticmethod
+    def _decode_text(value: str) -> str:
+        return re.sub(r'\\(["\\])', r"\1", value.strip('"'))
+
     def _read_len(self, tokens: list[str]) -> None:
         # LEN NEW "lens_name" <scaling> <total_surfaces>
-        if len(tokens) >= 5 and tokens[1].upper() == "NEW":
-            self.data_model.name = tokens[2].strip('"')
-            self.data_model.scaling = float(tokens[3])
-            self.data_model.num_surfaces = int(tokens[4])
+        if self._seen_len or len(tokens) != 5 or tokens[1].upper() != "NEW":
+            raise ValueError('LEN expects NEW "name" scaling surface-count')
+        self._seen_len = True
+        self.data_model.name = self._decode_text(tokens[2])
+        self.data_model.scaling = float(tokens[3])
+        self.data_model.num_surfaces = int(tokens[4])
+        if not 1 <= self.data_model.num_surfaces <= 10000:
+            raise ValueError("LEN surface count must be between 1 and 10000")
 
     def _read_ebr(self, tokens: list[str]) -> None:
         # EBR <float> (Entrance Beam Radius)
@@ -337,11 +424,11 @@ class OsloDataParser:
             raise ValueError("UNI must be positive (millimeters per lens unit)")
 
     def _read_des(self, tokens: list[str]) -> None:
-        self.data_model.notes["DES"] = " ".join(tokens[1:]).strip('"')
+        self.data_model.notes["DES"] = self._decode_text(" ".join(tokens[1:]))
 
     def _read_sno(self, tokens: list[str]) -> None:
         cmd = tokens[0].upper()
-        content = " ".join(tokens[1:]).strip('"')
+        content = self._decode_text(" ".join(tokens[1:]))
         self.data_model.notes[cmd] = content
 
     def _read_medium(self, tokens: list[str]) -> None:
@@ -365,7 +452,7 @@ class OsloDataParser:
         self._current_surf_data["PFL"] = float(tokens[1])
 
     def _read_note(self, tokens: list[str]) -> None:
-        self._current_surf_data["note"] = " ".join(tokens[1:]).strip('"')
+        self._current_surf_data["note"] = self._decode_text(" ".join(tokens[1:]))
 
     def _read_group(self, tokens: list[str]) -> None:
         if tokens[1].upper() not in {"EGR", "ELE"}:
@@ -462,8 +549,13 @@ class OsloDataParser:
         self._current_surf_data["special_apertures"] = {}
 
     def _read_special_aperture(self, tokens: list[str]) -> None:
+        if len(tokens) != 3:
+            raise ValueError(f"{tokens[0]} expects an aperture identifier and value")
         cmd, identifier = tokens[:2]
+        identifier = identifier.upper()
         value = float(tokens[2])
+        if cmd in {"ATP", "AAC", "AGN"} and not value.is_integer():
+            raise ValueError(f"{cmd} requires an integer")
         if cmd == "AAC" and value not in {2, 4}:
             self._unsupported(
                 cmd,
@@ -476,12 +568,16 @@ class OsloDataParser:
         )[cmd] = value
 
     def _read_ast(self, tokens: list[str]) -> None:
+        for data in self.data_model.surfaces.values():
+            data.pop("AST", None)
         self._current_surf_data["AST"] = True
 
     def _read_cc(self, tokens: list[str]) -> None:
         self._current_surf_data["CC"] = float(tokens[1])
 
     def _read_coeff(self, tokens: list[str]) -> None:
+        if len(tokens) != 2:
+            raise ValueError(f"{tokens[0]} expects one coefficient")
         cmd = tokens[0].upper()
         self._current_surf_data[cmd] = float(tokens[1])
 
@@ -494,8 +590,12 @@ class OsloDataParser:
         self._current_surf_data[cmd] = float(tokens[1])
 
     def _read_return(self, tokens: list[str]) -> None:
+        # Legacy saved prescriptions encode the default local undo as RCO 0
+        # (e.g. Lambda Research EyeModel_LB.len and io61ac.len).
         self._current_surf_data["RCO"] = (
-            int(tokens[1]) if len(tokens) > 1 else self._current_surf_idx
+            (int(tokens[1]) or self._current_surf_idx)
+            if len(tokens) > 1
+            else self._current_surf_idx
         )
 
     def _read_flag(self, tokens: list[str]) -> None:
@@ -535,6 +635,8 @@ class OsloDataParser:
         # Save current surface and increment index
         self.data_model.surfaces[self._current_surf_idx] = self._current_surf_data
         self._current_surf_idx += 1
+        if self._current_surf_idx > self.data_model.num_surfaces:
+            raise ValueError("NXT exceeds LEN surface count")
         self._current_surf_data = self.data_model.surfaces.get(
             self._current_surf_idx, {}
         )
@@ -548,6 +650,10 @@ class OsloDataParser:
         self._current_surf_data = self.data_model.surfaces.get(index, {})
 
     def _read_end(self, tokens: list[str]) -> None:
+        if len(tokens) > 2 or (
+            len(tokens) == 2 and int(tokens[1]) != self.data_model.num_surfaces
+        ):
+            raise ValueError("END surface count differs from LEN")
         self.data_model.surfaces[self._current_surf_idx] = self._current_surf_data
         self._ended = True
 
@@ -568,6 +674,8 @@ class OsloDataParser:
             data.pop(key, None)
 
     def _read_pickup(self, tokens: list[str]) -> None:
+        if len(tokens) < 3:
+            raise ValueError("PK requires a pickup type and preceding source")
         if tokens[1].upper() not in {
             "CV",
             "CVM",
@@ -583,6 +691,19 @@ class OsloDataParser:
             self._unsupported("PK", f"pickup type {tokens[1]} is not mapped")
             return
         kind = tokens[1].upper()
+        expected = {
+            "LN": {4, 5},
+            "LNM": {4, 5},
+            "CV": {3, 4},
+            "CVM": {3, 4},
+            "TH": {3, 4},
+            "THM": {3, 4},
+        }.get(kind, {3})
+        if len(tokens) not in expected:
+            raise ValueError(f"PK {kind} has an invalid number of arguments")
+        int(tokens[2])
+        if kind in {"LN", "LNM"}:
+            int(tokens[3])
         family = {"CVM": "CV", "THM": "TH", "LN": "TH", "LNM": "TH", "TDM": "TD"}.get(
             kind, kind
         )
@@ -594,4 +715,6 @@ class OsloDataParser:
             raise ValueError(
                 "APK expects target aperture, source surface and source aperture"
             )
-        self._current_surf_data.setdefault("aperture_pickups", []).append(tokens[1:])
+        self._current_surf_data.setdefault("aperture_pickups", []).append(
+            [tokens[1].upper(), tokens[2], tokens[3].upper()]
+        )

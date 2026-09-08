@@ -78,8 +78,14 @@ def resolve_pickups(surfaces: dict[int, dict[str, Any]]) -> dict[int, dict[str, 
                 if "glass_wavelengths" in original:
                     data["glass_wavelengths"] = list(original["glass_wavelengths"])
             elif kind in {"TD", "TDM"}:
+                if any(key in original for key in ("GC", "RCO", "BEN")):
+                    raise ValueError(
+                        "OSLO PK TD/TDM with global/return/bend data is not mapped"
+                    )
                 for key in ("DCX", "DCY", "DCZ", "TLA", "TLB", "TLC"):
                     data[key] = sign * original.get(key, 0.0)
+                for key in ("TOX", "TOY", "TOZ"):
+                    data[key] = original.get(key, 0.0)
                 data["DT"] = sign * original.get("DT", 1)
             else:
                 raise ValueError(f"OSLO PK {kind} is unsupported")

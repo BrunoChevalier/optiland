@@ -72,7 +72,8 @@ UTF-8 (including BOM) and legacy Windows-1252 text are accepted.
    * - ``DCX/Y/Z``, ``TLA/B/C``, ``DT``, ``TOX/Y/Z``, ``GC``, ``RCO``, ``BEN``
      - OSLO intrinsic Euler rotations, signed X/Y tilts, translation order,
        pivots, preceding global references and coordinate returns. BEN supports
-       single-axis local mirror bends; mixed-axis/global bends are rejected.
+       single-axis local RFL/RFH mirror bends; mixed-axis/global bends and bends
+       relying on unmapped TIR-controlled reflection are rejected.
    * - ``PK CV/CVM/TH/THM/LN/LNM/AP/GLA/TD/TDM``
      - Static preceding-surface pickups, relative references and chains.
        Curvature and length constants are additive. Forward/self references are
@@ -81,8 +82,11 @@ UTF-8 (including BOM) and legacy Windows-1252 text are accepted.
        pickups involving global references, coordinate returns or bends are rejected.
    * - ``PY``, ``PYC``, ``PU``, ``PUC``, ``EC``
      - Targeted marginal/chief height, outgoing slope and edge-contact solves.
-       Targets are checked after solving. Unsupported or unsatisfiable solves
-       retain saved values with a warning in permissive mode; strict mode rejects.
+       Targets are rechecked after rebuilding dependent pickups, pupils and fields;
+       later solves must also preserve earlier accepted targets. Unsupported or
+       unsatisfied solves restore saved values with a warning in permissive mode;
+       strict mode rejects. General simultaneous constraint solving is not provided:
+       a coupled case can be rejected even if a joint solution exists in OSLO.
    * - ``GSP``, ``GOR``
      - Ruled gratings through the existing phase model, with grooves parallel
        to local X. Lens-unit spacing is converted to millimeters. Blaze efficiency
@@ -117,9 +121,10 @@ Import coverage is broader than OSLO export coverage. Native Optiland JSON is th
 preferred way to retain imported general geometry, aperture composition and poses.
 The OSLO writer supports its documented surface subset, direct spectral samples,
 correct even-asphere powers, explicit angular/object-height fields and radial
-aperture checking flags. Unsupported transformed surfaces, phase profiles and
-non-radial apertures raise before the destination file is opened, preventing
-silent loss of those features. Use native JSON for those systems.
+aperture checking flags, and object-space telecentricity. Unsupported field
+definitions, transformed surfaces, phase profiles and non-radial apertures raise
+before the destination file is opened, preventing silent loss of those features.
+Names and notes must fit on a single line. Use native JSON for those systems.
 
 Specification and real-file validation
 --------------------------------------
@@ -148,12 +153,15 @@ indices, poses, aperture clipping, grating directions and solve targets.
 
 The 2026-09-08 audit used archive SHA-256
 ``d5d43924d945a0ef5a200a0e5f12e459095b7504c59c946770fe75711814f8cc``.
-Both NumPy and Torch imported all 101 files in permissive mode (5 without
-warnings, 96 with warnings); 10 passed strict import. The on-axis smoke trace
-transmitted at least one finite ray in 80 files, transmitted none in 20, and
+Both NumPy and Torch imported 100 of 101 files in permissive mode (5 without
+warnings, 95 with warnings); 10 passed strict import. The on-axis smoke trace
+transmitted at least one finite ray in 79 files, transmitted none in 20, and
 raised an error in 1. None of the strict imports raised a trace error. These
 figures include deliberately unsupported examples and are compatibility results,
 not 101 validated optical designs. The audit JSON lists every filename and reason.
+The rejected import is ``demos/edu/prismirr.len``: its BEN bend relies on
+TIR-controlled reflection, which is not mapped. Earlier permissive imports
+accepted this file while tracing the affected surface with a refracting model.
 The remaining trace error is ``demos/edu/ebert.len``: its finite object-height
 field and off-axis entry combination is unsupported by Optiland's field launcher.
 Legacy ``RCO 0`` records in the demo archive are interpreted as the default undo

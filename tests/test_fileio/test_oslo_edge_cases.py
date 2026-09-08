@@ -1019,3 +1019,23 @@ def test_ideal_material_export_preserves_optical_path(
     # One meter through the medium must retain its optical-path excess over
     # vacuum; near-unity indices are still refracting media, not exactly air.
     assert (exported_index - 1) * 1000 == pytest.approx((index - 1) * 1000, abs=1e-10)
+
+
+@pytest.mark.parametrize("command", ["WW 0 1 1", "WW1 0"])
+def test_primary_wavelength_weight_must_be_positive(lens_file, command):
+    with pytest.raises(ValueError, match="primary wavelength weight"):
+        OsloDataParser(lens_file(system=command)).parse()
+
+
+@pytest.mark.parametrize("primary_index", [0, 1])
+def test_zero_primary_weight_export_preserves_destination(
+    lens_file, tmp_path, primary_index
+):
+    optic = load_oslo_file(lens_file(), strict=True)
+    optic.wavelengths.primary_index = primary_index
+    optic.wavelengths[primary_index].weight = 0
+    path = tmp_path / "zero-primary-weight.len"
+    path.write_text("saved design", encoding="utf-8")
+    with pytest.raises(ValueError, match="primary wavelength weight"):
+        save_oslo_file(optic, path)
+    assert path.read_text() == "saved design"

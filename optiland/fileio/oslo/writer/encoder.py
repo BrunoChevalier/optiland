@@ -148,6 +148,10 @@ class OpticToOsloEncoder:
                     + weights[primary_idx + 1 :]
                 )
 
+            # OSLO requires wavelength 1 to carry nonzero weight (Program
+            # Reference p. 123). Check after moving the native primary first.
+            if weights[0] <= 0:
+                raise ValueError("OSLO primary wavelength weight must be positive")
             self.data_model.wavelengths["values"] = values
             self.data_model.wavelengths["weights"] = weights
             self.data_model.wavelengths["primary_index"] = 0

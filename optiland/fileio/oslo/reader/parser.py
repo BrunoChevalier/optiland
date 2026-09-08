@@ -212,6 +212,10 @@ class OsloDataParser:
         self.data_model.wavelengths["weights"] = weights[: len(values)]
         if not any(self.data_model.wavelengths["weights"]):
             raise ValueError(f"{self.filename}: wavelength weights cannot all be zero")
+        if weights[0] == 0:
+            raise ValueError(
+                f"{self.filename}: OSLO primary wavelength weight must be positive"
+            )
 
         return self.data_model
 

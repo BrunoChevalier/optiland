@@ -42,6 +42,9 @@ UTF-8 (including BOM) and legacy Windows-1252 text are accepted.
        warn in permissive mode and fail in strict mode.
        Native paraxial chief-ray analysis still aims at the stop; use real rays
        to evaluate the imported telecentric launch.
+       NAO requires a finite object and an aperture greater than zero and less
+       than the object medium's refractive index; hemisphere/extended launches
+       are outside this mapping.
    * - ``ANG``, ``OBH``, ``GIH``; ``RST NEW`` / ``F``
      - Maximum field or explicit fractional X/Y positions, weights and symmetric
        pupil vignetting. Fractional object positions are converted through tangent
@@ -50,6 +53,8 @@ UTF-8 (including BOM) and legacy Windows-1252 text are accepted.
    * - ``WV``, ``WVn``, ``WW``, ``WWn``
      - Replacement and indexed wavelength/weight assignments. Default d/F/C
        wavelengths are 0.58756/0.48613/0.65627 micrometers; WV1 is primary.
+       Indexed edits preserve untouched wavelengths; a bulk WV replaces the set.
+       The primary wavelength must have positive weight; other weights may be zero.
        Direct-index glass retains the wavelengths active when it was defined.
    * - ``RD``, ``RDF``, ``CV``, ``CVF``, ``TH``, ``THF``, ``CC``
      - Spheres/conics, planar RD=0, signed thickness and infinity sentinels.
@@ -60,6 +65,10 @@ UTF-8 (including BOM) and legacy Windows-1252 text are accepted.
      - AD starts at r^4. ASR uses even radial powers, ARA all positive radial
        powers, ASX triangular-indexed XY monomials. Nonzero radial AS0 is rejected.
        Dimensional coefficients scale with their actual polynomial powers.
+       Nonzero ASR AS1, ARA AS1/AS2 and ASX AS0..AS5 retain real-ray geometry
+       but warn because the native paraxial engine omits their changes to vertex,
+       normal or power. Strict mode rejects those cases; derived paraxial pupils,
+       fields and solves must be treated as approximations.
    * - ``CVX``, ``RDX``
      - Toroidal surfaces with supported rotational profiles. Unsupported
        combinations are rejected rather than converted to a different formula.
@@ -74,9 +83,9 @@ UTF-8 (including BOM) and legacy Windows-1252 text are accepted.
        clipping, matching OSLO spot-diagram behavior. The default stop is surface 1.
    * - ``APN``, ``ATP``, ``AAC``, ``AGN``, ``AAN``, ``AX1/2``, ``AY1/2``,
        ``AVX1..4``, ``AVY1..4``, ``APK``
-     - Ellipses, rectangles, triangles, quadrangles, rotation, obstructions and
-       unions of intersecting aperture groups. Omitted legacy coordinates are
-       zero. Transmitting/obstructing actions are supported; undeviated holes are
+     - Ellipses, rectangles, triangles, quadrangles, centroid-based rotation,
+       obstructions and unions of intersecting aperture groups. Omitted legacy
+       coordinates are zero. Transmitting/obstructing actions are supported; undeviated holes are
        diagnosed. APK copies a preceding special aperture.
    * - ``DCX/Y/Z``, ``TLA/B/C``, ``DT``, ``TOX/Y/Z``, ``GC``, ``RCO``, ``BEN``
      - OSLO intrinsic Euler rotations, signed X/Y tilts, translation order,
@@ -140,6 +149,8 @@ on a single line. Use native JSON for those systems. Finite-object and floating-
 apertures export the actual axial beam radius at surface 1.
 The writer rejects finite object distances that OSLO would interpret as infinite
 and preserves thickness precision to avoid rounding across that boundary.
+Constant refractive indices retain their saved precision, including small
+differences from unity. Invalid object-NA launches are rejected before writing.
 
 Specification and real-file validation
 --------------------------------------
@@ -147,10 +158,11 @@ Specification and real-file validation
 Mappings were checked against Lambda Research's
 `OSLO Program Reference (10 March 2021) <https://lambdares.com/hubfs/Support/support/oslo/oslo_releases/OSLOProgramReference.pdf>`_
 (printed pp. 43-50: solves/apertures; 51-68: media/coordinates; 69-85:
-surfaces/gratings; 120-122: system setup; 208-210: fields; 215: telecentricity;
+surfaces/gratings; 120-123: system setup/wavelengths; 208-210: fields; 215: telecentricity;
 508-514: commands),
 the `Optics Reference <https://lambdares.com/hubfs/Support/support/OSLOOpticsReference_Sep21.pdf>`_
-(pp. 142-145: coordinate transforms; 151: object conjugates/telecentric launch;
+(pp. 105: special-aperture shapes and rotation; 142-145: coordinate transforms;
+151: object conjugates/telecentric launch;
 170-171: grating equation), and the
 `official demo library <https://lambdares.com/support-posts/lens-demos>`_.
 The `current release page <https://lambdares.com/support-posts/oslo-current-release>`_
@@ -170,19 +182,22 @@ indices, poses, aperture clipping, grating directions and solve targets.
 
 The 2026-09-08 audit used archive SHA-256
 ``d5d43924d945a0ef5a200a0e5f12e459095b7504c59c946770fe75711814f8cc``.
-Both NumPy and Torch imported 98 of 101 files in permissive mode (5 without
-warnings, 93 with warnings); 10 passed strict import. The on-axis smoke trace
-transmitted at least one finite ray in 79 files, transmitted none in 19, and
-raised no errors among imported files. These
-figures include deliberately unsupported examples and are compatibility results,
+Both NumPy and Torch imported 97 of 101 files in permissive mode (5 without
+warnings, 92 with warnings); 10 passed strict import. The on-axis smoke trace
+transmitted at least one finite ray in 78 files, transmitted none in 19, and
+raised no errors among imported files. These figures include deliberately
+unsupported examples and are compatibility results,
 not 101 validated optical designs. The audit JSON lists every filename and reason.
 The rejected ``demos/edu/prismirr.len`` has a BEN bend that relies on
 TIR-controlled reflection, which is not mapped. Earlier permissive imports
 accepted this file while tracing the affected surface with a refracting model.
-The other rejected files, ``demos/edu/ebert.len`` and
+Two other rejected files, ``demos/edu/ebert.len`` and
 ``demos/premium/nonseq/cherryns.len``, require finite-object EBR conversion on
 geometry outside the native scalar paraxial model. Earlier imports treated EBR
 as an entrance-pupil radius without accounting for their finite object distance;
 the smoke trace failed for ebert and transmitted no rays for cherryns.
+The fourth rejection is ``demos/edu/xarmdemo.len``: its NAO=1 and XARM mode
+require extended ray aiming. The earlier import's finite smoke rays did not
+represent that specified source cone.
 Legacy ``RCO 0`` records in the demo archive are interpreted as the default undo
 of the current local transform, consistently with the examples' surface placement.

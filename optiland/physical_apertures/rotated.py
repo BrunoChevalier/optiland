@@ -75,6 +75,6 @@ class RotatedAperture(BaseAperture):
         return cls(
             BaseAperture.from_dict(data["aperture"]),
             data["angle"],
-            data.get("center_x", 0.0),
-            data.get("center_y", 0.0),
+            data["center_x"],
+            data["center_y"],
         )

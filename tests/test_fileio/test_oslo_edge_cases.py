@@ -926,17 +926,6 @@ def test_special_aperture_rotates_about_its_centroid(lens_file, set_test_backend
     assert_allclose(restored.contains(points_x * 3, points_y * 3), expected)
 
 
-def test_legacy_rotated_aperture_json_keeps_origin_pivot():
-    aperture = BaseAperture.from_dict(
-        {
-            "type": "RotatedAperture",
-            "aperture": RectangularAperture(2, 6, 1, 3).to_dict(),
-            "angle": math.pi / 2,
-        }
-    )
-    assert_allclose(aperture.extent, [-3, -1, 2, 6])
-
-
 @pytest.mark.parametrize(
     "distance,medium,na",
     [("1e20", "", 0.1), ("100", "", 1), ("100", "", 1.1), ("100", "GLA 1.5", 1.6)],

@@ -57,4 +57,4 @@ class TabulatedMaterial(BaseMaterial):
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> TabulatedMaterial:
-        return cls(data["wavelengths"], data["indices"], data.get("name", ""))
+        return cls(data["wavelengths"], data["indices"], data["name"])

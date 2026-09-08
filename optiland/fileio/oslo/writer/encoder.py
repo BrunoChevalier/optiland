@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any
 
 import optiland.backend as be
 from optiland.fileio.common import FIELD_CLASS_TO_TYPE
+from optiland.fileio.oslo.constants import DEFAULT_WAVELENGTHS_UM
 from optiland.fileio.oslo.model import OsloDataModel
 from optiland.fileio.oslo.surfaces import get_handler_for_optiland_type
 from optiland.materials import AbbeMaterial, IdealMaterial, Material, TabulatedMaterial
@@ -173,7 +174,7 @@ class OpticToOsloEncoder:
             elif isinstance(material_to_encode, AbbeMaterial):
                 surf_data["glass_wavelengths"] = self.data_model.wavelengths.get(
                     "values"
-                ) or [0.58756, 0.48613, 0.65627]
+                ) or list(DEFAULT_WAVELENGTHS_UM)
             surf_data["material"] = self._encode_material(material_to_encode)
 
             # Aperture

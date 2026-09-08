@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any
 
 import optiland.backend as be
 from optiland.fileio.base import BaseOpticReader
+from optiland.fileio.oslo.constants import DEFAULT_WAVELENGTHS_UM
 from optiland.fileio.oslo.reader.apertures import physical_aperture
 from optiland.fileio.oslo.reader.coordinates import surface_coordinates
 from optiland.fileio.oslo.reader.geometry import surface_geometry
@@ -278,7 +279,7 @@ class OsloToOpticConverter(BaseOpticReader):
                 return AbbeMaterial(*indices, model="buchdahl")
             if len(set(indices)) == 1:
                 return IdealMaterial(indices[0])
-            wavelengths = wavelengths or [0.58756, 0.48613, 0.65627]
+            wavelengths = wavelengths or list(DEFAULT_WAVELENGTHS_UM)
             if len(indices) != len(wavelengths):
                 raise ValueError(f"OSLO glass {name!r} index/wavelength counts differ")
             return TabulatedMaterial(wavelengths, indices, name=name)

@@ -13,6 +13,7 @@ import warnings
 from pathlib import Path
 from typing import Any
 
+from optiland.fileio.oslo.constants import DEFAULT_WAVELENGTHS_UM
 from optiland.fileio.oslo.model import OsloDataModel, OsloDiagnostic
 
 
@@ -201,7 +202,7 @@ class OsloDataParser:
                 self._current_surf_idx = index
                 self._unsupported("ASn", "general coefficients require ASP ASR/ARA/ASX")
 
-        values = self._wavelength_values or [0.58756, 0.48613, 0.65627]
+        values = self._wavelength_values or list(DEFAULT_WAVELENGTHS_UM)
         weights = self._wavelength_weights + [1.0] * len(values)
         self.data_model.wavelengths["values"] = values
         self.data_model.wavelengths["weights"] = weights[: len(values)]
@@ -445,7 +446,7 @@ class OsloDataParser:
         self._clear_constraint("GLA")
         self._current_surf_data["material"] = "GLA " + " ".join(tokens[1:])
         self._current_surf_data["glass_wavelengths"] = list(
-            self._wavelength_values or [0.58756, 0.48613, 0.65627]
+            self._wavelength_values or DEFAULT_WAVELENGTHS_UM
         )
 
     def _read_paraxial(self, tokens: list[str]) -> None:
@@ -621,7 +622,7 @@ class OsloDataParser:
         if index > 1000 or len(values) != 1:
             raise ValueError(f"{cmd} requires one value and a bounded wavelength index")
         target = getattr(self, attr)
-        defaults = [0.58756, 0.48613, 0.65627] if wavelength else [1.0] * (index + 1)
+        defaults = DEFAULT_WAVELENGTHS_UM if wavelength else [1.0] * (index + 1)
         while len(target) <= index:
             if len(target) >= len(defaults):
                 if len(target) != index:

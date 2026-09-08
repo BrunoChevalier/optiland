@@ -94,11 +94,13 @@ class OsloDataFormatter:
 
     def _fmt_vals(self, values: list[float]) -> str:
         """Format up to the first 3 values, matching OSLO's WV/WW convention."""
-        return " ".join(self._fmt(v) for v in values[:3])
+        return " ".join(self._fmt(v) for v in values)
 
     def _format_surface(
         self, lines: list[str], index: int, data: dict[str, Any]
     ) -> None:
+        if "glass_wavelengths" in data:
+            lines.append(f"WV {self._fmt_vals(data['glass_wavelengths'])}")
         lines.append(data.get("material", "AIR"))
 
         self._format_surface_geometry(lines, data)

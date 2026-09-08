@@ -21,6 +21,7 @@ from .material_utils import (
     plot_nk,
 )
 from .registry import MaterialRegistry
+from .tabulated import TabulatedMaterial
 from .warnings import OptilandMaterialWarning
 
 __all__ = [
@@ -31,6 +32,7 @@ __all__ = [
     "BaseMaterial",
     # From ideal.py
     "IdealMaterial",
+    "TabulatedMaterial",
     # From material.py
     "Material",
     # From material_file.py

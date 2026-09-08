@@ -251,6 +251,9 @@ class OsloDataParser:
         # GLA 1.573 1.573 1.573
         # GLA MOD G1 1.6489 1.662...
         self._current_surf_data["material"] = "GLA " + " ".join(tokens[1:])
+        self._current_surf_data["glass_wavelengths"] = list(
+            self._wavelength_values or [0.58756, 0.48613, 0.65627]
+        )
 
     def _read_paraxial(self, tokens: list[str]) -> None:
         self._current_surf_data["PFL"] = float(tokens[1])

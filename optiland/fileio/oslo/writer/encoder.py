@@ -15,7 +15,7 @@ import optiland.backend as be
 from optiland.fileio.common import FIELD_CLASS_TO_TYPE
 from optiland.fileio.oslo.model import OsloDataModel
 from optiland.fileio.oslo.surfaces import get_handler_for_optiland_type
-from optiland.materials import AbbeMaterial, IdealMaterial, Material
+from optiland.materials import AbbeMaterial, IdealMaterial, Material, TabulatedMaterial
 from optiland.physical_apertures import RadialAperture
 
 if TYPE_CHECKING:
@@ -130,6 +130,8 @@ class OpticToOsloEncoder:
             is_mirror = bool(getattr(im, "is_reflective", False))
             is_paraxial = bool(im.interaction_type == "thin_lens")
             material_to_encode = "mirror" if is_mirror else surface.material_post
+            if isinstance(material_to_encode, TabulatedMaterial):
+                surf_data["glass_wavelengths"] = material_to_encode.wavelengths
             surf_data["material"] = self._encode_material(material_to_encode)
 
             # Aperture
@@ -172,6 +174,9 @@ class OpticToOsloEncoder:
 
         if isinstance(material, Material):
             return f"  GLA {material.name}"
+
+        if isinstance(material, TabulatedMaterial):
+            return "  GLA " + " ".join(f"{n:.12g}" for n in material.indices)
 
         if isinstance(material, IdealMaterial):
             n = float(material.index.item())

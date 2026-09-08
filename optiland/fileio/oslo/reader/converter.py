@@ -15,7 +15,7 @@ from optiland.coordinate_system import CoordinateSystem
 from optiland.fileio.base import BaseOpticReader
 from optiland.fileio.oslo.reader.geometry import surface_geometry
 from optiland.fileio.oslo.reader.parser import OsloDataParser
-from optiland.materials import AbbeMaterial, IdealMaterial, Material
+from optiland.materials import AbbeMaterial, IdealMaterial, Material, TabulatedMaterial
 from optiland.optic import Optic
 
 # ---------------------------------------------------------------------------
@@ -178,7 +178,9 @@ class OsloToOpticConverter(BaseOpticReader):
 
         # Handle material
         material_raw = data.get("material", "AIR")
-        surface_params["material"] = self._resolve_material(material_raw)
+        surface_params["material"] = self._resolve_material(
+            material_raw, data.get("glass_wavelengths")
+        )
 
         # Handle aperture (AP is radius in OSLO).
         # Skip sentinel values like AP 4e9 which mean "infinite aperture".
@@ -233,7 +235,9 @@ class OsloToOpticConverter(BaseOpticReader):
         if "PY" in data:
             self._py_surface_indices.append(index)
 
-    def _resolve_material(self, material_raw: str) -> Any:
+    def _resolve_material(
+        self, material_raw: str, wavelengths: list[float] | None = None
+    ) -> Any:
         if material_raw == "AIR":
             return "air"
         if material_raw == "RFL":
@@ -245,31 +249,38 @@ class OsloToOpticConverter(BaseOpticReader):
             if not parts:
                 return "air"
 
-            # Case 1: Catalog Glass (e.g. GLA BK7)
-            if len(parts) == 1:
-                return self._resolve_catalog_glass(parts[0])
-
-            # Case 2: Direct Indices (e.g. GLA 1.573 1.573 1.573)
-            # Case 3: Modeled Glass (e.g. GLA MOD G1 1.6489 1.662...)
+            name = ""
+            modeled = parts[0].upper() == "MOD"
+            if modeled:
+                parts = parts[1:]
             try:
-                if parts[0].upper() == "MOD":
-                    # MOD <name> <nd> <n1> <n2>
-                    nd = float(parts[2])
-                    if len(parts) >= 5:
-                        n1 = float(parts[3])
-                        n2 = float(parts[4])
-                        return self._create_abbe_material(nd, n1, n2)
-                    return IdealMaterial(nd)
-                else:
-                    # <nd> <n1> <n2>
-                    nd = float(parts[0])
-                    if len(parts) >= 3:
-                        n1 = float(parts[1])
-                        n2 = float(parts[2])
-                        return self._create_abbe_material(nd, n1, n2)
-                    return IdealMaterial(nd)
-            except (ValueError, IndexError):
-                return "air"
+                float(parts[0])
+            except ValueError:
+                name, parts = parts[0].strip('"'), parts[1:]
+            if not parts:
+                return self._resolve_catalog_glass(name)
+            indices = [float(value) for value in parts]
+            if any(value <= 0 for value in indices):
+                raise ValueError(
+                    f"OSLO glass {name!r} requires positive refractive indices"
+                )
+            if modeled and len(indices) == 2:
+                # Interactive model-glass form specifies index and Abbe number.
+                # Saved legacy MOD records instead contain explicit index samples.
+                if self.strict:
+                    raise ValueError("GLA MOD index/Abbe dispersion is approximate")
+                warnings.warn(
+                    "OSLO GLA MOD index/Abbe uses Optiland's Buchdahl model",
+                    UserWarning,
+                    stacklevel=3,
+                )
+                return AbbeMaterial(*indices, model="buchdahl")
+            if len(set(indices)) == 1:
+                return IdealMaterial(indices[0])
+            wavelengths = wavelengths or [0.58756, 0.48613, 0.65627]
+            if len(indices) != len(wavelengths):
+                raise ValueError(f"OSLO glass {name!r} index/wavelength counts differ")
+            return TabulatedMaterial(wavelengths, indices, name=name)
 
         return "air"
 
@@ -309,6 +320,8 @@ class OsloToOpticConverter(BaseOpticReader):
             return AbbeMaterial(nd, vd, model="buchdahl")
 
         # Step 4 – cannot resolve; warn and fall back to air.
+        if self.strict:
+            raise ValueError(f"OSLO glass '{name}' could not be resolved")
         warnings.warn(
             f"OSLO glass '{name}' could not be resolved and will be treated as "
             "air.  Add it to _OSLO_GLASS_FALLBACK in oslo/reader/converter.py "
@@ -317,15 +330,6 @@ class OsloToOpticConverter(BaseOpticReader):
             stacklevel=4,
         )
         return "air"
-
-    def _create_abbe_material(self, nd: float, n1: float, n2: float) -> Any:
-        # n1 = nF (F line 0.48613 µm), n2 = nC (C line 0.65627 µm)
-        # Abbe V = (nd - 1) / (nF - nC)
-        if n1 != n2:
-            vd = (nd - 1.0) / (n1 - n2)
-            if vd > 0:
-                return AbbeMaterial(nd, vd, model="buchdahl")
-        return IdealMaterial(nd)
 
     def _configure_aperture(self) -> None:
         aperture_data = self.data.aperture

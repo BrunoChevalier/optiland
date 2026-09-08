@@ -176,3 +176,35 @@ def test_hatched_reflector_and_fixed_air(tmp_path, set_test_backend):
     assert optic.surfaces[1].interaction_model.is_reflective
     optic = load_oslo_file(simple_lens(tmp_path, surface='AIF'), strict=True)
     assert_allclose(optic.surfaces[1].material_post.n(.55), 1)
+
+
+@pytest.mark.parametrize("definition", ['GLA CUSTOM 1.7 1.72 1.68',
+                                         'GLA 1.7 1.72 1.68',
+                                         'GLA MOD G1 1.7 1.72 1.68'])
+def test_embedded_indices_use_definition_wavelengths(tmp_path, set_test_backend, definition):
+    path = simple_lens(tmp_path, surface='WV .6 .4 .8\n' + definition,
+                       footer='WV .6\nWW 1')
+    optic = load_oslo_file(path, strict=True)
+    material = optic.surfaces[1].material_post
+    assert_allclose(material.n(be.array([.4, .6, .8])), [1.72, 1.7, 1.68])
+    out = tmp_path / 'material.len'
+    save_oslo_file(optic, out)
+    assert_allclose(load_oslo_file(out).surfaces[1].material_post.n(.6), 1.7)
+
+
+def test_single_direct_index_and_unknown_glass_strict(tmp_path, set_test_backend):
+    optic = load_oslo_file(simple_lens(tmp_path, surface='GLA 1.65'), strict=True)
+    assert_allclose(optic.surfaces[1].material_post.n(.55), 1.65)
+    with pytest.raises(ValueError, match="MISSING_GLASS"):
+        load_oslo_file(simple_lens(tmp_path, surface='GLA MISSING_GLASS'), strict=True)
+
+
+def test_tabulated_material_validation_interpolation_and_serialization(set_test_backend):
+    from optiland.materials import BaseMaterial, TabulatedMaterial
+    mat = TabulatedMaterial([.6, .4, .8], [1.5, 1.6, 1.4], name='example')
+    assert_allclose(mat.n(be.array([.4, .5, .6, .7, .8])), [1.6, 1.55, 1.5, 1.45, 1.4])
+    assert_allclose(BaseMaterial.from_dict(mat.to_dict()).n(.5), 1.55)
+    with pytest.raises(ValueError, match="range"):
+        mat.n(.9)
+    with pytest.raises(ValueError):
+        TabulatedMaterial([.5, .5], [1.5, 1.6])

@@ -323,3 +323,32 @@ def test_invalid_or_unsupported_pickups_rejected(tmp_path, pickup):
     path = simple_lens(tmp_path, surface=pickup)
     with pytest.raises(ValueError, match='PK'):
         load_oslo_file(path, strict=True)
+
+
+@pytest.mark.parametrize('command,target,component,index', [
+    ('PY 1', 1, 'marginal_height', 2),
+    ('PYC .1', .1, 'chief_height', 2),
+    ('PU -.05', -.05, 'marginal_slope', 1),
+])
+def test_paraxial_solves_use_requested_surface_and_value(tmp_path, set_test_backend, command, target, component, index):
+    optic = load_oslo_file(simple_lens(tmp_path, system='ANG 5', surface=command), strict=True)
+    heights, slopes = optic.paraxial.chief_ray() if component.startswith('chief') else optic.paraxial.marginal_ray()
+    assert_allclose((heights if component.endswith('height') else slopes)[index], target, atol=1e-9)
+    if command.startswith('PY'):
+        # Moving an interior surface must retain the subsequent nominal spacing.
+        assert_allclose(optic.surfaces[3].geometry.cs.z - optic.surfaces[2].geometry.cs.z, 20)
+
+
+def test_edge_contact_solve_and_unsatisfiable_solve(tmp_path, set_test_backend):
+    optic = load_oslo_file(simple_lens(tmp_path, surface='EC 2'), strict=True)
+    assert_allclose(optic.surfaces[2].geometry.cs.z, 2 * (20 - (400 - 4)**.5))
+    path = simple_lens(tmp_path, surface='AIF\nPY 1')
+    with pytest.raises(ValueError, match='PY'):
+        load_oslo_file(path, strict=True)
+
+
+def test_chief_angle_solve(tmp_path, set_test_backend):
+    path = simple_lens(tmp_path, system='ANG 5')
+    path.write_text(path.read_text().replace('RD -20', 'RD -20\nPUC .03'))
+    optic = load_oslo_file(path, strict=True)
+    assert_allclose(optic.paraxial.chief_ray()[1][2], .03, atol=1e-9)

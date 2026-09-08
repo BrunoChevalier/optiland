@@ -12,13 +12,13 @@ from copy import deepcopy
 from typing import TYPE_CHECKING, Any
 
 import optiland.backend as be
-from optiland.coordinate_system import CoordinateSystem
 from optiland.fileio.base import BaseOpticReader
 from optiland.fileio.oslo.reader.apertures import physical_aperture
 from optiland.fileio.oslo.reader.coordinates import surface_coordinates
 from optiland.fileio.oslo.reader.geometry import surface_geometry
 from optiland.fileio.oslo.reader.parser import OsloDataParser
 from optiland.fileio.oslo.reader.pickups import resolve_pickups
+from optiland.fileio.oslo.reader.solves import SOLVES, apply_solve
 from optiland.materials import AbbeMaterial, IdealMaterial, Material, TabulatedMaterial
 from optiland.optic import Optic
 
@@ -103,8 +103,6 @@ class OsloToOpticConverter(BaseOpticReader):
         self.data = oslo_data
         self.strict = strict
         self.optic: Optic | None = None
-        self.current_cs = CoordinateSystem()
-        self._py_surface_indices: list[int] = []
 
     def read(self, source: str) -> Optic:
         """Read an OSLO file and return a fully-configured Optic.
@@ -116,8 +114,6 @@ class OsloToOpticConverter(BaseOpticReader):
             A configured Optic instance.
         """
         self.data = OsloDataParser(source, strict=self.strict).parse()
-        self.current_cs = CoordinateSystem()
-        self._py_surface_indices = []
         return self.convert()
 
     def convert(self) -> Optic:
@@ -132,14 +128,12 @@ class OsloToOpticConverter(BaseOpticReader):
         self.data = deepcopy(self.data)
         self.data.surfaces = resolve_pickups(self.data.surfaces)
         self.optic = Optic(self.data.name)
-        self.current_cs = CoordinateSystem()
-        self._py_surface_indices = []
         self.optic.obj_space_telecentric = self.data.settings.get("telecentric", False)
         self._configure_surfaces()
         self._configure_wavelengths()
         self._configure_aperture()
         self._configure_fields()
-        self._apply_py_solves()
+        self._apply_solves()
         return self.optic
 
     def _configure_surfaces(self) -> None:
@@ -216,11 +210,6 @@ class OsloToOpticConverter(BaseOpticReader):
             surface_params.update(self._coordinates[index])
 
         self.optic.surfaces.add(**surface_params)
-
-        # Track surfaces with a PY (paraxial thickness) solve.
-        # Actual solve is applied in _apply_py_solves() after full configuration.
-        if "PY" in data:
-            self._py_surface_indices.append(index)
 
     def _resolve_material(
         self, material_raw: str, wavelengths: list[float] | None = None
@@ -373,20 +362,27 @@ class OsloToOpticConverter(BaseOpticReader):
         for y in fields_to_add:
             self.optic.fields.add(y=y, x=0.0)
 
-    def _apply_py_solves(self) -> None:
-        """Apply paraxial thickness (PY) solves.
-
-        PY 0.0 in an OSLO file means "set this surface's thickness so that
-        the paraxial marginal ray focuses at the image plane."  We implement
-        this via image_solve(), which drives F2() to zero by correctly setting
-        the image distance.
-        """
-        if not self._py_surface_indices:
-            return
-        import contextlib
-
-        with contextlib.suppress(Exception):
-            self.optic.updater.image_solve()
+    def _apply_solves(self) -> None:
+        """Apply surface-specific solves, retaining saved values on warned failures."""
+        for index, data in sorted(self.data.surfaces.items()):
+            for command in SOLVES:
+                if command not in data:
+                    continue
+                saved = self.optic.to_dict()
+                try:
+                    apply_solve(
+                        self.optic, index, command, data[command], self.data.units
+                    )
+                except (ValueError, RuntimeError, ArithmeticError) as exc:
+                    self.optic = Optic.from_dict(saved)
+                    message = f"OSLO {command} at surface {index}: {exc}"
+                    if self.strict:
+                        raise ValueError(message) from exc
+                    warnings.warn(
+                        message + "; retained saved prescription",
+                        UserWarning,
+                        stacklevel=3,
+                    )
 
     def _configure_wavelengths(self) -> None:
         wl_data = self.data.wavelengths

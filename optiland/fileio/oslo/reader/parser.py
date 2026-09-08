@@ -95,6 +95,10 @@ class OsloDataParser:
             "GTO": self._read_gto,
             "END": self._read_end,
             "PY": self._read_solve,
+            "PYC": self._read_solve,
+            "PU": self._read_solve,
+            "PUC": self._read_solve,
+            "EC": self._read_solve,
             "PK": self._read_pickup,
             "FNO": self._read_fno,
             "NAO": self._read_nao,
@@ -403,9 +407,7 @@ class OsloDataParser:
         self._ended = True
 
     def _read_solve(self, tokens: list[str]) -> None:
-        # TODO: Support more solves
-        if tokens[0].upper() == "PY":
-            self._current_surf_data["PY"] = float(tokens[1])
+        self._current_surf_data[tokens[0]] = float(tokens[1])
 
     def _read_pickup(self, tokens: list[str]) -> None:
         if tokens[1].upper() not in {

@@ -120,7 +120,8 @@ class OsloDataFormatter:
             lines.append(f"  TH {self._fmt(th)}")  # 1e10 is OSLO's infinity convention
 
         if "AP" in data:
-            lines.append(f"  AP {self._fmt(data['AP'])}")
+            flag = "CHK " if data.get("aperture_checked") else ""
+            lines.append(f"  AP {flag}{self._fmt(data['AP'])}")
 
         if data.get("AST"):
             lines.append("  AST")

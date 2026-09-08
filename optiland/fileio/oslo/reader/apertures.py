@@ -14,11 +14,14 @@ from optiland.physical_apertures import (
     RadialAperture,
     RectangularAperture,
     RotatedAperture,
+    UnclippedAperture,
     UnionAperture,
 )
 
 
-def physical_aperture(data: dict[str, Any], scale: float) -> BaseAperture | None:
+def physical_aperture(
+    data: dict[str, Any], scale: float, check: bool = True
+) -> BaseAperture | None:
     """Build a surface aperture from ordinary and special aperture data."""
     radius = data.get("AP", 0.0)
     outer = RadialAperture(r_max=radius * scale) if 0 < radius < 1e6 else None
@@ -29,7 +32,9 @@ def physical_aperture(data: dict[str, Any], scale: float) -> BaseAperture | None
             continue  # The parser has already diagnosed hole/unknown actions.
         kind = int(spec.get("ATP", 1))
         if kind in {1, 2}:
-            x0, x1, y0, y1 = [spec[k] * scale for k in ("AX1", "AX2", "AY1", "AY2")]
+            x0, x1, y0, y1 = [
+                spec.get(k, 0.0) * scale for k in ("AX1", "AX2", "AY1", "AY2")
+            ]
             if x0 >= x1 or y0 >= y1:
                 raise ValueError("OSLO special aperture requires increasing bounds")
             if kind == 1:
@@ -42,8 +47,8 @@ def physical_aperture(data: dict[str, Any], scale: float) -> BaseAperture | None
                 ap = RotatedAperture(ap, math.radians(spec["AAN"]))
         elif kind in {3, 4}:
             ap = PolygonAperture(
-                [spec[f"AVX{i}"] * scale for i in range(1, kind + 1)],
-                [spec[f"AVY{i}"] * scale for i in range(1, kind + 1)],
+                [spec.get(f"AVX{i}", 0.0) * scale for i in range(1, kind + 1)],
+                [spec.get(f"AVY{i}", 0.0) * scale for i in range(1, kind + 1)],
             )
         else:
             raise ValueError(f"OSLO special aperture type {kind} is not supported")
@@ -61,5 +66,11 @@ def physical_aperture(data: dict[str, Any], scale: float) -> BaseAperture | None
                 group = DifferenceAperture(group, ap)
         combined = group if combined is None else UnionAperture(combined, group)
     if combined is None:
-        return outer
-    return combined if outer is None else IntersectionAperture(outer, combined)
+        return (
+            UnclippedAperture(outer)
+            if outer is not None and (not check or not data.get("aperture_checked"))
+            else outer
+        )
+    if outer is not None and data.get("aperture_checked"):
+        combined = IntersectionAperture(outer, combined)
+    return combined if check else UnclippedAperture(combined)

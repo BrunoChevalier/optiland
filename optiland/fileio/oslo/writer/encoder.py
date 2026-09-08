@@ -16,7 +16,7 @@ from optiland.fileio.common import FIELD_CLASS_TO_TYPE
 from optiland.fileio.oslo.model import OsloDataModel
 from optiland.fileio.oslo.surfaces import get_handler_for_optiland_type
 from optiland.materials import AbbeMaterial, IdealMaterial, Material, TabulatedMaterial
-from optiland.physical_apertures import RadialAperture
+from optiland.physical_apertures import RadialAperture, UnclippedAperture
 
 if TYPE_CHECKING:
     from optiland.optic import Optic
@@ -136,6 +136,10 @@ class OpticToOsloEncoder:
 
             # Aperture
             # th >= 9.9e9 covers both be.inf (converted to 1e10) and 1e10 as-stored
+            aperture = surface.aperture
+            checked = not isinstance(aperture, UnclippedAperture)
+            if not checked:
+                aperture = aperture.aperture
             if idx == 0 and th >= 9.9e9:
                 # Object surface with infinite conjugate: emit a large AP sentinel
                 # matching OSLO EDU convention: AP = tan(max_field_angle) * 1e10
@@ -145,8 +149,9 @@ class OpticToOsloEncoder:
                 else:
                     sentinel = 1e10
                 surf_data["AP"] = sentinel
-            elif surface.aperture and isinstance(surface.aperture, RadialAperture):
-                surf_data["AP"] = float(surface.aperture.r_max)
+            elif isinstance(aperture, RadialAperture):
+                surf_data["AP"] = float(aperture.r_max)
+                surf_data["aperture_checked"] = checked
             elif surface.is_stop:
                 # No explicit physical aperture on stop: derive from paraxial EPD.
                 # OSLO requires AP on the stop to draw full ray bundles for off-axis

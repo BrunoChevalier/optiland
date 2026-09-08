@@ -60,6 +60,7 @@ class OsloDataParser:
             "AP": self._read_ap,
             "APF": self._read_ap,
             "APN": self._read_apn,
+            "APCK": self._read_apck,
             "APK": self._read_aperture_pickup,
             "ATP": self._read_special_aperture,
             "AAC": self._read_special_aperture,
@@ -439,6 +440,13 @@ class OsloDataParser:
         if value < 0:
             raise ValueError("AP radius must be nonnegative")
         self._current_surf_data["AP"] = value
+        self._current_surf_data["aperture_checked"] = tokens[1].upper() == "CHK"
+
+    def _read_apck(self, tokens: list[str]) -> None:
+        flag = tokens[1].upper()
+        if flag not in {"ON", "OFF", "1", "0"}:
+            raise ValueError("APCK expects ON or OFF")
+        self.data_model.settings["aperture_check"] = flag in {"ON", "1"}
 
     def _read_apn(self, tokens: list[str]) -> None:
         count = int(tokens[1])

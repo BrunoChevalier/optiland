@@ -106,7 +106,7 @@ def test_units_scale_prescription_aperture_and_object_height(tmp_path, set_test_
     optic = load_oslo_file(path)
     assert_allclose(optic.surfaces[1].geometry.radius, 20 * 25.4)
     assert_allclose(optic.surfaces[1].thickness, 2 * 25.4)
-    assert_allclose(optic.surfaces[1].aperture.r_max, 3 * 25.4)
+    assert_allclose(optic.surfaces[1].aperture.extent[1], 3 * 25.4)
     assert_allclose(optic.aperture.value, 4 * 25.4)
     assert_allclose(optic.fields.y_fields[-1], 25.4)
     assert_allclose(optic.wavelengths.primary_wavelength.value, .58756)
@@ -224,7 +224,7 @@ def test_special_aperture_shapes(tmp_path, set_test_backend, shape, points, expe
 
 def test_obstruction_groups_and_native_serialization(tmp_path, set_test_backend):
     from optiland.physical_apertures import BaseAperture
-    commands = ('APN 2\nATP A 1\nAAC A 2\nAX1 A -1\nAX2 A 1\nAY1 A -1\nAY2 A 1\n'
+    commands = ('AP CHK 3\nAPN 2\nATP A 1\nAAC A 2\nAX1 A -1\nAX2 A 1\nAY1 A -1\nAY2 A 1\n'
                 'ATP B 2\nAAC B 4\nAGN B 1\nAX1 B -.1\nAX2 B .1\nAY1 B -.1\nAY2 B .1')
     aperture = load_oslo_file(simple_lens(tmp_path, surface=commands), strict=True).surfaces[1].aperture
     for ap in [aperture, BaseAperture.from_dict(aperture.to_dict())]:
@@ -302,7 +302,7 @@ def test_multiple_pickups_relative_indices_curvature_and_length(tmp_path, set_te
     assert_allclose(optic.surfaces[2].geometry.coefficients[1], -.001)
     assert_allclose(optic.surfaces[2].thickness, 3)
     assert_allclose(optic.surfaces[3].thickness, 5)
-    assert_allclose(optic.surfaces[2].aperture.r_max, 3)
+    assert_allclose(optic.surfaces[2].aperture.extent[1], 3)
     assert_allclose(optic.surfaces[2].material_post.n(.55), 1.5)
 
 
@@ -413,3 +413,29 @@ def test_metadata_and_deleting_surface_data(tmp_path, set_test_backend):
     assert_allclose(optic.surfaces[1].geometry.cs.get_effective_transform()[0], [0, 0, 0])
     assert_allclose(optic.surfaces[2].geometry.cs.z, 2)
     assert_allclose(optic.surfaces[1].geometry.sag(be.array([0]), be.array([1])), 20 - 399**.5)
+
+
+@pytest.mark.parametrize('aperture,setting,intensity', [('AP 1', '', 1), ('AP CHK 1', '', 0), ('AP CHK 1', 'APCK OFF', 1), ('AP UNC 1', 'APCK ON', 1)])
+def test_aperture_checking_distinguishes_drawing_bounds(tmp_path, set_test_backend, aperture, setting, intensity):
+    from optiland.rays import RealRays
+    optic = load_oslo_file(simple_lens(tmp_path, system=setting, surface=aperture), strict=True)
+    rays = RealRays(be.array([2.0]), be.array([0.0]), be.array([-1.0]), be.array([0.0]), be.array([0.0]), be.array([1.0]), 1, .55)
+    optic.surfaces[1].trace(rays)
+    assert_allclose(rays.i, [intensity])
+    assert_allclose(optic.surfaces[1].aperture.extent, [-1, 1, -1, 1])
+
+
+def test_legacy_special_apertures_omit_zero_bounds(tmp_path, set_test_backend):
+    optic = load_oslo_file(simple_lens(tmp_path, surface='APN 1\nATP A 2\nAAC A 4\nAX1 A -.2\nAY1 A -1.5\nAY2 A 1.5'), strict=True)
+    assert_allclose(optic.surfaces[1].aperture.contains(be.array([-.1, .1]), be.array([0, 0])), [True, False])
+
+
+@pytest.mark.parametrize('checked', [False, True])
+def test_roundtrip_preserves_radial_clipping_mode(tmp_path, set_test_backend, checked):
+    from optiland.physical_apertures import UnclippedAperture
+    optic = load_oslo_file(simple_lens(tmp_path, surface='AP CHK 1' if checked else 'AP 1'), strict=True)
+    target = tmp_path / 'aperture.len'
+    save_oslo_file(optic, target)
+    restored = load_oslo_file(target, strict=True)
+    assert isinstance(restored.surfaces[1].aperture, UnclippedAperture) is not checked
+    assert_allclose(restored.surfaces[1].aperture.extent, [-1, 1, -1, 1])

@@ -220,7 +220,9 @@ class OsloToOpticConverter(BaseOpticReader):
             material_raw, data.get("glass_wavelengths")
         )
 
-        surface_params["aperture"] = physical_aperture(data, scale)
+        surface_params["aperture"] = physical_aperture(
+            data, scale, self.data.settings.get("aperture_check", True)
+        )
 
         if has_coord_transform:
             surface_params.pop("thickness")

@@ -22,6 +22,7 @@ from optiland.fileio.oslo.reader.pickups import resolve_pickups
 from optiland.fileio.oslo.reader.solves import SOLVES, apply_solve
 from optiland.materials import AbbeMaterial, IdealMaterial, Material, TabulatedMaterial
 from optiland.optic import Optic
+from optiland.phase import LinearGratingPhaseProfile
 
 # ---------------------------------------------------------------------------
 # Fallback glass catalog for OSLO glass names not in the refractiveindex.info
@@ -195,8 +196,23 @@ class OsloToOpticConverter(BaseOpticReader):
 
         # Is paraxial?
         if "PFL" in data:
+            message = "OSLO PFL perfect imagery is approximated by a paraxial thin lens"
+            if self.strict:
+                raise ValueError(message)
+            warnings.warn(message, UserWarning, stacklevel=3)
             surface_params["surface_type"] = "paraxial"
             surface_params["f"] = data["PFL"] * scale
+
+        if "GSP" in data or "GOR" in data:
+            spacing, order = data.get("GSP", 0.0), data.get("GOR", 1)
+            if int(order) != order or spacing < 0 or (spacing == 0 and order != 0):
+                raise ValueError(
+                    "OSLO GSP requires positive spacing and GOR an integer order"
+                )
+            if spacing and order:
+                surface_params["phase_profile"] = LinearGratingPhaseProfile(
+                    spacing * scale, angle=math.pi / 2, order=int(order)
+                )
 
         # Handle material
         material_raw = data.get("material", "AIR")

@@ -387,3 +387,29 @@ def test_gaussian_image_height_uses_focal_plane(tmp_path, set_test_backend):
     import math
     expected = math.degrees(math.atan(2 / float(optic.paraxial.f2())))
     assert_allclose(optic.fields[-1].y, abs(expected))
+
+
+@pytest.mark.parametrize('material,order', [('AIR', 1), ('RFL', -1)])
+def test_linear_grating_diffraction_direction_and_lens_units(tmp_path, set_test_backend, material, order):
+    from optiland.rays import RealRays
+    path = write_lens(tmp_path, f'LEN NEW "grating" 1 2\nUNI 10\nEBR .1\nWV .5\nTH 1e20\nNXT\n{material}\nGSP .0002\nGOR {order}\nTH 1\nNXT\nAIR\nEND 2\n')
+    optic = load_oslo_file(path, strict=True)
+    rays = RealRays(be.array([0.0]), be.array([0.0]), be.array([-1.0]), be.array([0.0]), be.array([0.0]), be.array([1.0]), 1, .5)
+    optic.surfaces[1].trace(rays)
+    assert_allclose(rays.L, [0], atol=1e-12)
+    assert_allclose(rays.M, [order * .5 / 2])
+    assert_allclose(rays.N, [(.9375)**.5 * (1 if material == 'AIR' else -1)])
+
+
+def test_perfect_lens_reports_nonparaxial_approximation(tmp_path):
+    with pytest.raises(ValueError, match='PFL.*perfect'):
+        load_oslo_file(simple_lens(tmp_path, surface='PFL 20'), strict=True)
+
+
+def test_metadata_and_deleting_surface_data(tmp_path, set_test_backend):
+    commands = 'NOT "lens note"\nCC -1\nAD .001\nATD\nCVX .1\nCXD\nDCY 2\nTLA 10\nTDD\nGC 0\nGCD\nRCO\nRCD\nBEN\nBED\nAPN 1\nAPD\nPY 2\nTSD\nPU .1\nCSD\nBDI 2 1\nVX 1 0 0 0\nPF 1 0 1 2 3\nLMO EGR\nLMN "element"\nLME'
+    optic = load_oslo_file(simple_lens(tmp_path, surface=commands), strict=True)
+    assert_allclose(optic.surfaces[1].geometry.radius, 20)
+    assert_allclose(optic.surfaces[1].geometry.cs.get_effective_transform()[0], [0, 0, 0])
+    assert_allclose(optic.surfaces[2].geometry.cs.z, 2)
+    assert_allclose(optic.surfaces[1].geometry.sag(be.array([0]), be.array([1])), 20 - 399**.5)

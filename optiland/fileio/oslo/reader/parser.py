@@ -109,7 +109,25 @@ class OsloDataParser:
             "TELE": self._read_tele,
             "DES": self._read_des,
             "PFL": self._read_paraxial,
+            "PFM": self._read_coeff,
+            "GSP": self._read_coeff,
+            "GOR": self._read_coeff,
+            "NOT": self._read_note,
+            "LMO": self._read_group,
         }
+        for cmd in (
+            "ATD",
+            "CXD",
+            "APD",
+            "GCD",
+            "RCD",
+            "BED",
+            "PFD",
+            "TDD",
+            "CSD",
+            "TSD",
+        ):
+            self._dispatch_table[cmd] = self._read_delete
 
     def parse(self) -> OsloDataModel:
         """Parse the OSLO file.
@@ -147,7 +165,19 @@ class OsloDataParser:
                     elif cmd in self._dispatch_table:
                         self._validate_numbers(tokens)
                         self._dispatch_table[cmd](tokens)
-                    elif cmd in {"DRW", "LDP", "CBK", "ELMDF1", "ELMDF2"}:
+                    elif cmd in {
+                        "DRW",
+                        "LDP",
+                        "CBK",
+                        "ELMDF1",
+                        "ELMDF2",
+                        "BDI",
+                        "BDD",
+                        "VX",
+                        "PF",
+                        "LMN",
+                        "LME",
+                    }:
                         continue  # Drawing-only data, without optical effects.
                     else:
                         self._unsupported(cmd)
@@ -330,6 +360,58 @@ class OsloDataParser:
 
     def _read_paraxial(self, tokens: list[str]) -> None:
         self._current_surf_data["PFL"] = float(tokens[1])
+
+    def _read_note(self, tokens: list[str]) -> None:
+        self._current_surf_data["note"] = " ".join(tokens[1:]).strip('"')
+
+    def _read_group(self, tokens: list[str]) -> None:
+        if tokens[1].upper() not in {"EGR", "ELE"}:
+            self._unsupported("LMO", "non-sequential groups are not mapped")
+
+    def _read_delete(self, tokens: list[str]) -> None:
+        data = self._current_surf_data
+        keys = {
+            "ATD": [
+                k
+                for k in data
+                if k in {"CC", "AD", "AE", "AF", "AG", "ASP"}
+                or re.fullmatch(r"AS\d+", k)
+            ],
+            "CXD": ["CVX"],
+            "APD": ["APN", "special_apertures", "aperture_pickups"],
+            "GCD": ["GC"],
+            "RCD": ["RCO"],
+            "BED": ["BEN"],
+            "PFD": ["PFL", "PFM"],
+            "TDD": [
+                "DCX",
+                "DCY",
+                "DCZ",
+                "TLA",
+                "TLB",
+                "TLC",
+                "DT",
+                "TOX",
+                "TOY",
+                "TOZ",
+                "GC",
+                "RCO",
+                "BEN",
+            ],
+            "CSD": ["PU", "PUC"],
+            "TSD": ["PY", "PYC", "EC"],
+        }[tokens[0]]
+        for key in keys:
+            data.pop(key, None)
+        kinds = {
+            "CSD": {"CV", "CVM"},
+            "TSD": {"TH", "THM", "LN", "LNM"},
+            "TDD": {"TD", "TDM"},
+        }.get(tokens[0], set())
+        if kinds:
+            data["pickups"] = [
+                p for p in data.get("pickups", []) if p[0].upper() not in kinds
+            ]
 
     def _read_rd(self, tokens: list[str]) -> None:
         self._current_surf_data["RD"] = float(tokens[1]) or math.inf

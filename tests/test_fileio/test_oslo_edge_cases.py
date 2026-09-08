@@ -561,6 +561,7 @@ def test_encoder_reuse_does_not_retain_old_prescription(lens_file):
     encoder = OpticToOsloEncoder(optic)
     original = encoder.encode()
     optic.set_aperture("objectNA", 0.1)
+    optic.updater.set_thickness(100, 0)
     optic.surfaces.remove(2)
     updated = encoder.encode()
     assert updated.aperture == {"NAO": 0.1}
@@ -828,7 +829,7 @@ def test_telecentric_chief_solves_do_not_use_a_nontelecentric_ray(lens_file, com
 
 @pytest.mark.parametrize("aperture", ["NAO 1", "NAO 1.1", "PUK 0"])
 def test_telecentric_launch_rejects_invalid_cone(lens_file, aperture):
-    with pytest.raises(ValueError, match="TELE.*NA"):
+    with pytest.raises(ValueError, match="NAO|TELE.*NA"):
         load_oslo_file(
             lens_file(system="OBH 2\nTELE ON", distance="100", aperture=aperture),
             strict=True,
@@ -934,3 +935,37 @@ def test_legacy_rotated_aperture_json_keeps_origin_pivot():
         }
     )
     assert_allclose(aperture.extent, [-3, -1, 2, 6])
+
+
+@pytest.mark.parametrize(
+    "distance,medium,na",
+    [("1e20", "", 0.1), ("100", "", 1), ("100", "", 1.1), ("100", "GLA 1.5", 1.6)],
+)
+def test_object_na_rejects_invalid_launch(
+    lens_file, set_test_backend, distance, medium, na
+):
+    with pytest.raises(ValueError, match="NAO"):
+        load_oslo_file(
+            lens_file(distance=distance, system=medium, aperture=f"NAO {na}")
+        )
+
+
+def test_object_na_respects_object_medium_index(lens_file, set_test_backend):
+    optic = load_oslo_file(
+        lens_file(distance="100", system="GLA 1.5", aperture="NAO 1.2"), strict=True
+    )
+    # NA/n = 0.8; tan(arcsin(0.8)) = 4/3 in the object medium.
+    assert_allclose(optic.paraxial.marginal_ray()[1][0], 4 / 3)
+
+
+@pytest.mark.parametrize("distance,na", [("1e20", 0.1), ("100", 1.1)])
+def test_invalid_object_na_export_preserves_destination(
+    lens_file, tmp_path, distance, na
+):
+    optic = load_oslo_file(lens_file(distance=distance), strict=True)
+    optic.set_aperture("objectNA", na)
+    path = tmp_path / "invalid-na.len"
+    path.write_text("saved design", encoding="utf-8")
+    with pytest.raises(ValueError, match="NAO"):
+        save_oslo_file(optic, path)
+    assert path.read_text() == "saved design"

@@ -26,6 +26,7 @@ from optiland.fileio.oslo.reader.parser import OsloDataParser
 from optiland.fileio.oslo.reader.pickups import resolve_pickups
 from optiland.fileio.oslo.reader.solves import SOLVES, apply_solve, check_solve
 from optiland.fileio.oslo.syntax import decode_text, tokenize
+from optiland.fileio.oslo.validation import validate_object_na
 from optiland.materials import AbbeMaterial, IdealMaterial, Material, TabulatedMaterial
 from optiland.optic import Optic
 from optiland.phase import LinearGratingPhaseProfile
@@ -416,7 +417,9 @@ class OsloToOpticConverter(BaseOpticReader):
             self.optic.set_aperture("EPD", diameter)
 
         if "NAO" in aperture_data:
-            self.optic.set_aperture("objectNA", aperture_data["NAO"])
+            value = aperture_data["NAO"]
+            validate_object_na(self.optic, value)
+            self.optic.set_aperture("objectNA", value)
         if any(key in aperture_data for key in ("NAP", "FNO", "PUK")):
             # OSLO's image NA is an aplanatic paraxial specification. Scale a
             # unit pupil using its image-space reduced slope (n * u).

@@ -19,6 +19,7 @@ from optiland.fileio.oslo.constants import (
 )
 from optiland.fileio.oslo.model import OsloDataModel
 from optiland.fileio.oslo.surfaces import get_handler_for_optiland_type
+from optiland.fileio.oslo.validation import validate_object_na
 from optiland.materials import AbbeMaterial, IdealMaterial, Material, TabulatedMaterial
 from optiland.physical_apertures import RadialAperture, UnclippedAperture
 from optiland.propagation import HomogeneousPropagation
@@ -68,6 +69,7 @@ class OpticToOsloEncoder:
         ap_type = self.optic.aperture.ap_type
         value = self.optic.aperture.value
         if ap_type == "objectNA":
+            validate_object_na(self.optic, value)
             self.data_model.aperture["NAO"] = value
             return
         if ap_type not in {"EPD", "imageFNO", "float_by_stop_size"}:

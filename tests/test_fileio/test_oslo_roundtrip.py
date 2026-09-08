@@ -32,7 +32,7 @@ def test_oslo_roundtrip_fno(tmp_path):
 def test_oslo_roundtrip_nao(tmp_path):
     # Setup optic with objectNA
     optic = Optic(name="NAO_Test")
-    optic.add_surface(index=0, radius=be.inf, thickness=be.inf)
+    optic.add_surface(index=0, radius=be.inf, thickness=100)
     optic.add_surface(index=1, radius=10.0, thickness=5.0, material="N-BK7", is_stop=True)
     optic.add_surface(index=2, radius=-10.0, thickness=20.0)
     optic.add_surface(index=3)
@@ -49,5 +49,5 @@ def test_oslo_roundtrip_nao(tmp_path):
     assert reloaded_optic.aperture.ap_type == "objectNA"
     assert np.isclose(reloaded_optic.aperture.value, 0.1)
     
-    # Verify infinity
-    assert be.isinf(reloaded_optic.surfaces[0].thickness)
+    # Object NA describes a cone from a finite object.
+    assert np.isclose(reloaded_optic.surfaces[0].thickness, 100)

@@ -748,3 +748,14 @@ def test_surface_loss_and_scatter_export_preserves_destination(
     with pytest.raises(NotImplementedError, match="coatings or scattering"):
         save_oslo_file(optic, path)
     assert path.read_text() == "saved design"
+
+
+def test_resetting_special_apertures_clears_their_pickups(lens_file, set_test_backend):
+    optic = load_oslo_file(
+        lens_file(
+            surface="APN 1\nAX1 A -1\nAX2 A 1\nAY1 A -1\nAY2 A 1",
+            second="APN 1\nAPK A 1 A\nAPN 0",
+        ),
+        strict=True,
+    )
+    assert optic.surfaces[2].aperture is None

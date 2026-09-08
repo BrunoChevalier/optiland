@@ -43,10 +43,10 @@ class OsloDataParser:
         # Command dispatch table
         self._dispatch_table = {
             "LEN": self._read_len,
-            "EBR": self._read_ebr,
-            "OBH": self._read_obh,
-            "ANG": self._read_ang,
-            "GIH": self._read_gih,
+            "EBR": self._read_system_aperture,
+            "OBH": self._read_field,
+            "ANG": self._read_field,
+            "GIH": self._read_field,
             "UNI": self._read_uni,
             "AIR": self._read_medium,
             "RFL": self._read_medium,
@@ -77,7 +77,7 @@ class OsloDataParser:
             "AY2": self._read_special_aperture,
             "ASP": self._read_asp,
             "AST": self._read_ast,
-            "CC": self._read_cc,
+            "CC": self._read_coeff,
             "AD": self._read_coeff,
             "AE": self._read_coeff,
             "AF": self._read_coeff,
@@ -106,12 +106,12 @@ class OsloDataParser:
             "PUC": self._read_solve,
             "EC": self._read_solve,
             "PK": self._read_pickup,
-            "FNO": self._read_fno,
-            "NAO": self._read_nao,
-            "NAP": self._read_nap,
-            "PUK": self._read_puk,
+            "FNO": self._read_system_aperture,
+            "NAO": self._read_system_aperture,
+            "NAP": self._read_system_aperture,
+            "PUK": self._read_system_aperture,
             "TELE": self._read_tele,
-            "DES": self._read_des,
+            "DES": self._read_sno,
             "PFL": self._read_paraxial,
             "PFM": self._read_coeff,
             "GSP": self._read_coeff,
@@ -374,27 +374,23 @@ class OsloDataParser:
         if not 1 <= self.data_model.num_surfaces <= 10000:
             raise ValueError("LEN surface count must be between 1 and 10000")
 
-    def _read_ebr(self, tokens: list[str]) -> None:
-        # EBR <float> (Entrance Beam Radius)
-        self.data_model.aperture = {"EPD": 2.0 * float(tokens[1])}
+    def _read_system_aperture(self, tokens: list[str]) -> None:
+        """The latest aperture specification replaces the previous one."""
+        command, value = tokens[0], float(tokens[1])
+        if command == "EBR":
+            command, value = "EPD", 2 * value  # Legacy model key for beam diameter.
+        elif command == "PUK":
+            value = abs(value)
+        self.data_model.aperture = {command: value}
 
-    def _read_fno(self, tokens: list[str]) -> None:
-        # FNO <float> (F-Number)
-        self.data_model.aperture = {"FNO": float(tokens[1])}
-
-    def _read_nao(self, tokens: list[str]) -> None:
-        # NAO <float> (Object NA)
-        self.data_model.aperture = {"NAO": float(tokens[1])}
-
-    def _read_nap(self, tokens: list[str]) -> None:
-        self.data_model.aperture = {"NAP": float(tokens[1])}
-
-    def _read_puk(self, tokens: list[str]) -> None:
-        self.data_model.aperture = {"PUK": abs(float(tokens[1]))}
-
-    def _read_gih(self, tokens: list[str]) -> None:
+    def _read_field(self, tokens: list[str]) -> None:
+        """Read ANG half-angle, OBH object height or GIH Gaussian image height."""
         self.data_model.fields = {
-            "type": "gaussian_image_height",
+            "type": {
+                "ANG": "angle",
+                "OBH": "object_height",
+                "GIH": "gaussian_image_height",
+            }[tokens[0]],
             "y": [float(tokens[1])],
         }
 
@@ -445,21 +441,10 @@ class OsloDataParser:
             raise ValueError("TELE expects ON or OFF")
         self.data_model.settings["telecentric"] = tokens[1].upper() in {"ON", "1"}
 
-    def _read_obh(self, tokens: list[str]) -> None:
-        # OBH <float> (Object Height)
-        self.data_model.fields = {"type": "object_height", "y": [float(tokens[1])]}
-
-    def _read_ang(self, tokens: list[str]) -> None:
-        # ANG <float> (Field Angle)
-        self.data_model.fields = {"type": "angle", "y": [float(tokens[1])]}
-
     def _read_uni(self, tokens: list[str]) -> None:
         self.data_model.units = float(tokens[1])
         if self.data_model.units <= 0:
             raise ValueError("UNI must be positive (millimeters per lens unit)")
-
-    def _read_des(self, tokens: list[str]) -> None:
-        self.data_model.notes["DES"] = decode_text(" ".join(tokens[1:]))
 
     def _read_sno(self, tokens: list[str]) -> None:
         cmd = tokens[0].upper()
@@ -584,6 +569,7 @@ class OsloDataParser:
             raise ValueError("APN count must be between 0 and 256")
         self._current_surf_data["APN"] = count
         self._current_surf_data["special_apertures"] = {}
+        self._current_surf_data.pop("aperture_pickups", None)
 
     def _read_special_aperture(self, tokens: list[str]) -> None:
         if len(tokens) != 3:
@@ -608,9 +594,6 @@ class OsloDataParser:
         for data in self.data_model.surfaces.values():
             data.pop("AST", None)
         self._current_surf_data["AST"] = True
-
-    def _read_cc(self, tokens: list[str]) -> None:
-        self._current_surf_data["CC"] = float(tokens[1])
 
     def _read_coeff(self, tokens: list[str]) -> None:
         if len(tokens) != 2:

@@ -84,6 +84,8 @@ def surface_coordinates(
                 raise ValueError(
                     "OSLO BEN currently supports single-axis local mirror tilts"
                 )
+            if data.get("material") != "RFL":
+                raise ValueError("OSLO BEN requires a reflecting surface")
             extra = Rotation.from_euler("XYZ", angles, degrees=True).as_matrix()
             next_rotation = rotation @ extra
         distance = data.get("TH", 0.0)

@@ -20,7 +20,7 @@ from optiland.fileio.oslo.reader.coordinates import surface_coordinates
 from optiland.fileio.oslo.reader.geometry import surface_geometry
 from optiland.fileio.oslo.reader.parser import OsloDataParser
 from optiland.fileio.oslo.reader.pickups import resolve_pickups
-from optiland.fileio.oslo.reader.solves import SOLVES, apply_solve
+from optiland.fileio.oslo.reader.solves import SOLVES, apply_solve, check_solve
 from optiland.fileio.oslo.syntax import decode_text, tokenize
 from optiland.materials import AbbeMaterial, IdealMaterial, Material, TabulatedMaterial
 from optiland.optic import Optic
@@ -453,31 +453,40 @@ class OsloToOpticConverter(BaseOpticReader):
 
     def _apply_solves(self) -> None:
         """Apply surface-specific solves, retaining saved values on warned failures."""
+        applied = []
         for index in sorted(self.data.surfaces):
-            data = self.data.surfaces[index]
             for command in SOLVES:
+                data = self.data.surfaces[index]
                 if command not in data:
                     continue
                 saved = self.optic.to_dict()
+                saved_surfaces = deepcopy(self.data.surfaces)
+                target = data[command]
                 try:
-                    apply_solve(
-                        self.optic, index, command, data[command], self.data.units
-                    )
+                    apply_solve(self.optic, index, command, target, self.data.units)
                     key = "TH" if command in {"PY", "PYC", "EC"} else "RD"
                     surface = self.optic.surfaces[index]
                     value = (
                         surface.thickness if key == "TH" else surface.geometry.radius
                     )
                     data[key] = float(be.asarray(value).item()) / self.data.units
-                    if any(
-                        sd.get("pickups")
-                        for i, sd in self.data.surfaces.items()
-                        if i > index
-                    ):
-                        self.data.surfaces = resolve_pickups(self.data.surfaces)
-                        self._build_optic()
-                        data = self.data.surfaces[index]
+                    self.data.surfaces = resolve_pickups(self.data.surfaces)
+                    self._build_optic()
+                    # Recomputing dependent geometry, NAP/FNO/PUK or GIH may
+                    # change the rays used by this solve or an earlier one.
+                    # Accept only a prescription that still meets every target.
+                    pending = (index, command, target)
+                    for solve_index, solve_command, solve_target in [*applied, pending]:
+                        check_solve(
+                            self.optic,
+                            solve_index,
+                            solve_command,
+                            solve_target,
+                            self.data.units,
+                        )
+                    applied.append(pending)
                 except (ValueError, RuntimeError, ArithmeticError) as exc:
+                    self.data.surfaces = saved_surfaces
                     self.optic = Optic.from_dict(saved)
                     message = f"OSLO {command} at surface {index}: {exc}"
                     if self.strict:

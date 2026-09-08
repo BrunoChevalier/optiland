@@ -78,7 +78,7 @@ def resolve_pickups(surfaces: dict[int, dict[str, Any]]) -> dict[int, dict[str, 
                 if "glass_wavelengths" in original:
                     data["glass_wavelengths"] = list(original["glass_wavelengths"])
             elif kind in {"TD", "TDM"}:
-                if any(key in original for key in ("GC", "RCO", "BEN")):
+                if any(key in original or key in data for key in ("GC", "RCO", "BEN")):
                     raise ValueError(
                         "OSLO PK TD/TDM with global/return/bend data is not mapped"
                     )

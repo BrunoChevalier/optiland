@@ -65,13 +65,7 @@ def apply_solve(optic, index: int, command: str, value: float, scale: float) -> 
             if not result.converged:
                 raise ValueError("PUC curvature refinement did not converge")
             residual(result.root)
-    actual = float(ray()[0 if is_height else 1][target_index].item())
-    if not math.isfinite(actual) or not math.isclose(
-        actual, target, rel_tol=1e-7, abs_tol=1e-9
-    ):
-        raise ValueError(
-            f"{command} target {target:g} could not be reached (got {actual:g})"
-        )
+    check_solve(optic, index, command, value, scale)
     if is_height:
         # Native height solves move coordinates directly. Keep the prescription
         # thickness consistent for downstream pickups, updater calls and export.
@@ -80,4 +74,35 @@ def apply_solve(optic, index: int, command: str, value: float, scale: float) -> 
                 optic.surfaces[index + 1].geometry.cs.z
                 - optic.surfaces[index].geometry.cs.z
             ).item()
+        )
+
+
+def check_solve(optic, index: int, command: str, value: float, scale: float) -> None:
+    """Verify a solve target against the current, fully rebuilt prescription."""
+    if command == "EC":
+        x, y = be.array([0.0]), be.array([value * scale])
+        target = float(
+            (
+                optic.surfaces[index].geometry.sag(x, y)
+                - optic.surfaces[index + 1].geometry.sag(x, y)
+            ).item()
+        )
+        actual = float(optic.surfaces[index].thickness)
+    else:
+        is_height = command in {"PY", "PYC"}
+        ray = (
+            optic.paraxial.chief_ray
+            if command.endswith("C")
+            else optic.paraxial.marginal_ray
+        )
+        target = value * scale if is_height else value
+        actual = float(
+            ray()[0 if is_height else 1][index + 1 if is_height else index].item()
+        )
+    if not math.isfinite(actual) or not math.isclose(
+        actual, target, rel_tol=1e-7, abs_tol=1e-9
+    ):
+        raise ValueError(
+            f"{command} at surface {index}: target {target:g} could not be reached "
+            f"(got {actual:g})"
         )

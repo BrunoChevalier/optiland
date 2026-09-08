@@ -492,3 +492,36 @@ def test_additional_configuration_cannot_replace_first_field_table(
     with pytest.warns(UserWarning, match="additional configurations"):
         optic = load_oslo_file(path)
     assert_allclose(optic.fields.y_fields, [2])
+
+
+def test_failed_pickup_rebuild_restores_converter_data(lens_file, set_test_backend):
+    path = lens_file(system="NAP .1", surface="PU 0", second="PK CV 1")
+    converter = OsloToOpticConverter(OsloDataParser(path).parse())
+    with pytest.warns(UserWarning, match="afocal.*retained saved prescription"):
+        optic = converter.convert()
+    # The saved pickup produces equal radii; solving both to infinity makes
+    # NAP undefined. Rollback must restore the model as well as the optic.
+    for index in (1, 2):
+        assert_allclose(optic.surfaces[index].geometry.radius, 20)
+        assert converter.data.surfaces[index]["RD"] == 20
+
+
+def test_coupled_solve_cannot_silently_change_image_na(lens_file, set_test_backend):
+    path = lens_file(system="NAP .1", surface="PU -.05")
+    with pytest.warns(UserWarning, match="retained saved prescription"):
+        optic = load_oslo_file(path)
+    assert_allclose(abs(optic.paraxial.marginal_ray()[1][-2]), 0.1)
+    assert_allclose(optic.surfaces[1].geometry.radius, 20)
+    with pytest.raises(ValueError, match="target"):
+        load_oslo_file(path, strict=True)
+
+
+def test_tilt_and_bend_requires_a_reflector(lens_file):
+    with pytest.raises(ValueError, match="BEN.*reflect"):
+        load_oslo_file(lens_file(surface="TLA 20\nBEN"), strict=True)
+
+
+@pytest.mark.parametrize("coordinate", ["GC 1", "RCO", "BEN"])
+def test_tilt_pickup_rejects_target_reference_flags(lens_file, coordinate):
+    with pytest.raises(ValueError, match="global/return/bend"):
+        load_oslo_file(lens_file(second=f"{coordinate}\nPK TD 1"), strict=True)

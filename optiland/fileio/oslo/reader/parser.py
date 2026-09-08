@@ -32,7 +32,7 @@ class OsloDataParser:
         self._current_surf_idx = 0
         self._current_surf_data: dict[str, Any] = {}
         self._coefficient_lines: dict[tuple[int, str], int] = {}
-        self._wavelength_values: list[float] = []
+        self._wavelength_values = list(DEFAULT_WAVELENGTHS_UM)
         self._wavelength_weights: list[float] = []
         self._line = 0
         self._ended = False
@@ -206,7 +206,7 @@ class OsloDataParser:
                     line=self._coefficient_lines[index, coefficient],
                 )
 
-        values = self._wavelength_values or list(DEFAULT_WAVELENGTHS_UM)
+        values = self._wavelength_values
         weights = self._wavelength_weights + [1.0] * len(values)
         self.data_model.wavelengths["values"] = values
         self.data_model.wavelengths["weights"] = weights[: len(values)]
@@ -464,9 +464,7 @@ class OsloDataParser:
         # GLA MOD G1 1.6489 1.662...
         self._clear_constraint("GLA")
         self._current_surf_data["material"] = "GLA " + " ".join(tokens[1:])
-        self._current_surf_data["glass_wavelengths"] = list(
-            self._wavelength_values or DEFAULT_WAVELENGTHS_UM
-        )
+        self._current_surf_data["glass_wavelengths"] = list(self._wavelength_values)
 
     def _read_paraxial(self, tokens: list[str]) -> None:
         self._current_surf_data["PFL"] = float(tokens[1])
@@ -629,14 +627,9 @@ class OsloDataParser:
         if index > 1000 or len(values) != 1:
             raise ValueError(f"{cmd} requires one value and a bounded wavelength index")
         target = getattr(self, attr)
-        defaults = DEFAULT_WAVELENGTHS_UM if wavelength else [1.0] * (index + 1)
-        while len(target) <= index:
-            if len(target) >= len(defaults):
-                if len(target) != index:
-                    raise ValueError(f"{cmd} leaves undefined wavelength slots")
-                target.append(values[0])
-            else:
-                target.append(defaults[len(target)])
+        if wavelength and index > len(target):
+            raise ValueError(f"{cmd} leaves undefined wavelength slots")
+        target.extend([1.0] * max(0, index + 1 - len(target)))
         target[index] = values[0]
 
     def _read_nxt(self, tokens: list[str]) -> None:

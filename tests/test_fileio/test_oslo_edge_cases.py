@@ -884,3 +884,18 @@ def test_export_preserves_finite_object_just_below_infinity_boundary(
     restored = load_oslo_file(path, strict=True)
     assert not restored.object_surface.is_infinite
     assert float(restored.object_surface.geometry.cs.z) == -distance
+
+
+@pytest.mark.parametrize("slot", [1, 2])
+def test_indexed_wavelength_edit_preserves_other_defaults(lens_file, slot):
+    model = OsloDataParser(lens_file(system=f"WV{slot} .55\nWW2 3")).parse()
+    expected = [0.58756, 0.48613, 0.65627]
+    expected[slot - 1] = 0.55
+    assert model.wavelengths["values"] == expected
+    assert model.wavelengths["weights"] == [1, 3, 1]
+    assert model.surfaces[1]["glass_wavelengths"] == expected
+
+
+def test_indexed_wavelength_cannot_restore_removed_slots_implicitly(lens_file):
+    with pytest.raises(ValueError, match="undefined wavelength slots"):
+        OsloDataParser(lens_file(system="WV .55\nWV3 .7")).parse()

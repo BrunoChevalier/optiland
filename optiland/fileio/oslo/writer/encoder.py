@@ -18,6 +18,7 @@ from optiland.fileio.oslo.model import OsloDataModel
 from optiland.fileio.oslo.surfaces import get_handler_for_optiland_type
 from optiland.materials import AbbeMaterial, IdealMaterial, Material, TabulatedMaterial
 from optiland.physical_apertures import RadialAperture, UnclippedAperture
+from optiland.propagation import HomogeneousPropagation
 
 if TYPE_CHECKING:
     from optiland.optic import Optic
@@ -161,6 +162,13 @@ class OpticToOsloEncoder:
                 raise NotImplementedError(
                     "OSLO writer cannot export phase profiles; use native JSON"
                 )
+            if (
+                surface.interaction_model.coating is not None
+                or surface.interaction_model.bsdf is not None
+            ):
+                raise NotImplementedError(
+                    "OSLO writer cannot export coatings or scattering; use native JSON"
+                )
             s_type = getattr(surface, "surface_type", "standard") or "standard"
             handler = get_handler_for_optiland_type(s_type)
             surf_data = handler.format(surface)
@@ -196,7 +204,7 @@ class OpticToOsloEncoder:
             if not checked:
                 aperture = aperture.aperture
             if aperture is not None and (
-                not isinstance(aperture, RadialAperture) or aperture.r_min != 0
+                type(aperture) is not RadialAperture or aperture.r_min != 0
             ):
                 raise NotImplementedError(
                     "OSLO writer cannot export this aperture shape; use native JSON"
@@ -232,6 +240,20 @@ class OpticToOsloEncoder:
         if material == "mirror":
             return "  RFL"
 
+        if type(material) not in {
+            Material,
+            TabulatedMaterial,
+            IdealMaterial,
+            AbbeMaterial,
+        }:
+            raise NotImplementedError(
+                "OSLO writer cannot export this material model; use native JSON"
+            )
+        if type(material.propagation_model) is not HomogeneousPropagation:
+            raise NotImplementedError(
+                "OSLO writer cannot export custom propagation; use native JSON"
+            )
+
         if isinstance(material, Material):
             return f"  GLA {material.name}"
 
@@ -239,6 +261,11 @@ class OpticToOsloEncoder:
             return "  GLA " + " ".join(f"{n:.12g}" for n in material.indices)
 
         if isinstance(material, IdealMaterial):
+            if float(material.absorp.item()) != 0:
+                raise NotImplementedError(
+                    "OSLO writer cannot export ideal-material absorption; "
+                    "use native JSON"
+                )
             n = float(material.index.item())
             # IdealMaterial with n≈1.0 is air - write AIR, not GLA 1.0 1.0 1.0
             if abs(n - 1.0) < 1e-6:
@@ -246,17 +273,11 @@ class OpticToOsloEncoder:
             ns = f"{n:.7g}"
             return f"  GLA {ns} {ns} {ns}"
 
-        if isinstance(material, AbbeMaterial):
-            wavelengths = (
-                self.data_model.wavelengths.get("values") or DEFAULT_WAVELENGTHS_UM
-            )
-            return "  GLA " + " ".join(
-                f"{float(material.n(w).item()):.12g}" for w in wavelengths
-            )
-
-        # Fallback
-        try:
-            name = getattr(material, "name", str(material))
-            return f"  GLA {name}"
-        except Exception:
-            return "  AIR"
+        # The remaining supported type is AbbeMaterial, sampled at the design
+        # wavelengths so export does not invent a catalog-glass identity.
+        wavelengths = (
+            self.data_model.wavelengths.get("values") or DEFAULT_WAVELENGTHS_UM
+        )
+        return "  GLA " + " ".join(
+            f"{float(material.n(w).item()):.12g}" for w in wavelengths
+        )

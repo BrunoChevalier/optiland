@@ -665,3 +665,86 @@ def test_diverging_fno_uses_a_positive_entrance_pupil(lens_file, set_test_backen
     )
     assert float(optic.paraxial.EPD()) > 0
     assert_allclose(abs(optic.paraxial.marginal_ray()[1][-2]), [0.1])
+
+
+@pytest.mark.parametrize("drawing", [False, True])
+def test_offset_radial_export_preserves_destination(lens_file, tmp_path, drawing):
+    from optiland.physical_apertures import OffsetRadialAperture
+
+    optic = load_oslo_file(lens_file(), strict=True)
+    aperture = OffsetRadialAperture(1, offset_x=2)
+    optic.surfaces[1].aperture = UnclippedAperture(aperture) if drawing else aperture
+    path = tmp_path / "offset-aperture.len"
+    path.write_text("saved design", encoding="utf-8")
+    with pytest.raises(NotImplementedError, match="aperture"):
+        save_oslo_file(optic, path)
+    assert path.read_text() == "saved design"
+
+
+def test_custom_material_cannot_export_as_its_catalog_like_name(lens_file, tmp_path):
+    from optiland.materials import BaseMaterial
+
+    class CustomMaterial(BaseMaterial):
+        name = "BK7"
+
+        def _calculate_n(self, wavelength):
+            return be.array([1.8])
+
+        def _calculate_k(self, wavelength):
+            return be.array([0.0])
+
+    optic = load_oslo_file(lens_file(), strict=True)
+    optic.surfaces[1].material_post = CustomMaterial()
+    path = tmp_path / "custom-material.len"
+    path.write_text("saved design", encoding="utf-8")
+    with pytest.raises(NotImplementedError, match="material"):
+        save_oslo_file(optic, path)
+    assert path.read_text() == "saved design"
+
+
+@pytest.mark.parametrize("index", [1.0, 1.5])
+def test_absorbing_ideal_material_export_preserves_destination(
+    lens_file, tmp_path, index
+):
+    from optiland.materials import IdealMaterial
+
+    optic = load_oslo_file(lens_file(), strict=True)
+    optic.surfaces[1].material_post = IdealMaterial(index, 0.01)
+    path = tmp_path / "absorbing.len"
+    path.write_text("saved design", encoding="utf-8")
+    with pytest.raises(NotImplementedError, match="absorption"):
+        save_oslo_file(optic, path)
+    assert path.read_text() == "saved design"
+
+
+def test_custom_propagation_export_preserves_destination(lens_file, tmp_path):
+    from optiland.propagation.base import BasePropagationModel
+
+    class CustomPropagation(BasePropagationModel):
+        def propagate(self, rays, t):
+            rays.x = rays.x + t
+
+    optic = load_oslo_file(lens_file(), strict=True)
+    optic.surfaces[1].material_post.propagation_model = CustomPropagation()
+    path = tmp_path / "custom-propagation.len"
+    path.write_text("saved design", encoding="utf-8")
+    with pytest.raises(NotImplementedError, match="propagation"):
+        save_oslo_file(optic, path)
+    assert path.read_text() == "saved design"
+
+
+@pytest.mark.parametrize("property_name", ["coating", "bsdf"])
+def test_surface_loss_and_scatter_export_preserves_destination(
+    lens_file, tmp_path, property_name
+):
+    from optiland.coatings import SimpleCoating
+    from optiland.scatter import LambertianBSDF
+
+    optic = load_oslo_file(lens_file(), strict=True)
+    effect = SimpleCoating(0.5) if property_name == "coating" else LambertianBSDF()
+    setattr(optic.surfaces[1].interaction_model, property_name, effect)
+    path = tmp_path / "surface-effect.len"
+    path.write_text("saved design", encoding="utf-8")
+    with pytest.raises(NotImplementedError, match="coatings or scattering"):
+        save_oslo_file(optic, path)
+    assert path.read_text() == "saved design"

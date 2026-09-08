@@ -252,6 +252,7 @@ class OsloToOpticConverter(BaseOpticReader):
                 return "air"
 
             name = ""
+            # Modeled glass (e.g. GLA MOD G1 1.6489 1.662...).
             modeled = parts[0].upper() == "MOD"
             if modeled:
                 parts = parts[1:]
@@ -260,14 +261,18 @@ class OsloToOpticConverter(BaseOpticReader):
             except ValueError:
                 name, parts = parts[0].strip('"'), parts[1:]
             if not parts:
+                # Catalog glass (e.g. GLA BK7).
                 return self._resolve_catalog_glass(name)
+            # Direct indices (e.g. GLA 1.573 1.573 1.573), or index data
+            # remaining after a named/model-glass prefix.
             indices = [float(value) for value in parts]
             if any(value <= 0 for value in indices):
                 raise ValueError(
                     f"OSLO glass {name!r} requires positive refractive indices"
                 )
             if modeled and len(indices) == 2:
-                # Interactive model-glass form specifies index and Abbe number.
+                # Interactive model glass (e.g. GLA MOD 1.6 50) specifies
+                # refractive index and Abbe number.
                 # Saved legacy MOD records instead contain explicit index samples.
                 if self.strict:
                     raise ValueError("GLA MOD index/Abbe dispersion is approximate")

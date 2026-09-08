@@ -208,3 +208,43 @@ def test_tabulated_material_validation_interpolation_and_serialization(set_test_
         mat.n(.9)
     with pytest.raises(ValueError):
         TabulatedMaterial([.5, .5], [1.5, 1.6])
+
+
+@pytest.mark.parametrize('shape,points,expected', [
+    (1, [(1, 0), (0, 0), (1, 1.1), (2.1, 0)], [True, True, False, False]),
+    (2, [(1.9, .9), (2.1, 0), (0, 1.1)], [True, False, False]),
+])
+def test_special_aperture_shapes(tmp_path, set_test_backend, shape, points, expected):
+    commands = f'APN 1\nATP A {shape}\nAAC A 4\nAX1 A 0\nAX2 A 2\nAY1 A -1\nAY2 A 1'
+    optic = load_oslo_file(simple_lens(tmp_path, surface=commands), strict=True)
+    aperture = optic.surfaces[1].aperture
+    assert_allclose(aperture.contains(be.array([p[0] for p in points]),
+                                     be.array([p[1] for p in points])), expected)
+
+
+def test_obstruction_groups_and_native_serialization(tmp_path, set_test_backend):
+    from optiland.physical_apertures import BaseAperture
+    commands = ('APN 2\nATP A 1\nAAC A 2\nAX1 A -1\nAX2 A 1\nAY1 A -1\nAY2 A 1\n'
+                'ATP B 2\nAAC B 4\nAGN B 1\nAX1 B -.1\nAX2 B .1\nAY1 B -.1\nAY2 B .1')
+    aperture = load_oslo_file(simple_lens(tmp_path, surface=commands), strict=True).surfaces[1].aperture
+    for ap in [aperture, BaseAperture.from_dict(aperture.to_dict())]:
+        assert_allclose(ap.contains(be.array([0, .5, 2, 4]), be.array([0, 0, 0, 0])),
+                        [True, False, True, False])
+
+
+def test_rotated_scaled_rectangle_and_triangle(tmp_path, set_test_backend):
+    commands = 'APN 1\nATP A 2\nAAC A 4\nAX1 A -2\nAX2 A 2\nAY1 A -1\nAY2 A 1\nAAN A 90'
+    ap = load_oslo_file(simple_lens(tmp_path, system='UNI 10', surface=commands), strict=True).surfaces[1].aperture
+    assert_allclose(ap.contains(be.array([0, 15]), be.array([15, 0])), [True, False])
+    commands = ('APN 1\nATP A 3\nAAC A 4\nAVX1 A 0\nAVY1 A 0\n'
+                'AVX2 A 2\nAVY2 A 0\nAVX3 A 0\nAVY3 A 2')
+    ap = load_oslo_file(simple_lens(tmp_path, surface=commands), strict=True).surfaces[1].aperture
+    assert_allclose(ap.contains(be.array([.5, 1.5]), be.array([.5, 1.5])), [True, False])
+
+
+def test_checked_aperture_and_hole_diagnostic(tmp_path):
+    path = simple_lens(tmp_path, surface='AP CHK 1.5')
+    assert OsloDataParser(path).parse().surfaces[1]['AP'] == 1.5
+    path = simple_lens(tmp_path, surface='APN 1\nATP A 1\nAAC A 1')
+    with pytest.raises(ValueError, match='hole'):
+        load_oslo_file(path, strict=True)

@@ -57,6 +57,15 @@ class OsloDataParser:
             "THF": self._read_th,
             "AP": self._read_ap,
             "APF": self._read_ap,
+            "APN": self._read_apn,
+            "ATP": self._read_special_aperture,
+            "AAC": self._read_special_aperture,
+            "AAN": self._read_special_aperture,
+            "AGN": self._read_special_aperture,
+            "AX1": self._read_special_aperture,
+            "AX2": self._read_special_aperture,
+            "AY1": self._read_special_aperture,
+            "AY2": self._read_special_aperture,
             "ASP": self._read_asp,
             "AST": self._read_ast,
             "CC": self._read_cc,
@@ -119,6 +128,9 @@ class OsloDataParser:
                     elif re.fullmatch(r"AS\d+", cmd):
                         self._validate_numbers(tokens)
                         self._read_coeff(tokens)
+                    elif re.fullmatch(r"AV[XY][1-4]", cmd):
+                        self._validate_numbers(tokens)
+                        self._read_special_aperture(tokens)
                     elif cmd in self._dispatch_table:
                         self._validate_numbers(tokens)
                         self._dispatch_table[cmd](tokens)
@@ -279,7 +291,32 @@ class OsloDataParser:
         self._current_surf_data["TH"] = float(tokens[1])
 
     def _read_ap(self, tokens: list[str]) -> None:
-        self._current_surf_data["AP"] = float(tokens[1])
+        index = 2 if tokens[1].upper() in {"CHK", "UNC"} else 1
+        value = float(tokens[index])
+        if value < 0:
+            raise ValueError("AP radius must be nonnegative")
+        self._current_surf_data["AP"] = value
+
+    def _read_apn(self, tokens: list[str]) -> None:
+        count = int(tokens[1])
+        if not 0 <= count <= 256:
+            raise ValueError("APN count must be between 0 and 256")
+        self._current_surf_data["APN"] = count
+        self._current_surf_data["special_apertures"] = {}
+
+    def _read_special_aperture(self, tokens: list[str]) -> None:
+        cmd, identifier = tokens[:2]
+        value = float(tokens[2])
+        if cmd == "AAC" and value not in {2, 4}:
+            self._unsupported(
+                cmd,
+                "undeviated hole action is not mapped"
+                if value == 1
+                else f"aperture action {value} is not mapped",
+            )
+        self._current_surf_data.setdefault("special_apertures", {}).setdefault(
+            identifier, {}
+        )[cmd] = value
 
     def _read_ast(self, tokens: list[str]) -> None:
         self._current_surf_data["AST"] = True

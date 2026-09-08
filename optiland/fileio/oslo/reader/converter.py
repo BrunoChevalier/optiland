@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any
 import optiland.backend as be
 from optiland.coordinate_system import CoordinateSystem
 from optiland.fileio.base import BaseOpticReader
+from optiland.fileio.oslo.reader.apertures import physical_aperture
 from optiland.fileio.oslo.reader.geometry import surface_geometry
 from optiland.fileio.oslo.reader.parser import OsloDataParser
 from optiland.materials import AbbeMaterial, IdealMaterial, Material, TabulatedMaterial
@@ -182,12 +183,7 @@ class OsloToOpticConverter(BaseOpticReader):
             material_raw, data.get("glass_wavelengths")
         )
 
-        # Handle aperture (AP is radius in OSLO).
-        # Skip sentinel values like AP 4e9 which mean "infinite aperture".
-        if "AP" in data and data["AP"] < 1e6:
-            from optiland.physical_apertures import RadialAperture
-
-            surface_params["aperture"] = RadialAperture(r_max=data["AP"] * scale)
+        surface_params["aperture"] = physical_aperture(data, scale)
 
         if has_coord_transform:
             # Resolve effective global position and orientation

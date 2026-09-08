@@ -1,0 +1,65 @@
+"""OSLO special apertures and aperture-group Boolean rules (reference pp. 49–50)."""
+
+from __future__ import annotations
+
+import math
+from typing import Any
+
+from optiland.physical_apertures import (
+    BaseAperture,
+    DifferenceAperture,
+    EllipticalAperture,
+    IntersectionAperture,
+    PolygonAperture,
+    RadialAperture,
+    RectangularAperture,
+    RotatedAperture,
+    UnionAperture,
+)
+
+
+def physical_aperture(data: dict[str, Any], scale: float) -> BaseAperture | None:
+    """Build a surface aperture from ordinary and special aperture data."""
+    radius = data.get("AP", 0.0)
+    outer = RadialAperture(r_max=radius * scale) if 0 < radius < 1e6 else None
+    groups: dict[int, list[tuple[BaseAperture, int]]] = {}
+    for spec in data.get("special_apertures", {}).values():
+        action = int(spec.get("AAC", 4))
+        if action not in {2, 4}:
+            continue  # The parser has already diagnosed hole/unknown actions.
+        kind = int(spec.get("ATP", 1))
+        if kind in {1, 2}:
+            x0, x1, y0, y1 = [spec[k] * scale for k in ("AX1", "AX2", "AY1", "AY2")]
+            if x0 >= x1 or y0 >= y1:
+                raise ValueError("OSLO special aperture requires increasing bounds")
+            if kind == 1:
+                ap = EllipticalAperture(
+                    (x1 - x0) / 2, (y1 - y0) / 2, (x1 + x0) / 2, (y1 + y0) / 2
+                )
+            else:
+                ap = RectangularAperture(x0, x1, y0, y1)
+            if spec.get("AAN", 0.0):
+                ap = RotatedAperture(ap, math.radians(spec["AAN"]))
+        elif kind in {3, 4}:
+            ap = PolygonAperture(
+                [spec[f"AVX{i}"] * scale for i in range(1, kind + 1)],
+                [spec[f"AVY{i}"] * scale for i in range(1, kind + 1)],
+            )
+        else:
+            raise ValueError(f"OSLO special aperture type {kind} is not supported")
+        groups.setdefault(int(spec.get("AGN", 0)), []).append((ap, action))
+    combined = None
+    for members in groups.values():
+        group = None
+        for ap, action in members:
+            if action == 4:
+                group = ap if group is None else IntersectionAperture(group, ap)
+        if group is None:
+            group = RadialAperture(r_max=math.inf)
+        for ap, action in members:
+            if action == 2:
+                group = DifferenceAperture(group, ap)
+        combined = group if combined is None else UnionAperture(combined, group)
+    if combined is None:
+        return outer
+    return combined if outer is None else IntersectionAperture(outer, combined)

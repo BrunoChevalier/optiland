@@ -15,6 +15,7 @@ from optiland.fileio.oslo.reader.converter import OsloToOpticConverter
 from optiland.fileio.oslo.reader.coordinates import surface_coordinates
 from optiland.fileio.oslo.reader.parser import OsloDataParser
 from optiland.fileio.oslo.reader.pickups import resolve_pickups
+from optiland.fileio.oslo.writer.encoder import OpticToOsloEncoder
 from optiland.fileio.oslo.writer.formatter import OsloDataFormatter
 from optiland.materials import AbbeMaterial, TabulatedMaterial
 from optiland.physical_apertures import (
@@ -525,3 +526,54 @@ def test_tilt_and_bend_requires_a_reflector(lens_file):
 def test_tilt_pickup_rejects_target_reference_flags(lens_file, coordinate):
     with pytest.raises(ValueError, match="global/return/bend"):
         load_oslo_file(lens_file(second=f"{coordinate}\nPK TD 1"), strict=True)
+
+
+def test_telecentric_export_preserves_chief_ray(lens_file, tmp_path, set_test_backend):
+    optic = load_oslo_file(
+        lens_file(system="OBH 2\nTELE ON", distance="100"), strict=True
+    )
+    expected = optic.paraxial.chief_ray()
+    target = tmp_path / "telecentric.len"
+    save_oslo_file(optic, target)
+    restored = load_oslo_file(target, strict=True)
+    assert restored.obj_space_telecentric
+    for actual, original in zip(restored.paraxial.chief_ray(), expected):
+        assert_allclose(actual, original)
+
+
+def test_custom_export_field_definition_preserves_destination(lens_file, tmp_path):
+    optic = load_oslo_file(lens_file(), strict=True)
+
+    class CustomField(type(optic.fields.field_definition)):
+        pass
+
+    optic.fields.field_definition = CustomField()
+    target = tmp_path / "custom.len"
+    target.write_text("saved design", encoding="utf-8")
+    with pytest.raises(NotImplementedError, match="field definition"):
+        save_oslo_file(optic, target)
+    assert target.read_text() == "saved design"
+
+
+def test_encoder_reuse_does_not_retain_old_prescription(lens_file):
+    optic = load_oslo_file(lens_file(), strict=True)
+    encoder = OpticToOsloEncoder(optic)
+    original = encoder.encode()
+    optic.set_aperture("objectNA", 0.1)
+    optic.surfaces.remove(2)
+    updated = encoder.encode()
+    assert updated.aperture == {"NAO": 0.1}
+    assert set(updated.surfaces) == {0, 1, 2}
+    assert original.aperture == {"EPD": 4}
+    assert len(original.surfaces) == 4
+
+
+@pytest.mark.parametrize("name", ["first\nsecond", "first\rsecond", "trailing\n"])
+def test_multiline_export_name_preserves_destination(lens_file, tmp_path, name):
+    optic = load_oslo_file(lens_file(), strict=True)
+    optic.name = name
+    target = tmp_path / "multiline.len"
+    target.write_text("saved design", encoding="utf-8")
+    with pytest.raises(ValueError, match="single line"):
+        save_oslo_file(optic, target)
+    assert target.read_text() == "saved design"

@@ -42,6 +42,8 @@ class OsloDataFormatter:
         # DES and UNI are always emitted (OSLO EDU convention)
         lines.append('DES "Optiland"')
         lines.append(f"UNI {self._fmt(self.model.units)}")
+        if self.model.settings.get("telecentric"):
+            lines.append("TELE ON")
 
         self._format_field_commands(lines)
         self._format_notes(lines)
@@ -99,6 +101,8 @@ class OsloDataFormatter:
 
     @staticmethod
     def _quote(content: str) -> str:
+        if "\n" in content or "\r" in content:
+            raise ValueError("OSLO names and notes must fit on a single line")
         return content.replace("\\", "\\\\").replace('"', '\\"')
 
     def _format_wavelength_footer(self, lines: list[str]) -> None:

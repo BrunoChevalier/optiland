@@ -40,8 +40,10 @@ class OpticToOsloEncoder:
         Returns:
             The populated OsloDataModel.
         """
+        self.data_model = OsloDataModel()
         self.data_model.name = self.optic.name or "LENS"
         self.data_model.num_surfaces = len(self.optic.surfaces) - 1  # Excluding object
+        self.data_model.settings["telecentric"] = self.optic.obj_space_telecentric
 
         self._encode_aperture()
         self._encode_fields()
@@ -63,8 +65,8 @@ class OpticToOsloEncoder:
             if ap_type == "EPD":
                 self.data_model.aperture["EPD"] = value
             elif ap_type == "imageFNO":
-                # OSLO always uses EBR (entrance beam radius), never FNO.
-                # Convert: EPD = EFL / FNO, EBR = EPD / 2.
+                # Prefer EBR when the focal length is available; keep FNO as
+                # the fallback. Convert: EPD = EFL / FNO, EBR = EPD / 2.
                 try:
                     efl = float(self.optic.paraxial.f2())
                     self.data_model.aperture["EPD"] = efl / value
@@ -76,16 +78,14 @@ class OpticToOsloEncoder:
     def _encode_fields(self) -> None:
         if self.optic.fields:
             fd = self.optic.fields.field_definition
-            f_type = (
-                FIELD_CLASS_TO_TYPE.get(type(fd).__name__, "angle") if fd else "angle"
-            )
+            f_type = FIELD_CLASS_TO_TYPE.get(type(fd).__name__) if fd else "angle"
             self.data_model.fields["type"] = f_type
             if f_type not in {"angle", "object_height"}:
                 raise NotImplementedError(
                     "OSLO writer cannot export this field definition; use native JSON"
                 )
-            # OSLO convention: store only the maximum absolute field value.
-            # The reader expands this to [0, 0.7*max, max] on load.
+            # ANG/OBH sets the normalization envelope. Explicit RST points
+            # below preserve each field's position, weight and vignetting.
             y_values = [v for f in self.optic.fields for v in (f.x, f.y)]
             max_y = max((abs(y) for y in y_values), default=0.0)
             self.data_model.fields["y"] = [max_y]
@@ -212,12 +212,6 @@ class OpticToOsloEncoder:
             if is_paraxial:
                 surf_data["PFL"] = float(surface.interaction_model.f)
 
-            # Decenter/Tilt
-            for k in ["DCX", "DCY", "DCZ", "TLA", "TLB", "TLC"]:
-                val = getattr(surface, k.lower(), 0.0)
-                if val != 0:
-                    surf_data[k] = float(val)
-
             self.data_model.surfaces[idx] = surf_data
 
     def _encode_material(self, material: Any) -> str:
@@ -241,11 +235,9 @@ class OpticToOsloEncoder:
             return f"  GLA {ns} {ns} {ns}"
 
         if isinstance(material, AbbeMaterial):
-            wavelengths = self.data_model.wavelengths.get("values") or [
-                0.58756,
-                0.48613,
-                0.65627,
-            ]
+            wavelengths = (
+                self.data_model.wavelengths.get("values") or DEFAULT_WAVELENGTHS_UM
+            )
             return "  GLA " + " ".join(
                 f"{float(material.n(w).item()):.12g}" for w in wavelengths
             )

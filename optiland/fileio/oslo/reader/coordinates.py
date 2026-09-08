@@ -26,6 +26,7 @@ def surface_coordinates(
     frames = {}
     bases = {}
     result = {}
+    last_index = max(surfaces, default=0)
     next_position, next_rotation = np.zeros(3), np.eye(3)
     for index, data in sorted(surfaces.items()):
         base_position, base_rotation = next_position.copy(), next_rotation.copy()
@@ -89,7 +90,7 @@ def surface_coordinates(
             extra = Rotation.from_euler("XYZ", angles, degrees=True).as_matrix()
             next_rotation = rotation @ extra
         distance = data.get("TH", 0.0)
-        if 0 < index < max(surfaces) and abs(distance) >= 9.9e9:
+        if 0 < index < last_index and abs(distance) >= 9.9e9:
             raise ValueError(
                 "OSLO infinite thickness with coordinate transforms is not mapped"
             )

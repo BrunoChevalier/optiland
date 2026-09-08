@@ -146,26 +146,22 @@ class OsloToOpticConverter(BaseOpticReader):
 
     def _configure_surfaces(self) -> None:
         """Configure all surfaces on the optic."""
-        # Check if any surface has decenters or tilts
+        coordinate_commands = {
+            "DCX",
+            "DCY",
+            "DCZ",
+            "TLA",
+            "TLB",
+            "TLC",
+            "GC",
+            "RCO",
+            "BEN",
+            "TOX",
+            "TOY",
+            "TOZ",
+        }
         has_coord_transform = any(
-            any(
-                k in sd
-                for k in [
-                    "DCX",
-                    "DCY",
-                    "DCZ",
-                    "TLA",
-                    "TLB",
-                    "TLC",
-                    "GC",
-                    "RCO",
-                    "BEN",
-                    "TOX",
-                    "TOY",
-                    "TOZ",
-                ]
-            )
-            for sd in self.data.surfaces.values()
+            coordinate_commands.intersection(sd) for sd in self.data.surfaces.values()
         )
 
         # Determine if any surface is explicitly marked as the stop

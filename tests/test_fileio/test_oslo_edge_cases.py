@@ -577,3 +577,36 @@ def test_multiline_export_name_preserves_destination(lens_file, tmp_path, name):
     with pytest.raises(ValueError, match="single line"):
         save_oslo_file(optic, target)
     assert target.read_text() == "saved design"
+
+
+def test_large_checked_aperture_still_clips_after_unit_conversion(
+    lens_file, set_test_backend
+):
+    optic = load_oslo_file(
+        lens_file(system="UNI .000001", surface="AP CHK 2000000"), strict=True
+    )
+    aperture = optic.surfaces[1].aperture
+    assert aperture is not None
+    assert_allclose(aperture.r_max, 2)
+    x, y = be.array([1.0, 3.0]), be.zeros(2)
+    rays = RealRays(x, y, be.zeros(2), be.zeros(2), be.zeros(2), be.ones(2), 1, 0.55)
+    aperture.clip(rays)
+    assert_allclose(rays.i, [1, 0])
+
+
+def test_later_solve_preserves_an_earlier_edge_contact(lens_file, set_test_backend):
+    path = lens_file(surface="EC 2", second="PU 0")
+    with pytest.warns(
+        UserWarning, match="EC at surface 1.*retained saved prescription"
+    ):
+        optic = load_oslo_file(path)
+    x, y = be.zeros(1), be.array([2.0])
+    edge_thickness = (
+        optic.surfaces[1].thickness
+        + optic.surfaces[2].geometry.sag(x, y)
+        - optic.surfaces[1].geometry.sag(x, y)
+    )
+    assert_allclose(edge_thickness, [0], atol=1e-12)
+    assert_allclose(optic.surfaces[2].geometry.radius, -20)
+    with pytest.raises(ValueError, match="EC at surface 1"):
+        load_oslo_file(path, strict=True)

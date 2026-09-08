@@ -24,7 +24,13 @@ def physical_aperture(
 ) -> BaseAperture | None:
     """Build a surface aperture from ordinary and special aperture data."""
     radius = data.get("AP", 0.0)
-    outer = RadialAperture(r_max=radius * scale) if 0 < radius < 1e6 else None
+    # Omit huge unchecked drawing outlines (typically the object plane).
+    # A checked radius must retain its clipping boundary at any lens-unit scale.
+    outer = (
+        RadialAperture(r_max=radius * scale)
+        if radius > 0 and (data.get("aperture_checked") or radius < 1e6)
+        else None
+    )
     groups: dict[int, list[tuple[BaseAperture, int]]] = {}
     for spec in data.get("special_apertures", {}).values():
         action = int(spec.get("AAC", 4))

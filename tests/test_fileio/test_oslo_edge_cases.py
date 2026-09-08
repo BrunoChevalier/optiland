@@ -437,3 +437,58 @@ def test_rotated_drawing_aperture_roundtrip_scale_and_clipping(set_test_backend)
     assert_allclose(rays.i, [1, 1])
     restored.aperture.clip(rays)
     assert_allclose(rays.i, [1, 0])
+
+
+@pytest.mark.parametrize("name", ['lens "A"', '"', '"quoted"', 'path\\"'])
+def test_quoted_name_and_note_preserve_trailing_quote(lens_file, name):
+    model = OsloDataParser(lens_file()).parse()
+    model.name = name
+    model.notes["SNO1"] = name
+    path = lens_file()
+    path.write_text(OsloDataFormatter(model).format(), encoding="utf-8")
+    restored = OsloDataParser(path, strict=True).parse()
+    assert restored.name == name
+    assert restored.notes["SNO1"] == name
+
+
+def test_quoted_direct_glass_name(lens_file, set_test_backend):
+    optic = load_oslo_file(
+        lens_file(surface='GLA "test glass" 1.6 1.62 1.58'), strict=True
+    )
+    material = optic.surfaces[1].material_post
+    assert material.name == "test glass"
+    assert_allclose(material.n(0.48613), 1.62)
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "AP 1 ignored",
+        "AP CHK 1 ignored",
+        "BEN OFF",
+        "RCO 0 1",
+        "AIR ignored",
+        "AST ignored",
+        "ATD ignored",
+        "ASP ASR 1 ignored",
+        "ASP ASR -1",
+        "GLA MOD G1",
+    ],
+)
+def test_optical_commands_do_not_silently_discard_arguments(lens_file, command):
+    with pytest.raises(ValueError):
+        load_oslo_file(lens_file(surface=command), strict=True)
+
+
+@pytest.mark.parametrize("next_block", ["CFG NEW", 'LEN NEW "second" 1 1'])
+def test_additional_configuration_cannot_replace_first_field_table(
+    lens_file, next_block
+):
+    first = "RST NEW\nF 1 .5 0 0 0 0 -1 1 -1 1 1\nEND\n"
+    second = "RST NEW\nF 1 1 0 0 0 0 -1 1 -1 1 1\nEND\n"
+    path = lens_file(
+        system="OBH 4", distance="100", footer=f"{first}{next_block}\nEND\n{second}"
+    )
+    with pytest.warns(UserWarning, match="additional configurations"):
+        optic = load_oslo_file(path)
+    assert_allclose(optic.fields.y_fields, [2])

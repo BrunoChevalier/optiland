@@ -21,6 +21,7 @@ from optiland.fileio.oslo.reader.geometry import surface_geometry
 from optiland.fileio.oslo.reader.parser import OsloDataParser
 from optiland.fileio.oslo.reader.pickups import resolve_pickups
 from optiland.fileio.oslo.reader.solves import SOLVES, apply_solve
+from optiland.fileio.oslo.syntax import decode_text, tokenize
 from optiland.materials import AbbeMaterial, IdealMaterial, Material, TabulatedMaterial
 from optiland.optic import Optic
 from optiland.phase import LinearGratingPhaseProfile
@@ -247,7 +248,7 @@ class OsloToOpticConverter(BaseOpticReader):
 
         if material_raw.startswith("GLA "):
             rest = material_raw[4:].strip()
-            parts = rest.split()
+            parts = tokenize(rest)
             if not parts:
                 return "air"
 
@@ -256,11 +257,15 @@ class OsloToOpticConverter(BaseOpticReader):
             modeled = parts[0].upper() == "MOD"
             if modeled:
                 parts = parts[1:]
+            if not parts:
+                raise ValueError("GLA MOD requires refractive-index data")
             try:
                 float(parts[0])
             except ValueError:
-                name, parts = parts[0].strip('"'), parts[1:]
+                name, parts = decode_text(parts[0]), parts[1:]
             if not parts:
+                if modeled:
+                    raise ValueError("GLA MOD requires refractive-index data")
                 # Catalog glass (e.g. GLA BK7).
                 return self._resolve_catalog_glass(name)
             # Direct indices (e.g. GLA 1.573 1.573 1.573), or index data

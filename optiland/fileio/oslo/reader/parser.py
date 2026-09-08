@@ -15,6 +15,7 @@ from typing import Any
 
 from optiland.fileio.oslo.constants import DEFAULT_WAVELENGTHS_UM
 from optiland.fileio.oslo.model import OsloDataModel, OsloDiagnostic
+from optiland.fileio.oslo.syntax import decode_text, tokenize
 
 
 class OsloDataParser:
@@ -35,6 +36,7 @@ class OsloDataParser:
         self._line = 0
         self._ended = False
         self._field_table = False
+        self._ignore_footer = False
         self._seen_len = False
 
         # Command dispatch table
@@ -79,9 +81,9 @@ class OsloDataParser:
             "AE": self._read_coeff,
             "AF": self._read_coeff,
             "AG": self._read_coeff,
-            "DCX": self._read_decenter,
-            "DCY": self._read_decenter,
-            "DCZ": self._read_decenter,
+            "DCX": self._read_coeff,
+            "DCY": self._read_coeff,
+            "DCZ": self._read_coeff,
             "DT": self._read_coeff,
             "GC": self._read_coeff,
             "RCO": self._read_return,
@@ -89,13 +91,11 @@ class OsloDataParser:
             "TOX": self._read_coeff,
             "TOY": self._read_coeff,
             "TOZ": self._read_coeff,
-            "TLA": self._read_tilt,
-            "TLB": self._read_tilt,
-            "TLC": self._read_tilt,
-            "WV": self._read_wv,
-            "WV2": self._read_wv,
-            "WV3": self._read_wv,
-            "WW": self._read_ww,
+            "TLA": self._read_coeff,
+            "TLB": self._read_coeff,
+            "TLC": self._read_coeff,
+            "WV": self._read_spectrum,
+            "WW": self._read_spectrum,
             "NXT": self._read_nxt,
             "GTO": self._read_gto,
             "END": self._read_end,
@@ -147,7 +147,7 @@ class OsloDataParser:
         for self._line, line in enumerate(source.splitlines(), 1):
             try:
                 for statement in self._statements(line):
-                    tokens = self._tokenize(statement)
+                    tokens = tokenize(statement)
                     if not tokens:
                         continue
                     cmd = tokens[0].upper()
@@ -286,6 +286,37 @@ class OsloDataParser:
         }
         if cmd in scalar and len(tokens) != 2:
             raise ValueError(f"{cmd} requires exactly one argument")
+        if (
+            cmd
+            in {
+                "AIR",
+                "AIF",
+                "RFL",
+                "RFH",
+                "AST",
+                "BEN",
+                "NXT",
+                "ATD",
+                "CXD",
+                "APD",
+                "GCD",
+                "RCD",
+                "BED",
+                "PFD",
+                "TDD",
+                "CSD",
+                "TSD",
+            }
+            and len(tokens) != 1
+        ):
+            raise ValueError(f"{cmd} does not take arguments")
+        if cmd == "RCO" and len(tokens) not in {1, 2}:
+            raise ValueError("RCO takes at most one surface reference")
+        if cmd == "ASP":
+            if len(tokens) not in {2, 3}:
+                raise ValueError("ASP expects a type and optional coefficient count")
+            if len(tokens) == 3 and not 0 <= int(tokens[2]) <= 256:
+                raise ValueError("ASP coefficient count must be between 0 and 256")
         if cmd in {"EBR", "FNO", "NAO", "NAP"} and float(tokens[1]) <= 0:
             raise ValueError(f"{cmd} must be positive")
         if cmd == "DT" and float(tokens[1]) not in {-1, 1}:
@@ -323,21 +354,12 @@ class OsloDataParser:
         statements.append(line[start:])
         return statements
 
-    def _tokenize(self, line: str) -> list[str]:
-        """Tokenize a line, respecting double quotes."""
-        # This regex finds either strings in quotes or non-whitespace sequences
-        return re.findall(r'"(?:\\.|[^"\\])*"|[^\s,]+', line)
-
-    @staticmethod
-    def _decode_text(value: str) -> str:
-        return re.sub(r'\\(["\\])', r"\1", value.strip('"'))
-
     def _read_len(self, tokens: list[str]) -> None:
         # LEN NEW "lens_name" <scaling> <total_surfaces>
         if self._seen_len or len(tokens) != 5 or tokens[1].upper() != "NEW":
             raise ValueError('LEN expects NEW "name" scaling surface-count')
         self._seen_len = True
-        self.data_model.name = self._decode_text(tokens[2])
+        self.data_model.name = decode_text(tokens[2])
         self.data_model.scaling = float(tokens[3])
         self.data_model.num_surfaces = int(tokens[4])
         if not 1 <= self.data_model.num_surfaces <= 10000:
@@ -370,7 +392,10 @@ class OsloDataParser:
     def _read_footer(self, tokens: list[str]) -> None:
         """Read declarative field data without executing analysis or CCL blocks."""
         cmd = tokens[0]
+        if self._ignore_footer:
+            return
         if cmd in {"CFG", "LEN"}:
+            self._ignore_footer = True
             self._unsupported(cmd, "additional configurations are not imported")
         elif cmd == "RST":
             self._field_table = len(tokens) == 2 and tokens[1].upper() == "NEW"
@@ -425,11 +450,11 @@ class OsloDataParser:
             raise ValueError("UNI must be positive (millimeters per lens unit)")
 
     def _read_des(self, tokens: list[str]) -> None:
-        self.data_model.notes["DES"] = self._decode_text(" ".join(tokens[1:]))
+        self.data_model.notes["DES"] = decode_text(" ".join(tokens[1:]))
 
     def _read_sno(self, tokens: list[str]) -> None:
         cmd = tokens[0].upper()
-        content = self._decode_text(" ".join(tokens[1:]))
+        content = decode_text(" ".join(tokens[1:]))
         self.data_model.notes[cmd] = content
 
     def _read_medium(self, tokens: list[str]) -> None:
@@ -453,7 +478,7 @@ class OsloDataParser:
         self._current_surf_data["PFL"] = float(tokens[1])
 
     def _read_note(self, tokens: list[str]) -> None:
-        self._current_surf_data["note"] = self._decode_text(" ".join(tokens[1:]))
+        self._current_surf_data["note"] = decode_text(" ".join(tokens[1:]))
 
     def _read_group(self, tokens: list[str]) -> None:
         if tokens[1].upper() not in {"EGR", "ELE"}:
@@ -530,6 +555,8 @@ class OsloDataParser:
     def _read_ap(self, tokens: list[str]) -> None:
         self._clear_constraint("AP")
         index = 2 if tokens[1].upper() in {"CHK", "UNC"} else 1
+        if len(tokens) != index + 1:
+            raise ValueError("AP expects an optional CHK/UNC flag and one radius")
         value = float(tokens[index])
         if value < 0:
             raise ValueError("AP radius must be nonnegative")
@@ -582,14 +609,6 @@ class OsloDataParser:
         cmd = tokens[0].upper()
         self._current_surf_data[cmd] = float(tokens[1])
 
-    def _read_decenter(self, tokens: list[str]) -> None:
-        cmd = tokens[0].upper()
-        self._current_surf_data[cmd] = float(tokens[1])
-
-    def _read_tilt(self, tokens: list[str]) -> None:
-        cmd = tokens[0].upper()
-        self._current_surf_data[cmd] = float(tokens[1])
-
     def _read_return(self, tokens: list[str]) -> None:
         # Legacy saved prescriptions encode the default local undo as RCO 0
         # (e.g. Lambda Research EyeModel_LB.len and io61ac.len).
@@ -601,12 +620,6 @@ class OsloDataParser:
 
     def _read_flag(self, tokens: list[str]) -> None:
         self._current_surf_data[tokens[0]] = True
-
-    def _read_wv(self, tokens: list[str]) -> None:
-        self._read_spectrum(tokens)
-
-    def _read_ww(self, tokens: list[str]) -> None:
-        self._read_spectrum(tokens)
 
     def _read_spectrum(self, tokens: list[str]) -> None:
         cmd = tokens[0]

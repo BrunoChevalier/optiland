@@ -439,3 +439,42 @@ def test_roundtrip_preserves_radial_clipping_mode(tmp_path, set_test_backend, ch
     restored = load_oslo_file(target, strict=True)
     assert isinstance(restored.surfaces[1].aperture, UnclippedAperture) is not checked
     assert_allclose(restored.surfaces[1].aperture.extent, [-1, 1, -1, 1])
+
+
+def test_review1_solved_thickness_feeds_pickups_and_export(tmp_path, set_test_backend):
+    path = simple_lens(tmp_path, surface='PY 1')
+    path.write_text(path.read_text().replace('TH 20', 'TH 20\nPK TH -1 1'))
+    optic = load_oslo_file(path, strict=True)
+    assert_allclose(optic.surfaces[1].thickness, 30)
+    assert_allclose(optic.surfaces[2].thickness, 31)
+    assert_allclose(optic.surfaces[3].geometry.cs.z, 61)
+    target = tmp_path / 'solved.len'
+    save_oslo_file(optic, target)
+    assert_allclose(load_oslo_file(target, strict=True).surfaces[2].geometry.cs.z, 30)
+
+
+@pytest.mark.parametrize('commands', ['PY 1\nTH 2', 'PK TH 0 1\nTHF 2', 'PU -.05\nRD 20'])
+def test_review1_literal_parameters_replace_constraints(tmp_path, set_test_backend, commands):
+    optic = load_oslo_file(simple_lens(tmp_path, surface=commands), strict=True)
+    assert_allclose(optic.surfaces[1].geometry.radius, 20)
+    assert_allclose(optic.surfaces[2].geometry.cs.z, 2)
+
+
+def test_review1_offset_ellipse_rotated_extent(tmp_path, set_test_backend):
+    from optiland.physical_apertures import EllipticalAperture, RotatedAperture
+    import math
+    ap = RotatedAperture(EllipticalAperture(2, 1, 3, 4), math.pi / 2)
+    assert_allclose(ap.extent, [-5, -3, 1, 5])
+    assert_allclose(ap.contains(be.array([-4.0]), be.array([3.0])), [True])
+
+
+def test_review1_historical_glass_approximation_is_explicit(tmp_path, monkeypatch):
+    import optiland.fileio.oslo.reader.converter as module
+    def unavailable(*args, **kwargs):
+        raise ValueError('no glass')
+    monkeypatch.setattr(module, 'Material', unavailable)
+    path = simple_lens(tmp_path, surface='GLA BAF13')
+    with pytest.raises(ValueError, match='approximate'):
+        load_oslo_file(path, strict=True)
+    with pytest.warns(UserWarning, match='approximate'):
+        load_oslo_file(path)

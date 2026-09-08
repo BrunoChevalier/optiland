@@ -129,14 +129,18 @@ class OsloToOpticConverter(BaseOpticReader):
 
         self.data = deepcopy(self.data)
         self.data.surfaces = resolve_pickups(self.data.surfaces)
+        self._build_optic()
+        self._apply_solves()
+        return self.optic
+
+    def _build_optic(self) -> None:
+        """Build from the current resolved prescription without applying solves."""
         self.optic = Optic(self.data.name)
         self.optic.obj_space_telecentric = self.data.settings.get("telecentric", False)
         self._configure_surfaces()
         self._configure_wavelengths()
         self._configure_aperture()
         self._configure_fields()
-        self._apply_solves()
-        return self.optic
 
     def _configure_surfaces(self) -> None:
         """Configure all surfaces on the optic."""
@@ -305,14 +309,14 @@ class OsloToOpticConverter(BaseOpticReader):
                 # Also check the fallback table for the base name.
                 if base.upper() in _OSLO_GLASS_FALLBACK:
                     nd, vd = _OSLO_GLASS_FALLBACK[base.upper()]
-                    return AbbeMaterial(nd, vd, model="buchdahl")
+                    return self._fallback_material(name, nd, vd)
                 break
 
         # Step 3 – built-in OSLO fallback table.
         entry = _OSLO_GLASS_FALLBACK.get(name.upper())
         if entry is not None:
             nd, vd = entry
-            return AbbeMaterial(nd, vd, model="buchdahl")
+            return self._fallback_material(name, nd, vd)
 
         # Step 4 – cannot resolve; warn and fall back to air.
         if self.strict:
@@ -325,6 +329,13 @@ class OsloToOpticConverter(BaseOpticReader):
             stacklevel=4,
         )
         return "air"
+
+    def _fallback_material(self, name: str, nd: float, vd: float) -> AbbeMaterial:
+        message = f"OSLO glass {name!r} uses approximate historical Abbe dispersion"
+        if self.strict:
+            raise ValueError(message)
+        warnings.warn(message, UserWarning, stacklevel=4)
+        return AbbeMaterial(nd, vd, model="buchdahl")
 
     def _configure_aperture(self) -> None:
         aperture_data = self.data.aperture
@@ -429,7 +440,8 @@ class OsloToOpticConverter(BaseOpticReader):
 
     def _apply_solves(self) -> None:
         """Apply surface-specific solves, retaining saved values on warned failures."""
-        for index, data in sorted(self.data.surfaces.items()):
+        for index in sorted(self.data.surfaces):
+            data = self.data.surfaces[index]
             for command in SOLVES:
                 if command not in data:
                     continue
@@ -438,6 +450,20 @@ class OsloToOpticConverter(BaseOpticReader):
                     apply_solve(
                         self.optic, index, command, data[command], self.data.units
                     )
+                    key = "TH" if command in {"PY", "PYC", "EC"} else "RD"
+                    surface = self.optic.surfaces[index]
+                    value = (
+                        surface.thickness if key == "TH" else surface.geometry.radius
+                    )
+                    data[key] = float(be.asarray(value).item()) / self.data.units
+                    if any(
+                        sd.get("pickups")
+                        for i, sd in self.data.surfaces.items()
+                        if i > index
+                    ):
+                        self.data.surfaces = resolve_pickups(self.data.surfaces)
+                        self._build_optic()
+                        data = self.data.surfaces[index]
                 except (ValueError, RuntimeError, ArithmeticError) as exc:
                     self.optic = Optic.from_dict(saved)
                     message = f"OSLO {command} at surface {index}: {exc}"

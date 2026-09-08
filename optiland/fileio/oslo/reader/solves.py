@@ -11,10 +11,10 @@ from optiland.paraxial_path import require_global_z_geometry
 from optiland.solves.factory import SolveFactory
 
 SOLVES = {
-    "PY": "marginal_ray_height_thickness",
-    "PYC": "chief_ray_height_thickness",
     "PU": "marginal_ray_angle_curvature",
     "PUC": "chief_ray_angle_curvature",
+    "PY": "marginal_ray_height_thickness",
+    "PYC": "chief_ray_height_thickness",
     "EC": None,
 }
 
@@ -71,4 +71,13 @@ def apply_solve(optic, index: int, command: str, value: float, scale: float) -> 
     ):
         raise ValueError(
             f"{command} target {target:g} could not be reached (got {actual:g})"
+        )
+    if is_height:
+        # Native height solves move coordinates directly. Keep the prescription
+        # thickness consistent for downstream pickups, updater calls and export.
+        optic.surfaces[index].thickness = float(
+            (
+                optic.surfaces[index + 1].geometry.cs.z
+                - optic.surfaces[index].geometry.cs.z
+            ).item()
         )

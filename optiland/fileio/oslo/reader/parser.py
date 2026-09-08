@@ -347,6 +347,7 @@ class OsloDataParser:
     def _read_medium(self, tokens: list[str]) -> None:
         # AIR or RFL
         cmd = tokens[0].upper()
+        self._clear_constraint("GLA")
         self._current_surf_data["material"] = {"AIF": "AIR", "RFH": "RFL"}.get(cmd, cmd)
 
     def _read_glass(self, tokens: list[str]) -> None:
@@ -354,6 +355,7 @@ class OsloDataParser:
         # GLA BK7
         # GLA 1.573 1.573 1.573
         # GLA MOD G1 1.6489 1.662...
+        self._clear_constraint("GLA")
         self._current_surf_data["material"] = "GLA " + " ".join(tokens[1:])
         self._current_surf_data["glass_wavelengths"] = list(
             self._wavelength_values or [0.58756, 0.48613, 0.65627]
@@ -415,9 +417,11 @@ class OsloDataParser:
             ]
 
     def _read_rd(self, tokens: list[str]) -> None:
+        self._clear_constraint("CV")
         self._current_surf_data["RD"] = float(tokens[1]) or math.inf
 
     def _read_cv(self, tokens: list[str]) -> None:
+        self._clear_constraint("CV")
         curvature = float(tokens[1])
         self._current_surf_data["RD"] = 1 / curvature if curvature else math.inf
 
@@ -432,9 +436,11 @@ class OsloDataParser:
             self._unsupported("ASP", f"asphere type {kind} is not mapped")
 
     def _read_th(self, tokens: list[str]) -> None:
+        self._clear_constraint("TH")
         self._current_surf_data["TH"] = float(tokens[1])
 
     def _read_ap(self, tokens: list[str]) -> None:
+        self._clear_constraint("AP")
         index = 2 if tokens[1].upper() in {"CHK", "UNC"} else 1
         value = float(tokens[index])
         if value < 0:
@@ -546,7 +552,20 @@ class OsloDataParser:
         self._ended = True
 
     def _read_solve(self, tokens: list[str]) -> None:
+        self._clear_constraint("CV" if tokens[0] in {"PU", "PUC"} else "TH")
         self._current_surf_data[tokens[0]] = float(tokens[1])
+
+    def _clear_constraint(self, kind: str) -> None:
+        kinds = {
+            "CV": {"CV", "CVM"},
+            "TH": {"TH", "THM", "LN", "LNM"},
+            "TD": {"TD", "TDM"},
+        }.get(kind, {kind})
+        data = self._current_surf_data
+        if "pickups" in data:
+            data["pickups"] = [p for p in data["pickups"] if p[0].upper() not in kinds]
+        for key in {"CV": ("PU", "PUC"), "TH": ("PY", "PYC", "EC")}.get(kind, ()):
+            data.pop(key, None)
 
     def _read_pickup(self, tokens: list[str]) -> None:
         if tokens[1].upper() not in {
@@ -563,6 +582,11 @@ class OsloDataParser:
         }:
             self._unsupported("PK", f"pickup type {tokens[1]} is not mapped")
             return
+        kind = tokens[1].upper()
+        family = {"CVM": "CV", "THM": "TH", "LN": "TH", "LNM": "TH", "TDM": "TD"}.get(
+            kind, kind
+        )
+        self._clear_constraint(family)
         self._current_surf_data.setdefault("pickups", []).append(tokens[1:])
 
     def _read_aperture_pickup(self, tokens: list[str]) -> None:

@@ -126,10 +126,13 @@ class OsloToOpticConverter(BaseOpticReader):
             raise ValueError("No OSLO data to convert.")
 
         self.optic = Optic(self.data.name)
+        self.current_cs = CoordinateSystem()
+        self._py_surface_indices = []
+        self.optic.obj_space_telecentric = self.data.settings.get("telecentric", False)
         self._configure_surfaces()
+        self._configure_wavelengths()
         self._configure_aperture()
         self._configure_fields()
-        self._configure_wavelengths()
         self._apply_py_solves()
         return self.optic
 
@@ -164,20 +167,22 @@ class OsloToOpticConverter(BaseOpticReader):
 
         handler = get_handler(oslo_type)
         surface_params = handler.parse(data)
+        scale = self.data.units
+        surface_params["radius"] *= scale
         surface_params["index"] = index
         surface_params["is_stop"] = data.get("AST", False)
 
         th = data.get("TH", 0.0)
         # OSLO uses 1e10 as "infinity"; allow for floating-point imprecision
         # (e.g., 9.9999999996e+09 appears in practice).
-        if th >= 9.9e9:
-            th = be.inf
-        surface_params["thickness"] = th
+        if abs(th) >= 9.9e9:
+            th = be.inf if th > 0 else -be.inf
+        surface_params["thickness"] = th * scale
 
         # Is paraxial?
         if "PFL" in data:
             surface_params["surface_type"] = "paraxial"
-            surface_params["f"] = data["PFL"]
+            surface_params["f"] = data["PFL"] * scale
 
         # Handle material
         material_raw = data.get("material", "AIR")
@@ -188,14 +193,14 @@ class OsloToOpticConverter(BaseOpticReader):
         if "AP" in data and data["AP"] < 1e6:
             from optiland.physical_apertures import RadialAperture
 
-            surface_params["aperture"] = RadialAperture(r_max=data["AP"])
+            surface_params["aperture"] = RadialAperture(r_max=data["AP"] * scale)
 
         if has_coord_transform:
             # Resolve effective global position and orientation
             # OSLO decenters/tilts are applied to the surface.
-            dx = data.get("DCX", 0.0)
-            dy = data.get("DCY", 0.0)
-            dz = data.get("DCZ", 0.0)
+            dx = data.get("DCX", 0.0) * scale
+            dy = data.get("DCY", 0.0) * scale
+            dz = data.get("DCZ", 0.0) * scale
             rx = be.deg2rad(data.get("TLA", 0.0))
             ry = be.deg2rad(data.get("TLB", 0.0))
             rz = be.deg2rad(data.get("TLC", 0.0))
@@ -221,9 +226,10 @@ class OsloToOpticConverter(BaseOpticReader):
             )
 
             # Advance CS by thickness for next surface
-            th = data.get("TH", 0.0)
             if not be.isinf(th):
-                self.current_cs = CoordinateSystem(z=th, reference_cs=self.current_cs)
+                self.current_cs = CoordinateSystem(
+                    z=th * scale, reference_cs=self.current_cs
+                )
         else:
             # Standard sequential path, thickness handled by Optiland automatically
             pass
@@ -332,19 +338,30 @@ class OsloToOpticConverter(BaseOpticReader):
     def _configure_aperture(self) -> None:
         aperture_data = self.data.aperture
         if "EPD" in aperture_data:
-            self.optic.set_aperture("EPD", aperture_data["EPD"])
+            self.optic.set_aperture("EPD", aperture_data["EPD"] * self.data.units)
 
         if "FNO" in aperture_data:
             self.optic.set_aperture("imageFNO", aperture_data["FNO"])
 
         if "NAO" in aperture_data:
             self.optic.set_aperture("objectNA", aperture_data["NAO"])
+        if "NAP" in aperture_data:
+            # OSLO's image NA is an aplanatic paraxial specification. Scale a
+            # unit pupil using its image-space reduced slope (n * u).
+            self.optic.set_aperture("EPD", 1.0)
+            _, slopes = self.optic.paraxial.marginal_ray()
+            n_image = self.optic.surfaces[-1].material_pre.n(
+                self.optic.primary_wavelength
+            )
+            reduced_slope = abs(float((n_image * slopes[-2]).item()))
+            if reduced_slope == 0:
+                raise ValueError("NAP cannot define an aperture for an afocal system")
+            self.optic.set_aperture("EPD", aperture_data["NAP"] / reduced_slope)
+        if not aperture_data:
+            self.optic.set_aperture("EPD", 2.0 * self.data.units)
 
     def _configure_fields(self) -> None:
         field_data = self.data.fields
-        if not field_data:
-            return
-
         field_type = field_data.get("type", "angle")
         y_coords = field_data.get("y", [0.0])
 
@@ -353,10 +370,15 @@ class OsloToOpticConverter(BaseOpticReader):
         # OSLO OBH sign convention: negative means below axis - take abs().
         if field_type == "object_height" and be.isinf(self.optic.surfaces[0].thickness):
             field_type = "angle"
-            y_coords = [abs(float(be.degrees(be.arctan(y / 1e10)))) for y in y_coords]
+            distance = self.data.surfaces[0].get("TH", 1e10)
+            y_coords = [
+                abs(float(be.degrees(be.arctan(y / distance)))) for y in y_coords
+            ]
         elif field_type == "angle":
             # ANG is always positive in OSLO for the max half-angle.
             y_coords = [abs(y) for y in y_coords]
+        else:
+            y_coords = [y * self.data.units for y in y_coords]
 
         self.optic.fields.set_type(field_type)
 

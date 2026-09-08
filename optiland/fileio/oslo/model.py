@@ -50,6 +50,7 @@ class OsloDataModel:
     units: float = 1.0
     notes: dict[str, str] = field(default_factory=dict)
     diagnostics: list[OsloDiagnostic] = field(default_factory=list)
+    settings: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         """Return the data model as a plain dictionary.

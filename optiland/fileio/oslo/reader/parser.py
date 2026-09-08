@@ -7,7 +7,6 @@ Kramer Harrison, 2026
 
 from __future__ import annotations
 
-import contextlib
 import math
 import re
 import warnings
@@ -71,6 +70,8 @@ class OsloDataParser:
             "PK": self._read_pickup,
             "FNO": self._read_fno,
             "NAO": self._read_nao,
+            "NAP": self._read_nap,
+            "TELE": self._read_tele,
             "DES": self._read_des,
             "PFL": self._read_paraxial,
         }
@@ -101,6 +102,9 @@ class OsloDataParser:
                     tokens[0] = cmd
                     if re.fullmatch(r"SNO\d+", cmd):
                         self._read_sno(tokens)
+                    elif re.fullmatch(r"W[VW][1-9]\d*", cmd):
+                        self._validate_numbers(tokens)
+                        self._read_spectrum(tokens)
                     elif cmd in self._dispatch_table:
                         self._validate_numbers(tokens)
                         self._dispatch_table[cmd](tokens)
@@ -113,20 +117,10 @@ class OsloDataParser:
         if not self._ended:
             self._read_end(["END"])
 
-        # Finalize wavelengths - deduplicate (inline WV before each GLA block
-        # causes duplicates; the final WV+WW block defines system wavelengths
-        # but shares the same values).
-        seen: set[float] = set()
-        unique_vals: list[float] = []
-        for v in self._wavelength_values:
-            if v not in seen:
-                seen.add(v)
-                unique_vals.append(v)
-        weights = list(self._wavelength_weights)
-        if weights and len(weights) < len(unique_vals):
-            weights = weights + [1.0] * (len(unique_vals) - len(weights))
-        self.data_model.wavelengths["values"] = unique_vals
-        self.data_model.wavelengths["weights"] = weights[: len(unique_vals)]
+        values = self._wavelength_values or [0.58756, 0.48613, 0.65627]
+        weights = self._wavelength_weights + [1.0] * len(values)
+        self.data_model.wavelengths["values"] = values
+        self.data_model.wavelengths["weights"] = weights[: len(values)]
 
         return self.data_model
 
@@ -193,32 +187,36 @@ class OsloDataParser:
 
     def _read_ebr(self, tokens: list[str]) -> None:
         # EBR <float> (Entrance Beam Radius)
-        self.data_model.aperture["EPD"] = 2.0 * float(tokens[1])
+        self.data_model.aperture = {"EPD": 2.0 * float(tokens[1])}
 
     def _read_fno(self, tokens: list[str]) -> None:
         # FNO <float> (F-Number)
-        self.data_model.aperture["FNO"] = float(tokens[1])
+        self.data_model.aperture = {"FNO": float(tokens[1])}
 
     def _read_nao(self, tokens: list[str]) -> None:
         # NAO <float> (Object NA)
-        self.data_model.aperture["NAO"] = float(tokens[1])
+        self.data_model.aperture = {"NAO": float(tokens[1])}
+
+    def _read_nap(self, tokens: list[str]) -> None:
+        self.data_model.aperture = {"NAP": float(tokens[1])}
+
+    def _read_tele(self, tokens: list[str]) -> None:
+        if tokens[1].upper() not in {"ON", "OFF", "0", "1"}:
+            raise ValueError("TELE expects ON or OFF")
+        self.data_model.settings["telecentric"] = tokens[1].upper() in {"ON", "1"}
 
     def _read_obh(self, tokens: list[str]) -> None:
         # OBH <float> (Object Height)
-        self.data_model.fields["type"] = "object_height"
-        if "y" not in self.data_model.fields:
-            self.data_model.fields["y"] = []
-        self.data_model.fields["y"].append(float(tokens[1]))
+        self.data_model.fields = {"type": "object_height", "y": [float(tokens[1])]}
 
     def _read_ang(self, tokens: list[str]) -> None:
         # ANG <float> (Field Angle)
-        self.data_model.fields["type"] = "angle"
-        if "y" not in self.data_model.fields:
-            self.data_model.fields["y"] = []
-        self.data_model.fields["y"].append(float(tokens[1]))
+        self.data_model.fields = {"type": "angle", "y": [float(tokens[1])]}
 
     def _read_uni(self, tokens: list[str]) -> None:
         self.data_model.units = float(tokens[1])
+        if self.data_model.units <= 0:
+            raise ValueError("UNI must be positive (millimeters per lens unit)")
 
     def _read_des(self, tokens: list[str]) -> None:
         self.data_model.notes["DES"] = " ".join(tokens[1:]).strip('"')
@@ -270,18 +268,34 @@ class OsloDataParser:
         self._current_surf_data[cmd] = float(tokens[1])
 
     def _read_wv(self, tokens: list[str]) -> None:
-        # WV <w1> [<w2> <w3>]
-        # WV2 <w2>
-        # WV3 <w3>
-        for t in tokens[1:]:
-            with contextlib.suppress(ValueError):
-                self._wavelength_values.append(float(t))
+        self._read_spectrum(tokens)
 
     def _read_ww(self, tokens: list[str]) -> None:
-        # WW <wt1> [<wt2> <wt3>]
-        for t in tokens[1:]:
-            with contextlib.suppress(ValueError):
-                self._wavelength_weights.append(float(t))
+        self._read_spectrum(tokens)
+
+    def _read_spectrum(self, tokens: list[str]) -> None:
+        cmd = tokens[0]
+        values = [float(t) for t in tokens[1:]]
+        wavelength = cmd.startswith("WV")
+        if not values or any(v <= 0 if wavelength else v < 0 for v in values):
+            raise ValueError(f"{cmd} requires positive wavelengths/nonnegative weights")
+        attr = "_wavelength_values" if wavelength else "_wavelength_weights"
+        if len(cmd) == 2:
+            setattr(self, attr, values)
+            return
+        index = int(cmd[2:]) - 1
+        if index > 1000 or len(values) != 1:
+            raise ValueError(f"{cmd} requires one value and a bounded wavelength index")
+        target = getattr(self, attr)
+        defaults = [0.58756, 0.48613, 0.65627] if wavelength else [1.0] * (index + 1)
+        while len(target) <= index:
+            if len(target) >= len(defaults):
+                if len(target) != index:
+                    raise ValueError(f"{cmd} leaves undefined wavelength slots")
+                target.append(values[0])
+            else:
+                target.append(defaults[len(target)])
+        target[index] = values[0]
 
     def _read_nxt(self, tokens: list[str]) -> None:
         # Save current surface and increment index

@@ -15,7 +15,10 @@ from typing import TYPE_CHECKING, Any
 import optiland.backend as be
 from optiland.fields.field_types import ObjectHeightField
 from optiland.fileio.base import BaseOpticReader
-from optiland.fileio.oslo.constants import DEFAULT_WAVELENGTHS_UM
+from optiland.fileio.oslo.constants import (
+    DEFAULT_WAVELENGTHS_UM,
+    OBJECT_INFINITY_THRESHOLD,
+)
 from optiland.fileio.oslo.reader.apertures import physical_aperture
 from optiland.fileio.oslo.reader.coordinates import surface_coordinates
 from optiland.fileio.oslo.reader.geometry import surface_geometry
@@ -227,9 +230,10 @@ class OsloToOpticConverter(BaseOpticReader):
         surface_params["is_stop"] = data.get("AST", False)
 
         th = data.get("TH", 0.0)
-        # OSLO uses 1e10 as "infinity"; allow for floating-point imprecision
-        # (e.g., 9.9999999996e+09 appears in practice).
-        if abs(th) >= 9.9e9:
+        # Object conjugates have a documented cutoff below the large sentinel
+        # used for other distances (sometimes saved as 9.9999999996e+09).
+        infinity_threshold = OBJECT_INFINITY_THRESHOLD if index == 0 else 9.9e9
+        if abs(th) >= infinity_threshold:
             th = be.inf if th > 0 else -be.inf
         surface_params["thickness"] = th * scale
 

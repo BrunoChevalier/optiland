@@ -8,6 +8,8 @@ from typing import Any
 import numpy as np
 from scipy.spatial.transform import Rotation
 
+from optiland.fileio.oslo.constants import OBJECT_INFINITY_THRESHOLD
+
 
 def reference_index(value: int, current: int) -> int:
     """Resolve an OSLO negative relative or nonnegative absolute surface index."""
@@ -34,7 +36,7 @@ def surface_coordinates(
             distance = data.get("TH", 0.0)
             base_position[2] = (
                 -distance * scale
-                if abs(distance) < 9.9e9
+                if abs(distance) < OBJECT_INFINITY_THRESHOLD
                 else -math.copysign(math.inf, distance)
             )
         elif index == 1:

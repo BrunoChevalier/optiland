@@ -9,6 +9,7 @@ from types import SimpleNamespace
 import pytest
 
 import optiland.backend as be
+from optiland.fields.field_types import AngleField, ObjectHeightField
 from optiland.fileio import load_oslo_file, save_oslo_file
 from optiland.fileio.oslo.model import OsloDataModel
 from optiland.fileio.oslo.reader.converter import OsloToOpticConverter
@@ -832,3 +833,54 @@ def test_telecentric_launch_rejects_invalid_cone(lens_file, aperture):
             lens_file(system="OBH 2\nTELE ON", distance="100", aperture=aperture),
             strict=True,
         )
+
+
+@pytest.mark.parametrize(
+    "distance,infinite", [(99999999, False), (1e8, True), (-1e8, True)]
+)
+@pytest.mark.parametrize("transformed", [False, True])
+def test_oslo_object_infinity_boundary(
+    lens_file, set_test_backend, distance, infinite, transformed
+):
+    # The OSLO cutoff is in lens units, before conversion to millimeters.
+    optic = load_oslo_file(
+        lens_file(
+            system="UNI .001\nOBH 2",
+            distance=str(distance),
+            surface="DCY 0" if transformed else "",
+        ),
+        strict=True,
+    )
+    assert optic.object_surface.is_infinite == infinite
+    if infinite:
+        assert float(optic.object_surface.geometry.cs.z) == -math.copysign(
+            math.inf, distance
+        )
+        assert isinstance(optic.fields.field_definition, AngleField)
+    else:
+        assert_allclose(optic.object_surface.geometry.cs.z, -99999.999)
+        assert isinstance(optic.fields.field_definition, ObjectHeightField)
+
+
+def test_export_rejects_finite_object_at_oslo_infinity_boundary(
+    lens_file, tmp_path, set_test_backend
+):
+    optic = load_oslo_file(lens_file(distance="100"), strict=True)
+    optic.updater.set_thickness(1e8, 0)
+    path = tmp_path / "finite-object.len"
+    path.write_text("saved design", encoding="utf-8")
+    with pytest.raises(NotImplementedError, match="finite object distance"):
+        save_oslo_file(optic, path)
+    assert path.read_text() == "saved design"
+
+
+def test_export_preserves_finite_object_just_below_infinity_boundary(
+    lens_file, tmp_path, set_test_backend
+):
+    distance = math.nextafter(1e8, 0)
+    optic = load_oslo_file(lens_file(distance=str(distance)), strict=True)
+    path = tmp_path / "large-finite-object.len"
+    save_oslo_file(optic, path)
+    restored = load_oslo_file(path, strict=True)
+    assert not restored.object_surface.is_infinite
+    assert float(restored.object_surface.geometry.cs.z) == -distance

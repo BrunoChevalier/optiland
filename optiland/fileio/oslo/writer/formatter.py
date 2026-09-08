@@ -147,7 +147,9 @@ class OsloDataFormatter:
                 if math.isinf(data["TH"])
                 else data["TH"]
             )
-            lines.append(f"  TH {self._fmt(th)}")  # 1e10 is OSLO's infinity convention
+            # Retain the shortest round-trippable value: rounding a finite
+            # object distance up to OSLO's cutoff changes the ray launch.
+            lines.append(f"  TH {th}")
 
         if "AP" in data:
             flag = "CHK " if data.get("aperture_checked") else ""

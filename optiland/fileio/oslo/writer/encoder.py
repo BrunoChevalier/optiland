@@ -13,7 +13,10 @@ from typing import TYPE_CHECKING, Any
 
 import optiland.backend as be
 from optiland.fileio.common import FIELD_CLASS_TO_TYPE
-from optiland.fileio.oslo.constants import DEFAULT_WAVELENGTHS_UM
+from optiland.fileio.oslo.constants import (
+    DEFAULT_WAVELENGTHS_UM,
+    OBJECT_INFINITY_THRESHOLD,
+)
 from optiland.fileio.oslo.model import OsloDataModel
 from optiland.fileio.oslo.surfaces import get_handler_for_optiland_type
 from optiland.materials import AbbeMaterial, IdealMaterial, Material, TabulatedMaterial
@@ -175,6 +178,10 @@ class OpticToOsloEncoder:
 
             # Common properties
             th = float(surface.thickness)
+            if idx == 0 and math.isfinite(th) and abs(th) >= OBJECT_INFINITY_THRESHOLD:
+                raise NotImplementedError(
+                    "OSLO cannot represent this finite object distance; use native JSON"
+                )
             if be.isinf(th):
                 th = math.copysign(1e10, th)
             surf_data["TH"] = th
@@ -198,7 +205,6 @@ class OpticToOsloEncoder:
             surf_data["material"] = self._encode_material(material_to_encode)
 
             # Aperture
-            # th >= 9.9e9 covers both be.inf (converted to 1e10) and 1e10 as-stored
             aperture = surface.aperture
             checked = not isinstance(aperture, UnclippedAperture)
             if not checked:
@@ -209,7 +215,7 @@ class OpticToOsloEncoder:
                 raise NotImplementedError(
                     "OSLO writer cannot export this aperture shape; use native JSON"
                 )
-            if idx == 0 and th >= 9.9e9:
+            if idx == 0 and surface.is_infinite:
                 # Object surface with infinite conjugate: emit a large AP sentinel
                 # matching OSLO EDU convention: AP = tan(max_field_angle) * 1e10
                 max_y = max((abs(f.y) for f in self.optic.fields), default=0.0)

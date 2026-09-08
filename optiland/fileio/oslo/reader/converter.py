@@ -13,6 +13,7 @@ from copy import deepcopy
 from typing import TYPE_CHECKING, Any
 
 import optiland.backend as be
+from optiland.fields.field_types import ObjectHeightField
 from optiland.fileio.base import BaseOpticReader
 from optiland.fileio.oslo.constants import DEFAULT_WAVELENGTHS_UM
 from optiland.fileio.oslo.reader.apertures import physical_aperture
@@ -139,10 +140,46 @@ class OsloToOpticConverter(BaseOpticReader):
         """Build from the current resolved prescription without applying solves."""
         self.optic = Optic(self.data.name)
         self.optic.obj_space_telecentric = self.data.settings.get("telecentric", False)
+        self.optic.fields.set_telecentric(self.optic.obj_space_telecentric)
         self._configure_surfaces()
         self._configure_wavelengths()
         self._configure_aperture()
         self._configure_fields()
+        self._configure_telecentric_launch()
+
+    def _configure_telecentric_launch(self) -> None:
+        """Adapt supported TELE prescriptions to the native real-ray launcher."""
+        if not self.optic.obj_space_telecentric:
+            return
+        if (
+            self.optic.object_surface.is_infinite
+            or not isinstance(self.optic.fields.field_definition, ObjectHeightField)
+            or float(
+                self.optic.object_surface.material_post.n(
+                    self.optic.primary_wavelength
+                ).item()
+            )
+            != 1
+            or not self.optic.surfaces.build_paraxial_path().entry_is_positive_z
+        ):
+            message = (
+                "OSLO TELE real-ray launch currently requires finite object-height "
+                "fields in air and entry along +z"
+            )
+            if self.strict:
+                raise ValueError(message)
+            warnings.warn(message, UserWarning, stacklevel=3)
+            return
+        if self.optic.aperture.ap_type != "objectNA":
+            # Keep the axial cone fixed while allowing every field point's
+            # chief ray to launch parallel to the axis. The native TELE aimer
+            # expects the cone's sine as an object-NA aperture in air.
+            slope = abs(float(self.optic.paraxial.marginal_ray()[1][0].item()))
+            self.optic.set_aperture("objectNA", math.sin(math.atan(slope)))
+        if not 0 < self.optic.aperture.value < 1:
+            raise ValueError(
+                "OSLO TELE launch requires object NA strictly between 0 and 1"
+            )
 
     def _configure_surfaces(self) -> None:
         """Configure all surfaces on the optic."""

@@ -23,6 +23,10 @@ def apply_solve(optic, index: int, command: str, value: float, scale: float) -> 
     """Solve one surface, checking that native no-op cases did not hide failure."""
     if not 1 <= index < len(optic.surfaces) - 1:
         raise ValueError(f"{command} requires an interior optical surface")
+    if optic.obj_space_telecentric and command in {"PYC", "PUC"}:
+        # Native paraxial chief rays target the stop center, whereas TELE's
+        # real chief rays launch parallel to the object-space axis.
+        raise ValueError("OSLO telecentric chief-ray solves are not mapped")
     require_global_z_geometry(optic.surfaces, f"OSLO {command}")
     if command == "EC":
         height = value * scale

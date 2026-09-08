@@ -759,3 +759,76 @@ def test_resetting_special_apertures_clears_their_pickups(lens_file, set_test_ba
         strict=True,
     )
     assert optic.surfaces[2].aperture is None
+
+
+def test_telecentric_import_survives_native_serialization(lens_file, set_test_backend):
+    from optiland.optic import Optic
+
+    optic = load_oslo_file(
+        lens_file(system="OBH 2\nTELE ON", aperture="NAO .1", distance="100"),
+        strict=True,
+    )
+    assert Optic.from_dict(optic.to_dict()).obj_space_telecentric
+
+
+def test_telecentric_entrance_beam_can_launch_real_rays(lens_file, set_test_backend):
+    from optiland.rays.ray_aiming.paraxial import ParaxialRayAimer
+
+    optic = load_oslo_file(
+        lens_file(system="OBH 2\nTELE ON", distance="100"), strict=True
+    )
+    x, y, z, l, m, n = ParaxialRayAimer(optic).aim_rays(
+        (0, 1), optic.primary_wavelength, (be.zeros(2), be.array([0.0, 1.0]))
+    )
+    # The chief ray is parallel to z; the marginal ray advances 2 mm in y
+    # across the 100 mm object distance. Both originate at the field point.
+    assert_allclose(y, [2, 2])
+    assert_allclose(m / n, [0, 0.02])
+    assert_allclose(l, [0, 0])
+
+
+def test_failed_solve_retains_telecentricity(lens_file, set_test_backend):
+    with pytest.warns(UserWarning, match="retained saved prescription"):
+        optic = load_oslo_file(
+            lens_file(
+                system="OBH 2\nTELE ON",
+                aperture="NAO .1",
+                distance="100",
+                surface="EC 40",
+            )
+        )
+    assert optic.obj_space_telecentric
+
+
+@pytest.mark.parametrize(
+    "distance,system",
+    [
+        ("1e20", "TELE ON"),
+        ("100", "OBH 2\nGLA 1.5\nTELE ON"),
+        ("100", "ANG 2\nTELE ON"),
+    ],
+)
+def test_unsupported_telecentric_launch_is_diagnosed(lens_file, distance, system):
+    path = lens_file(distance=distance, system=system)
+    with pytest.warns(UserWarning, match="TELE.*launch"):
+        load_oslo_file(path)
+    with pytest.raises(ValueError, match="TELE.*launch"):
+        load_oslo_file(path, strict=True)
+
+
+@pytest.mark.parametrize("command", ["PYC 1", "PUC .05"])
+def test_telecentric_chief_solves_do_not_use_a_nontelecentric_ray(lens_file, command):
+    path = lens_file(
+        system="OBH 2\nTELE ON", distance="100", aperture="NAO .1", surface=command
+    )
+    with pytest.raises(ValueError, match="telecentric chief-ray"):
+        load_oslo_file(path, strict=True)
+
+
+@pytest.mark.parametrize("aperture", ["NAO 1", "NAO 1.1", "PUK 0"])
+def test_telecentric_launch_rejects_invalid_cone(lens_file, aperture):
+    with pytest.raises(ValueError, match="TELE.*NA"):
+        load_oslo_file(
+            lens_file(system="OBH 2\nTELE ON", distance="100", aperture=aperture),
+            strict=True,
+        )

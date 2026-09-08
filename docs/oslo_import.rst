@@ -33,8 +33,15 @@ UTF-8 (including BOM) and legacy Windows-1252 text are accepted.
        its other data. The first prescription is imported.
    * - ``UNI``, ``EBR``, ``FNO``, ``NAO``, ``NAP``, ``PUK``, ``TELE``
      - Lens units converted to millimeters. Working f-number/image NA/slope
-       determine the entrance pupil via a paraxial trace; TELE sets object-space
-       telecentricity. These specifications require valid paraxial geometry.
+       determine the entrance pupil via a paraxial trace. EBR specifies the axial
+       beam radius at surface 1; finite-object imports account for the displaced
+       entrance pupil. These specifications require valid paraxial geometry.
+       TELE sets object-space telecentricity and is preserved in native JSON.
+       Real telecentric launch supports finite object-height fields in air with
+       entry along +z, using an equivalent object NA. Other launch combinations
+       warn in permissive mode and fail in strict mode.
+       Native paraxial chief-ray analysis still aims at the stop; use real rays
+       to evaluate the imported telecentric launch.
    * - ``ANG``, ``OBH``, ``GIH``; ``RST NEW`` / ``F``
      - Maximum field or explicit fractional X/Y positions, weights and symmetric
        pupil vignetting. Fractional object positions are converted through tangent
@@ -46,6 +53,8 @@ UTF-8 (including BOM) and legacy Windows-1252 text are accepted.
        Direct-index glass retains the wavelengths active when it was defined.
    * - ``RD``, ``RDF``, ``CV``, ``CVF``, ``TH``, ``THF``, ``CC``
      - Spheres/conics, planar RD=0, signed thickness and infinity sentinels.
+       Object distances with magnitude at least 1e8 lens units are infinite,
+       independently of the conversion to millimeters.
        Fixed markers describe editing constraints and do not change the snapshot.
    * - ``AD`` through ``AG``; ``ASP ADO/ASR/ARA/ASX`` and ``ASn``
      - AD starts at r^4. ASR uses even radial powers, ARA all positive radial
@@ -87,6 +96,8 @@ UTF-8 (including BOM) and legacy Windows-1252 text are accepted.
        unsatisfied solves restore saved values with a warning in permissive mode;
        strict mode rejects. General simultaneous constraint solving is not provided:
        a coupled case can be rejected even if a joint solution exists in OSLO.
+       Telecentric PYC/PUC solves are not mapped because the native paraxial chief
+       ray used by those solves does not implement the telecentric launch.
    * - ``GSP``, ``GOR``
      - Ruled gratings through the existing phase model, with grooves parallel
        to local X. Lens-unit spacing is converted to millimeters. Blaze efficiency
@@ -122,9 +133,13 @@ preferred way to retain imported general geometry, aperture composition and pose
 The OSLO writer supports its documented surface subset, direct spectral samples,
 correct even-asphere powers, explicit angular/object-height fields and radial
 aperture checking flags, and object-space telecentricity. Unsupported field
-definitions, transformed surfaces, phase profiles and non-radial apertures raise
-before the destination file is opened, preventing silent loss of those features.
-Names and notes must fit on a single line. Use native JSON for those systems.
+definitions, transformed surfaces, phase profiles, offset/non-radial apertures,
+custom material or propagation models, ideal-material absorption, coatings and
+scattering raise before the destination file is opened. Names and notes must fit
+on a single line. Use native JSON for those systems. Finite-object and floating-stop
+apertures export the actual axial beam radius at surface 1.
+The writer rejects finite object distances that OSLO would interpret as infinite
+and preserves thickness precision to avoid rounding across that boundary.
 
 Specification and real-file validation
 --------------------------------------
@@ -132,9 +147,11 @@ Specification and real-file validation
 Mappings were checked against Lambda Research's
 `OSLO Program Reference (10 March 2021) <https://lambdares.com/hubfs/Support/support/oslo/oslo_releases/OSLOProgramReference.pdf>`_
 (printed pp. 43-50: solves/apertures; 51-68: media/coordinates; 69-85:
-surfaces/gratings; 120-122: system setup; 208-210: fields; 508-514: commands),
+surfaces/gratings; 120-122: system setup; 208-210: fields; 215: telecentricity;
+508-514: commands),
 the `Optics Reference <https://lambdares.com/hubfs/Support/support/OSLOOpticsReference_Sep21.pdf>`_
-(pp. 142-145: coordinate transforms; 170-171: grating equation), and the
+(pp. 142-145: coordinate transforms; 151: object conjugates/telecentric launch;
+170-171: grating equation), and the
 `official demo library <https://lambdares.com/support-posts/lens-demos>`_.
 The `current release page <https://lambdares.com/support-posts/oslo-current-release>`_
 links the reference editions used during research.
@@ -153,16 +170,19 @@ indices, poses, aperture clipping, grating directions and solve targets.
 
 The 2026-09-08 audit used archive SHA-256
 ``d5d43924d945a0ef5a200a0e5f12e459095b7504c59c946770fe75711814f8cc``.
-Both NumPy and Torch imported 100 of 101 files in permissive mode (5 without
-warnings, 95 with warnings); 10 passed strict import. The on-axis smoke trace
-transmitted at least one finite ray in 79 files, transmitted none in 20, and
-raised an error in 1. None of the strict imports raised a trace error. These
+Both NumPy and Torch imported 98 of 101 files in permissive mode (5 without
+warnings, 93 with warnings); 10 passed strict import. The on-axis smoke trace
+transmitted at least one finite ray in 79 files, transmitted none in 19, and
+raised no errors among imported files. These
 figures include deliberately unsupported examples and are compatibility results,
 not 101 validated optical designs. The audit JSON lists every filename and reason.
-The rejected import is ``demos/edu/prismirr.len``: its BEN bend relies on
+The rejected ``demos/edu/prismirr.len`` has a BEN bend that relies on
 TIR-controlled reflection, which is not mapped. Earlier permissive imports
 accepted this file while tracing the affected surface with a refracting model.
-The remaining trace error is ``demos/edu/ebert.len``: its finite object-height
-field and off-axis entry combination is unsupported by Optiland's field launcher.
+The other rejected files, ``demos/edu/ebert.len`` and
+``demos/premium/nonseq/cherryns.len``, require finite-object EBR conversion on
+geometry outside the native scalar paraxial model. Earlier imports treated EBR
+as an entrance-pupil radius without accounting for their finite object distance;
+the smoke trace failed for ebert and transmitted no rays for cherryns.
 Legacy ``RCO 0`` records in the demo archive are interpreted as the default undo
 of the current local transform, consistently with the examples' surface placement.

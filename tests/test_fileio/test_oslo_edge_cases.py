@@ -353,12 +353,12 @@ def test_general_even_asphere_export_preserves_sag(
     lens_file, tmp_path, set_test_backend, command, power
 ):
     optic = load_oslo_file(
-        lens_file(surface=f"RD 0\nASP ASR 1\n{command}"), strict=True
+        lens_file(surface=f"RD 0\nASP ASR 1\n{command}"), strict=power > 2
     )
     path = tmp_path / "general-asphere.len"
     save_oslo_file(optic, path)
     assert "ASP ASR" in path.read_text()
-    restored = load_oslo_file(path, strict=True)
+    restored = load_oslo_file(path, strict=power > 2)
     assert_allclose(
         restored.surfaces[1].geometry.sag(be.array([2.0]), be.array([0.0])),
         [0.001 * 2**power],
@@ -969,3 +969,35 @@ def test_invalid_object_na_export_preserves_destination(
     with pytest.raises(ValueError, match="NAO"):
         save_oslo_file(optic, path)
     assert path.read_text() == "saved design"
+
+
+@pytest.mark.parametrize(
+    "kind,coefficient",
+    [("ASR", 1), ("ARA", 1), ("ARA", 2)] + [("ASX", i) for i in range(6)],
+)
+def test_low_order_asphere_paraxial_limit_is_diagnosed(lens_file, kind, coefficient):
+    path = lens_file(surface=f"ASP {kind} 6\nAS{coefficient} .01")
+    with pytest.warns(UserWarning, match="asphere.*paraxial"):
+        load_oslo_file(path)
+    with pytest.raises(ValueError, match="asphere.*paraxial"):
+        load_oslo_file(path, strict=True)
+
+
+def test_quadratic_sag_preserves_real_surface_power(lens_file, set_test_backend):
+    path = lens_file(surface="RD 0\nASP ASR 1\nAS1 .01", second="RD 0")
+    with pytest.warns(UserWarning, match="asphere.*paraxial"):
+        optic = load_oslo_file(path)
+    x, y = be.zeros(1), be.array([1e-5])
+    surface = optic.surfaces[1]
+    rays = RealRays(x, y, surface.geometry.sag(x, y), x, x, be.ones(1), 1, 0.55)
+    surface.interaction_model.interact_real_rays(rays)
+    # z=.01*y^2 gives curvature .02; Snell's small-height limit is
+    # u/y = -(1.5-1)*.02/1.5 at the air-to-glass boundary.
+    assert_allclose(rays.M / rays.N / y, [-1 / 150], rtol=1e-7, atol=1e-12)
+
+
+@pytest.mark.parametrize("kind,coefficient", [("ASR", 2), ("ARA", 3), ("ASX", 6)])
+def test_higher_order_aspheres_remain_strictly_supported(lens_file, kind, coefficient):
+    load_oslo_file(
+        lens_file(surface=f"ASP {kind} 6\nAS{coefficient} .001"), strict=True
+    )

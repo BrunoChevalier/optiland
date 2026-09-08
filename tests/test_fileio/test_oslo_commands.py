@@ -158,7 +158,8 @@ def test_oslo_standard_asphere_power_and_scaled_sag(tmp_path, set_test_backend):
     ('ASP ASX 2\nAS0 .02\nAS1 .01\nAS4 .003', .02 + .01 * 2),
 ])
 def test_general_asphere_equations(tmp_path, set_test_backend, command, expected):
-    optic = load_oslo_file(simple_lens(tmp_path, surface='RD 0\n' + command), strict=True)
+    with pytest.warns(UserWarning, match="asphere.*paraxial"):
+        optic = load_oslo_file(simple_lens(tmp_path, surface='RD 0\n' + command))
     assert_allclose(optic.surfaces[1].geometry.sag(be.array([2.0]), be.array([0.0])), [expected])
 
 

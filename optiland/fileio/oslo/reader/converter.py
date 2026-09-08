@@ -227,6 +227,18 @@ class OsloToOpticConverter(BaseOpticReader):
     ) -> None:
         scale = self.data.units
         surface_params = surface_geometry(data, scale)
+        # Native scalar traces use the base radius only. Constant, linear and
+        # quadratic sag terms can change the vertex, normal or paraxial power.
+        low_order = {"ASR": (1,), "ARA": (1, 2), "ASX": tuple(range(6))}
+        if any(data.get(f"AS{i}", 0) for i in low_order.get(data.get("ASP"), ())):
+            message = (
+                f"OSLO asphere at surface {index} has low-order sag terms ignored "
+                "by native paraxial analysis; real-ray geometry is retained, but "
+                "paraxial pupils, fields and solves may be inaccurate"
+            )
+            if self.strict:
+                raise ValueError(message)
+            warnings.warn(message, UserWarning, stacklevel=3)
         surface_params["index"] = index
         surface_params["is_stop"] = data.get("AST", False)
 

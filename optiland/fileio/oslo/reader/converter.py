@@ -347,7 +347,7 @@ class OsloToOpticConverter(BaseOpticReader):
         return AbbeMaterial(nd, vd, model="buchdahl")
 
     def _configure_aperture(self) -> None:
-        aperture_data = self.data.aperture
+        aperture_data = self.data.aperture or {"EPD": 2.0}
         if (
             "FNO" in aperture_data
             and self.optic.object_surface.is_infinite
@@ -357,11 +357,22 @@ class OsloToOpticConverter(BaseOpticReader):
                 .item()
             )
             == 1.0
+            and 0 < float(self.optic.paraxial.f2()) < math.inf
         ):
             self.optic.set_aperture("imageFNO", aperture_data["FNO"])
             return
         if "EPD" in aperture_data:
-            self.optic.set_aperture("EPD", aperture_data["EPD"] * self.data.units)
+            # The intermediate model stores twice OSLO's EBR under its legacy
+            # EPD key. EBR is measured at surface 1 (Program Reference p. 120),
+            # which need not coincide with the entrance pupil for finite objects.
+            diameter = aperture_data["EPD"] * self.data.units
+            self.optic.set_aperture("EPD", 1.0)
+            if not self.optic.object_surface.is_infinite:
+                height = abs(float(self.optic.paraxial.marginal_ray()[0][1].item()))
+                if not math.isfinite(height) or height == 0:
+                    raise ValueError("EBR requires a finite nonzero beam at surface 1")
+                diameter /= 2 * height
+            self.optic.set_aperture("EPD", diameter)
 
         if "NAO" in aperture_data:
             self.optic.set_aperture("objectNA", aperture_data["NAO"])
@@ -382,8 +393,6 @@ class OsloToOpticConverter(BaseOpticReader):
             if reduced_slope == 0:
                 raise ValueError("NAP cannot define an aperture for an afocal system")
             self.optic.set_aperture("EPD", target / reduced_slope)
-        if not aperture_data:
-            self.optic.set_aperture("EPD", 2.0 * self.data.units)
 
     def _configure_fields(self) -> None:
         field_data = self.data.fields

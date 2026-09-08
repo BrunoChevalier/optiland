@@ -623,3 +623,45 @@ def test_deferred_asphere_diagnostic_points_to_coefficient(lens_file):
     with pytest.raises(ValueError) as error:
         OsloDataParser(path, strict=True).parse()
     assert f"{path}:{source_line}:" in str(error.value)
+
+
+@pytest.mark.parametrize("aperture, radius", [("EBR 2", 2), ("", 1)])
+def test_finite_entrance_beam_radius_is_measured_at_surface_one(
+    lens_file, set_test_backend, aperture, radius
+):
+    optic = load_oslo_file(
+        lens_file(distance="100", second="AST", aperture=aperture), strict=True
+    )
+    # OSLO EBR=2 specifies the beam at the first surface, even when its
+    # entrance pupil is displaced by refraction ahead of an internal stop.
+    assert_allclose(optic.paraxial.marginal_ray()[0][1], [radius])
+
+
+@pytest.mark.parametrize(
+    "aperture_type,value", [("EPD", 4), ("imageFNO", 8), ("float_by_stop_size", 3)]
+)
+def test_export_entrance_beam_matches_finite_conjugate_ray(
+    lens_file, tmp_path, set_test_backend, aperture_type, value
+):
+    from optiland.physical_apertures import RadialAperture
+
+    optic = load_oslo_file(lens_file(distance="100", second="AST"), strict=True)
+    optic.surfaces[2].aperture = RadialAperture(value)
+    optic.set_aperture(aperture_type, value)
+    expected = float(optic.paraxial.marginal_ray()[0][1].item())
+    path = tmp_path / "finite-beam.len"
+    save_oslo_file(optic, path)
+    command = next(
+        line for line in path.read_text().splitlines() if line.startswith("EBR ")
+    )
+    assert float(command.split()[1]) == pytest.approx(expected, rel=1e-6)
+    restored = load_oslo_file(path, strict=True)
+    assert_allclose(restored.paraxial.marginal_ray()[0][1], [expected], rtol=1e-6)
+
+
+def test_diverging_fno_uses_a_positive_entrance_pupil(lens_file, set_test_backend):
+    optic = load_oslo_file(
+        lens_file(aperture="FNO 5", surface="RD -20", second="RD 20"), strict=True
+    )
+    assert float(optic.paraxial.EPD()) > 0
+    assert_allclose(abs(optic.paraxial.marginal_ray()[1][-2]), [0.1])

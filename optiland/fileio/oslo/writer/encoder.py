@@ -59,21 +59,33 @@ class OpticToOsloEncoder:
         return self.data_model
 
     def _encode_aperture(self) -> None:
-        if self.optic.aperture:
-            ap_type = self.optic.aperture.ap_type
-            value = self.optic.aperture.value
-            if ap_type == "EPD":
-                self.data_model.aperture["EPD"] = value
-            elif ap_type == "imageFNO":
-                # Prefer EBR when the focal length is available; keep FNO as
-                # the fallback. Convert: EPD = EFL / FNO, EBR = EPD / 2.
-                try:
-                    efl = float(self.optic.paraxial.f2())
-                    self.data_model.aperture["EPD"] = efl / value
-                except Exception:
-                    self.data_model.aperture["FNO"] = value
-            elif ap_type == "objectNA":
-                self.data_model.aperture["NAO"] = value
+        if self.optic.aperture is None:
+            return
+        ap_type = self.optic.aperture.ap_type
+        value = self.optic.aperture.value
+        if ap_type == "objectNA":
+            self.data_model.aperture["NAO"] = value
+            return
+        if ap_type not in {"EPD", "imageFNO", "float_by_stop_size"}:
+            raise NotImplementedError("OSLO writer cannot export this system aperture")
+        infinite = self.optic.object_surface.is_infinite
+        try:
+            # OSLO EBR is the axial beam radius at surface 1, not at the
+            # entrance pupil. Store its diameter under the model's legacy key.
+            diameter = (
+                float(self.optic.paraxial.EPD())
+                if infinite
+                else 2 * abs(float(self.optic.paraxial.marginal_ray()[0][1].item()))
+            )
+        except ValueError:
+            if ap_type != "imageFNO" or not infinite:
+                raise
+            # Preserve the historical no-wavelength export for infinite objects.
+            self.data_model.aperture["FNO"] = value
+            return
+        if not math.isfinite(diameter) or diameter <= 0:
+            raise ValueError("OSLO export requires a finite positive entrance beam")
+        self.data_model.aperture["EPD"] = diameter
 
     def _encode_fields(self) -> None:
         if self.optic.fields:

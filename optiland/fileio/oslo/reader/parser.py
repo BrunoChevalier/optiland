@@ -43,10 +43,21 @@ class OsloDataParser:
             "UNI": self._read_uni,
             "AIR": self._read_medium,
             "RFL": self._read_medium,
+            "RFH": self._read_medium,
+            "AIF": self._read_medium,
             "GLA": self._read_glass,
+            "GLF": self._read_glass,
             "RD": self._read_rd,
+            "RDF": self._read_rd,
+            "CV": self._read_cv,
+            "CVF": self._read_cv,
+            "CVX": self._read_coeff,
+            "RDX": self._read_rdx,
             "TH": self._read_th,
+            "THF": self._read_th,
             "AP": self._read_ap,
+            "APF": self._read_ap,
+            "ASP": self._read_asp,
             "AST": self._read_ast,
             "CC": self._read_cc,
             "AD": self._read_coeff,
@@ -105,6 +116,9 @@ class OsloDataParser:
                     elif re.fullmatch(r"W[VW][1-9]\d*", cmd):
                         self._validate_numbers(tokens)
                         self._read_spectrum(tokens)
+                    elif re.fullmatch(r"AS\d+", cmd):
+                        self._validate_numbers(tokens)
+                        self._read_coeff(tokens)
                     elif cmd in self._dispatch_table:
                         self._validate_numbers(tokens)
                         self._dispatch_table[cmd](tokens)
@@ -228,7 +242,8 @@ class OsloDataParser:
 
     def _read_medium(self, tokens: list[str]) -> None:
         # AIR or RFL
-        self._current_surf_data["material"] = tokens[0].upper()
+        cmd = tokens[0].upper()
+        self._current_surf_data["material"] = {"AIF": "AIR", "RFH": "RFL"}.get(cmd, cmd)
 
     def _read_glass(self, tokens: list[str]) -> None:
         # GLA <glass_def>
@@ -241,7 +256,21 @@ class OsloDataParser:
         self._current_surf_data["PFL"] = float(tokens[1])
 
     def _read_rd(self, tokens: list[str]) -> None:
-        self._current_surf_data["RD"] = float(tokens[1])
+        self._current_surf_data["RD"] = float(tokens[1]) or math.inf
+
+    def _read_cv(self, tokens: list[str]) -> None:
+        curvature = float(tokens[1])
+        self._current_surf_data["RD"] = 1 / curvature if curvature else math.inf
+
+    def _read_rdx(self, tokens: list[str]) -> None:
+        radius = float(tokens[1])
+        self._current_surf_data["CVX"] = 1 / radius if radius else 0.0
+
+    def _read_asp(self, tokens: list[str]) -> None:
+        kind = {"0": "ADO", "1": "ASR", "2": "ASX"}.get(tokens[1], tokens[1].upper())
+        self._current_surf_data["ASP"] = kind
+        if kind not in {"ADO", "ASR", "ASX", "ARA"}:
+            self._unsupported("ASP", f"asphere type {kind} is not mapped")
 
     def _read_th(self, tokens: list[str]) -> None:
         self._current_surf_data["TH"] = float(tokens[1])

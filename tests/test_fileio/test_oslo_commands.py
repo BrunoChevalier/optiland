@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 import optiland.backend as be
-from optiland.fileio import load_oslo_file
+from optiland.fileio import load_oslo_file, save_oslo_file
 from optiland.fileio.oslo.reader.parser import OsloDataParser
 from tests.utils import assert_allclose
 
@@ -132,3 +132,47 @@ def test_image_na_and_telecentric(tmp_path, set_test_backend):
     assert optic.aperture.ap_type == "EPD"
     assert_allclose(optic.aperture.value, .2 / power)
     assert optic.obj_space_telecentric is True
+
+
+@pytest.mark.parametrize("command,radius", [("CV .05", 20), ("CVF -.1", -10),
+                                            ("RDF 0", be.inf), ("RD 0", be.inf)])
+def test_curvature_and_fixed_aliases(tmp_path, set_test_backend, command, radius):
+    optic = load_oslo_file(simple_lens(tmp_path, surface=command), strict=True)
+    assert_allclose(optic.surfaces[1].geometry.radius, radius)
+
+
+def test_oslo_standard_asphere_power_and_scaled_sag(tmp_path, set_test_backend):
+    optic = load_oslo_file(simple_lens(tmp_path, system='UNI 10',
+                                     surface='RD 0\nAD .001\nAE .00001'), strict=True)
+    sag = optic.surfaces[1].geometry.sag(be.array([20.0]), be.array([0.0]))
+    assert_allclose(sag, [10 * (.001 * 2**4 + .00001 * 2**6)])
+    out = tmp_path / 'asphere.len'
+    save_oslo_file(optic, out)
+    restored = load_oslo_file(out, strict=True)
+    assert_allclose(restored.surfaces[1].geometry.sag(be.array([20.0]), 0), sag)
+
+
+@pytest.mark.parametrize("command,expected", [
+    ('ASP ASR 6\nAS1 .01\nAS6 1e-9', .01 * 4 + 1e-9 * 2**12),
+    ('ASP ARA 3\nAS1 .01\nAS3 .001', .01 * 2 + .001 * 2**3),
+    ('ASP ASX 2\nAS0 .02\nAS1 .01\nAS4 .003', .02 + .01 * 2),
+])
+def test_general_asphere_equations(tmp_path, set_test_backend, command, expected):
+    optic = load_oslo_file(simple_lens(tmp_path, surface='RD 0\n' + command), strict=True)
+    assert_allclose(optic.surfaces[1].geometry.sag(be.array([2.0]), be.array([0.0])), [expected])
+
+
+@pytest.mark.parametrize("cvx", [0, .025])
+def test_toric_profile_matches_independent_equation(tmp_path, set_test_backend, cvx):
+    optic = load_oslo_file(simple_lens(tmp_path, surface=f'CVX {cvx}\nAD .0001'), strict=True)
+    x, y = be.array([1.0]), be.array([2.0])
+    zy = 20 - (20**2 - 4)**.5 + .0001 * 2**4
+    expected = zy if cvx == 0 else 40 - ((40 - zy)**2 - 1)**.5
+    assert_allclose(optic.surfaces[1].geometry.sag(x, y), [expected])
+
+
+def test_hatched_reflector_and_fixed_air(tmp_path, set_test_backend):
+    optic = load_oslo_file(simple_lens(tmp_path, surface='RFH'), strict=True)
+    assert optic.surfaces[1].interaction_model.is_reflective
+    optic = load_oslo_file(simple_lens(tmp_path, surface='AIF'), strict=True)
+    assert_allclose(optic.surfaces[1].material_post.n(.55), 1)

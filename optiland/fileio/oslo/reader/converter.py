@@ -13,8 +13,8 @@ from typing import TYPE_CHECKING, Any
 import optiland.backend as be
 from optiland.coordinate_system import CoordinateSystem
 from optiland.fileio.base import BaseOpticReader
+from optiland.fileio.oslo.reader.geometry import surface_geometry
 from optiland.fileio.oslo.reader.parser import OsloDataParser
-from optiland.fileio.oslo.surfaces import get_handler
 from optiland.materials import AbbeMaterial, IdealMaterial, Material
 from optiland.optic import Optic
 
@@ -159,16 +159,8 @@ class OsloToOpticConverter(BaseOpticReader):
     def _configure_surface(
         self, index: int, data: dict[str, Any], has_coord_transform: bool
     ) -> None:
-        # Determine surface type
-        # Default is standard. If AD, AE, AF, or AG are present, it's even_asphere.
-        oslo_type = "standard"
-        if any(k in data for k in ["AD", "AE", "AF", "AG"]):
-            oslo_type = "even_asphere"
-
-        handler = get_handler(oslo_type)
-        surface_params = handler.parse(data)
         scale = self.data.units
-        surface_params["radius"] *= scale
+        surface_params = surface_geometry(data, scale)
         surface_params["index"] = index
         surface_params["is_stop"] = data.get("AST", False)
 

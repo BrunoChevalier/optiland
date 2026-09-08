@@ -130,6 +130,13 @@ class OsloDataFormatter:
             lines.append(f"CC {self._fmt(data['CC'])}")
 
     def _format_surface_aspherics(self, lines: list[str], data: dict[str, Any]) -> None:
+        if "ASP" in data:
+            coefficients = {
+                k: v for k, v in data.items() if k.startswith("AS") and k[2:].isdigit()
+            }
+            lines.append(f"ASP {data['ASP']} {len(coefficients)}")
+            for key, value in coefficients.items():
+                lines.append(f"{key} {self._fmt(value)}")
         for key in ("AD", "AE", "AF", "AG"):
             if key in data:
                 lines.append(f"{key} {self._fmt(data[key])}")

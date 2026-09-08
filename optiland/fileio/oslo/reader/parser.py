@@ -31,6 +31,7 @@ class OsloDataParser:
         self.data_model = OsloDataModel()
         self._current_surf_idx = 0
         self._current_surf_data: dict[str, Any] = {}
+        self._coefficient_lines: dict[tuple[int, str], int] = {}
         self._wavelength_values: list[float] = []
         self._wavelength_weights: list[float] = []
         self._line = 0
@@ -196,11 +197,14 @@ class OsloDataParser:
         ):
             raise ValueError(f"{self.filename}: surface records do not match LEN count")
         for index, data in self.data_model.surfaces.items():
-            if data.get("ASP", "ADO") == "ADO" and any(
-                re.fullmatch(r"AS\d+", k) for k in data
-            ):
+            coefficient = next((k for k in data if re.fullmatch(r"AS\d+", k)), None)
+            if data.get("ASP", "ADO") == "ADO" and coefficient is not None:
                 self._current_surf_idx = index
-                self._unsupported("ASn", "general coefficients require ASP ASR/ARA/ASX")
+                self._unsupported(
+                    "ASn",
+                    "general coefficients require ASP ASR/ARA/ASX",
+                    line=self._coefficient_lines[index, coefficient],
+                )
 
         values = self._wavelength_values or list(DEFAULT_WAVELENGTHS_UM)
         weights = self._wavelength_weights + [1.0] * len(values)
@@ -211,13 +215,18 @@ class OsloDataParser:
 
         return self.data_model
 
-    def _unsupported(self, command: str, message: str = "unsupported command") -> None:
-        diagnostic = OsloDiagnostic(
-            command, self._line, self._current_surf_idx, message
-        )
+    def _unsupported(
+        self,
+        command: str,
+        message: str = "unsupported command",
+        *,
+        line: int | None = None,
+    ) -> None:
+        line = self._line if line is None else line
+        diagnostic = OsloDiagnostic(command, line, self._current_surf_idx, message)
         self.data_model.diagnostics.append(diagnostic)
         detail = (
-            f"{self.filename}:{self._line}: OSLO {command} at surface "
+            f"{self.filename}:{line}: OSLO {command} at surface "
             f"{self._current_surf_idx}: {message}; import may be incomplete"
         )
         if self.strict:
@@ -608,6 +617,8 @@ class OsloDataParser:
             raise ValueError(f"{tokens[0]} expects one coefficient")
         cmd = tokens[0].upper()
         self._current_surf_data[cmd] = float(tokens[1])
+        if re.fullmatch(r"AS\d+", cmd):
+            self._coefficient_lines[self._current_surf_idx, cmd] = self._line
 
     def _read_return(self, tokens: list[str]) -> None:
         # Legacy saved prescriptions encode the default local undo as RCO 0

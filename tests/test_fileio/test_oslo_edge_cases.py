@@ -610,3 +610,16 @@ def test_later_solve_preserves_an_earlier_edge_contact(lens_file, set_test_backe
     assert_allclose(optic.surfaces[2].geometry.radius, -20)
     with pytest.raises(ValueError, match="EC at surface 1"):
         load_oslo_file(path, strict=True)
+
+
+def test_deferred_asphere_diagnostic_points_to_coefficient(lens_file):
+    path = lens_file(surface="AS1 .01")
+    source_line = path.read_text().splitlines().index("AS1 .01") + 1
+    with pytest.warns(UserWarning, match="general coefficients require"):
+        model = OsloDataParser(path).parse()
+    diagnostic = model.diagnostics[0]
+    assert diagnostic.line == source_line
+    assert diagnostic.surface == 1
+    with pytest.raises(ValueError) as error:
+        OsloDataParser(path, strict=True).parse()
+    assert f"{path}:{source_line}:" in str(error.value)

@@ -50,7 +50,12 @@ def physical_aperture(
             else:
                 ap = RectangularAperture(x0, x1, y0, y1)
             if spec.get("AAN", 0.0):
-                ap = RotatedAperture(ap, math.radians(spec["AAN"]))
+                # AAN rotates around the aperture centroid, not the surface
+                # origin: OSLO Optics Reference, printed p. 105.
+                # https://lambdares.com/hubfs/Support/support/OSLOOpticsReference_Sep21.pdf#page=105
+                ap = RotatedAperture(
+                    ap, math.radians(spec["AAN"]), (x1 + x0) / 2, (y1 + y0) / 2
+                )
         elif kind in {3, 4}:
             ap = PolygonAperture(
                 [spec.get(f"AVX{i}", 0.0) * scale for i in range(1, kind + 1)],

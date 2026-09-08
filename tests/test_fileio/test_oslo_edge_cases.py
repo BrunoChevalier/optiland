@@ -899,3 +899,38 @@ def test_indexed_wavelength_edit_preserves_other_defaults(lens_file, slot):
 def test_indexed_wavelength_cannot_restore_removed_slots_implicitly(lens_file):
     with pytest.raises(ValueError, match="undefined wavelength slots"):
         OsloDataParser(lens_file(system="WV .55\nWV3 .7")).parse()
+
+
+@pytest.mark.parametrize("kind", [1, 2])
+def test_special_aperture_rotates_about_its_centroid(lens_file, set_test_backend, kind):
+    optic = load_oslo_file(
+        lens_file(
+            system="UNI 2",
+            surface=f"APN 1\nATP A {kind}\nAX1 A 2\nAX2 A 6\n"
+            "AY1 A 1\nAY2 A 3\nAAN A 90",
+        ),
+        strict=True,
+    )
+    aperture = optic.surfaces[1].aperture
+    # Rotating a 4-by-2 boundary leaves its center (4, 2) fixed, then UNI=2
+    # makes the extent [6, 10] x [0, 8]. The displaced origin must not pass.
+    assert_allclose(aperture.extent, [6, 10, 0, 8])
+    points_x, points_y = be.array([8, 8, 10.1, -4]), be.array([4, 7, 4, 8])
+    expected = [True, True, False, False]
+    assert_allclose(aperture.contains(points_x, points_y), expected)
+    restored = BaseAperture.from_dict(aperture.to_dict())
+    assert_allclose(restored.contains(points_x, points_y), expected)
+    restored.scale(3)
+    assert_allclose(restored.extent, [18, 30, 0, 24])
+    assert_allclose(restored.contains(points_x * 3, points_y * 3), expected)
+
+
+def test_legacy_rotated_aperture_json_keeps_origin_pivot():
+    aperture = BaseAperture.from_dict(
+        {
+            "type": "RotatedAperture",
+            "aperture": RectangularAperture(2, 6, 1, 3).to_dict(),
+            "angle": math.pi / 2,
+        }
+    )
+    assert_allclose(aperture.extent, [-3, -1, 2, 6])

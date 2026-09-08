@@ -72,9 +72,14 @@ def audit(archive: Path, backend: str) -> dict:
                         row["trace_error"] = None
                     except Exception as exc:
                         row["trace_error"] = f"{type(exc).__name__}: {exc}"
-            row = json.loads(
-                json.dumps(row).replace(str(path).replace("\\", "\\\\"), name)
-            )
+            # Replace paths in strings before JSON encoding, so quotes and
+            # backslashes in archive member names remain ordinary text.
+            row["warnings"] = [
+                message.replace(str(path), name) for message in row["warnings"]
+            ]
+            for key in ("import_error", "strict_error", "trace_error"):
+                if row.get(key):
+                    row[key] = row[key].replace(str(path), name)
             rows.append(row)
     return {
         "source": SOURCE,

@@ -95,8 +95,9 @@ class OsloToOpticConverter(BaseOpticReader):
         oslo_data: OsloDataModel containing the OSLO optical system data.
     """
 
-    def __init__(self, oslo_data: OsloDataModel | None = None):
+    def __init__(self, oslo_data: OsloDataModel | None = None, *, strict: bool = False):
         self.data = oslo_data
+        self.strict = strict
         self.optic: Optic | None = None
         self.current_cs = CoordinateSystem()
         self._py_surface_indices: list[int] = []
@@ -110,7 +111,7 @@ class OsloToOpticConverter(BaseOpticReader):
         Returns:
             A configured Optic instance.
         """
-        self.data = OsloDataParser(source).parse()
+        self.data = OsloDataParser(source, strict=self.strict).parse()
         self.current_cs = CoordinateSystem()
         self._py_surface_indices = []
         return self.convert()

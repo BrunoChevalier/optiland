@@ -8,10 +8,13 @@ Kramer Harrison, 2026
 from __future__ import annotations
 
 import contextlib
+import math
 import re
+import warnings
+from pathlib import Path
 from typing import Any
 
-from optiland.fileio.oslo.model import OsloDataModel
+from optiland.fileio.oslo.model import OsloDataModel, OsloDiagnostic
 
 
 class OsloDataParser:
@@ -21,13 +24,16 @@ class OsloDataParser:
         filename: Path to the .len file to parse.
     """
 
-    def __init__(self, filename: str) -> None:
+    def __init__(self, filename: str, *, strict: bool = False) -> None:
         self.filename = filename
+        self.strict = strict
         self.data_model = OsloDataModel()
         self._current_surf_idx = 0
         self._current_surf_data: dict[str, Any] = {}
         self._wavelength_values: list[float] = []
         self._wavelength_weights: list[float] = []
+        self._line = 0
+        self._ended = False
 
         # Command dispatch table
         self._dispatch_table = {
@@ -59,6 +65,7 @@ class OsloDataParser:
             "WV3": self._read_wv,
             "WW": self._read_ww,
             "NXT": self._read_nxt,
+            "GTO": self._read_gto,
             "END": self._read_end,
             "PY": self._read_solve,
             "PK": self._read_pickup,
@@ -74,26 +81,37 @@ class OsloDataParser:
         Returns:
             A populated OsloDataModel.
         """
-        with open(self.filename, encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if not line or line.startswith("//"):
-                    continue
-
-                # Handle quoted strings correctly
-                tokens = self._tokenize(line)
-                if not tokens:
-                    continue
-
-                cmd = tokens[0].upper()
-
-                # Handle SNO1, SNO2, etc.
-                if cmd.startswith("SNO"):
-                    self._read_sno(tokens)
-                    continue
-
-                if cmd in self._dispatch_table:
-                    self._dispatch_table[cmd](tokens)
+        self.__init__(self.filename, strict=self.strict)
+        raw = Path(self.filename).read_bytes()
+        try:
+            source = raw.decode("utf-8-sig")
+        except UnicodeDecodeError:
+            source = raw.decode("cp1252")
+        for self._line, line in enumerate(source.splitlines(), 1):
+            if self._ended:
+                break  # Analysis/variable/CCL blocks are not lens prescriptions.
+            try:
+                for statement in self._statements(line):
+                    if self._ended:
+                        break
+                    tokens = self._tokenize(statement)
+                    if not tokens:
+                        continue
+                    cmd = tokens[0].upper()
+                    tokens[0] = cmd
+                    if re.fullmatch(r"SNO\d+", cmd):
+                        self._read_sno(tokens)
+                    elif cmd in self._dispatch_table:
+                        self._validate_numbers(tokens)
+                        self._dispatch_table[cmd](tokens)
+                    elif cmd in {"DRW", "LDP", "CBK", "ELMDF1", "ELMDF2"}:
+                        continue  # Drawing-only data, without optical effects.
+                    else:
+                        self._unsupported(cmd)
+            except (ValueError, IndexError) as exc:
+                raise ValueError(f"{self.filename}:{self._line}: {exc}") from exc
+        if not self._ended:
+            self._read_end(["END"])
 
         # Finalize wavelengths - deduplicate (inline WV before each GLA block
         # causes duplicates; the final WV+WW block defines system wavelengths
@@ -112,10 +130,59 @@ class OsloDataParser:
 
         return self.data_model
 
+    def _unsupported(self, command: str, message: str = "unsupported command") -> None:
+        diagnostic = OsloDiagnostic(
+            command, self._line, self._current_surf_idx, message
+        )
+        self.data_model.diagnostics.append(diagnostic)
+        detail = (
+            f"{self.filename}:{self._line}: OSLO {command} at surface "
+            f"{self._current_surf_idx}: {message}; import may be incomplete"
+        )
+        if self.strict:
+            raise ValueError(detail)
+        warnings.warn(detail, UserWarning, stacklevel=3)
+
+    @staticmethod
+    def _validate_numbers(tokens: list[str]) -> None:
+        for token in tokens[1:]:
+            try:
+                value = float(token)
+            except ValueError:
+                continue
+            if not math.isfinite(value):
+                raise ValueError(f"{tokens[0]} requires finite numeric input")
+
+    @staticmethod
+    def _statements(line: str) -> list[str]:
+        """Split commands and comments outside quoted, backslash-escaped text."""
+        statements = []
+        start = 0
+        quoted = escaped = False
+        for i, char in enumerate(line):
+            if escaped:
+                escaped = False
+                continue
+            if char == "\\" and quoted:
+                escaped = True
+            elif char == '"':
+                quoted = not quoted
+            elif not quoted:
+                if line[i : i + 2] == "//":
+                    line = line[:i]
+                    break
+                if char == ";":
+                    statements.append(line[start:i])
+                    start = i + 1
+        if quoted:
+            raise ValueError("unterminated quoted string")
+        statements.append(line[start:])
+        return statements
+
     def _tokenize(self, line: str) -> list[str]:
         """Tokenize a line, respecting double quotes."""
         # This regex finds either strings in quotes or non-whitespace sequences
-        return re.findall(r'"[^"]*"|\S+', line)
+        return re.findall(r'"(?:\\.|[^"\\])*"|[^\s,]+', line)
 
     def _read_len(self, tokens: list[str]) -> None:
         # LEN NEW "lens_name" <scaling> <total_surfaces>
@@ -220,13 +287,21 @@ class OsloDataParser:
         # Save current surface and increment index
         self.data_model.surfaces[self._current_surf_idx] = self._current_surf_data
         self._current_surf_idx += 1
-        self._current_surf_data = {}
+        self._current_surf_data = self.data_model.surfaces.get(
+            self._current_surf_idx, {}
+        )
+
+    def _read_gto(self, tokens: list[str]) -> None:
+        self.data_model.surfaces[self._current_surf_idx] = self._current_surf_data
+        index = int(tokens[1])
+        if not 0 <= index <= self.data_model.num_surfaces:
+            raise ValueError("GTO surface is outside the declared lens")
+        self._current_surf_idx = index
+        self._current_surf_data = self.data_model.surfaces.get(index, {})
 
     def _read_end(self, tokens: list[str]) -> None:
-        if self._current_surf_data:
-            self.data_model.surfaces[self._current_surf_idx] = self._current_surf_data
-            self._current_surf_idx += 1
-            self._current_surf_data = {}
+        self.data_model.surfaces[self._current_surf_idx] = self._current_surf_data
+        self._ended = True
 
     def _read_solve(self, tokens: list[str]) -> None:
         # TODO: Support more solves

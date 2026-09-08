@@ -12,6 +12,16 @@ from dataclasses import dataclass, field
 from typing import Any
 
 
+@dataclass(frozen=True)
+class OsloDiagnostic:
+    """A source-located record of an OSLO command that was not imported."""
+
+    command: str
+    line: int
+    surface: int
+    message: str
+
+
 @dataclass
 class OsloDataModel:
     """Intermediate representation of an OSLO .len optical system.
@@ -39,6 +49,7 @@ class OsloDataModel:
     surfaces: dict[int, dict[str, Any]] = field(default_factory=dict)
     units: float = 1.0
     notes: dict[str, str] = field(default_factory=dict)
+    diagnostics: list[OsloDiagnostic] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         """Return the data model as a plain dictionary.

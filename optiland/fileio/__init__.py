@@ -46,16 +46,17 @@ def load_codev_file(source: str):
     return _CodeVTC({}).read(source)
 
 
-def load_oslo_file(source: str):
+def load_oslo_file(source: str, *, strict: bool = False):
     """Load an OSLO .len file and return an Optic object.
 
     Args:
         source: The path to a local .len file.
+        strict: Reject unsupported optical commands instead of warning.
 
     Returns:
         An Optic object created from the OSLO file data.
     """
-    return _OsloTC().read(source)
+    return _OsloTC(strict=strict).read(source)
 
 
 # ---------------------------------------------------------------------------

@@ -248,3 +248,44 @@ def test_checked_aperture_and_hole_diagnostic(tmp_path):
     path = simple_lens(tmp_path, surface='APN 1\nATP A 1\nAAC A 1')
     with pytest.raises(ValueError, match='hole'):
         load_oslo_file(path, strict=True)
+
+
+@pytest.mark.parametrize('order', [1, -1])
+def test_oslo_tilt_sign_order_and_decenter(tmp_path, set_test_backend, order):
+    import numpy as np
+    a, b, c = np.deg2rad([-10, -20, 30])
+    rx = np.array([[1, 0, 0], [0, np.cos(a), -np.sin(a)], [0, np.sin(a), np.cos(a)]])
+    ry = np.array([[np.cos(b), 0, np.sin(b)], [0, 1, 0], [-np.sin(b), 0, np.cos(b)]])
+    rz = np.array([[np.cos(c), -np.sin(c), 0], [np.sin(c), np.cos(c), 0], [0, 0, 1]])
+    expected = rx @ ry @ rz if order == 1 else rz @ ry @ rx
+    commands = f'DT {order}\nDCX 1\nDCY 2\nDCZ 3\nTLA 10\nTLB 20\nTLC 30'
+    optic = load_oslo_file(simple_lens(tmp_path, surface=commands), strict=True)
+    position, rotation = optic.surfaces[1].geometry.cs.get_effective_transform()
+    assert_allclose(rotation, expected)
+    assert_allclose(position, [1, 2, 3] if order == 1 else expected @ [1, 2, 3])
+    assert be.isinf(optic.surfaces[0].geometry.cs.z)
+
+
+def test_coordinate_return_global_reference_and_pivot(tmp_path, set_test_backend):
+    commands = 'DCY 4\nTLA 30\nRCO'
+    optic = load_oslo_file(simple_lens(tmp_path, surface=commands), strict=True)
+    assert_allclose(optic.surfaces[2].geometry.cs.get_effective_transform()[0], [0, 0, 2])
+    path = simple_lens(tmp_path, surface='DCY 4')
+    path.write_text(path.read_text().replace('RD -20', 'RD -20\nGC -1\nDCY 2\nDCZ 5'))
+    optic = load_oslo_file(path, strict=True)
+    assert_allclose(optic.surfaces[2].geometry.cs.get_effective_transform()[0], [0, 6, 5])
+    optic = load_oslo_file(simple_lens(tmp_path, surface='TLA 90\nTOZ 1\nRCO'), strict=True)
+    assert_allclose(optic.surfaces[1].geometry.cs.get_effective_transform()[0], [0, -1, 1])
+
+
+def test_single_axis_mirror_bend_has_expected_physical_path(tmp_path, set_test_backend):
+    path = write_lens(tmp_path, 'LEN NEW "fold" 1 2\nEBR 1\nANG 0\nTH 1e20\n'
+                      'NXT\nRFH\nTLA 45\nBEN\nTH -10\nNXT\nAIR\nEND 2\n')
+    optic = load_oslo_file(path, strict=True)
+    assert_allclose(optic.surfaces[2].geometry.cs.get_effective_transform()[0], [0, -10, 0], atol=1e-12)
+    from optiland.rays import RealRays
+    rays = RealRays(be.array([0.0]), be.array([0.0]), be.array([-1.0]),
+                    be.array([0.0]), be.array([0.0]), be.array([1.0]), 1, .55)
+    optic.surfaces.trace(rays, skip=1)
+    assert_allclose(rays.y, [-10], atol=1e-12)
+    assert_allclose(rays.i, [1])

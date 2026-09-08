@@ -76,6 +76,13 @@ class OsloDataParser:
             "DCX": self._read_decenter,
             "DCY": self._read_decenter,
             "DCZ": self._read_decenter,
+            "DT": self._read_coeff,
+            "GC": self._read_coeff,
+            "RCO": self._read_return,
+            "BEN": self._read_flag,
+            "TOX": self._read_coeff,
+            "TOY": self._read_coeff,
+            "TOZ": self._read_coeff,
             "TLA": self._read_tilt,
             "TLB": self._read_tilt,
             "TLC": self._read_tilt,
@@ -335,6 +342,14 @@ class OsloDataParser:
     def _read_tilt(self, tokens: list[str]) -> None:
         cmd = tokens[0].upper()
         self._current_surf_data[cmd] = float(tokens[1])
+
+    def _read_return(self, tokens: list[str]) -> None:
+        self._current_surf_data["RCO"] = (
+            int(tokens[1]) if len(tokens) > 1 else self._current_surf_idx
+        )
+
+    def _read_flag(self, tokens: list[str]) -> None:
+        self._current_surf_data[tokens[0]] = True
 
     def _read_wv(self, tokens: list[str]) -> None:
         self._read_spectrum(tokens)

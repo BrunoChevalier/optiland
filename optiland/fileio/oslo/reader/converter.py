@@ -14,6 +14,7 @@ import optiland.backend as be
 from optiland.coordinate_system import CoordinateSystem
 from optiland.fileio.base import BaseOpticReader
 from optiland.fileio.oslo.reader.apertures import physical_aperture
+from optiland.fileio.oslo.reader.coordinates import surface_coordinates
 from optiland.fileio.oslo.reader.geometry import surface_geometry
 from optiland.fileio.oslo.reader.parser import OsloDataParser
 from optiland.materials import AbbeMaterial, IdealMaterial, Material, TabulatedMaterial
@@ -141,12 +142,33 @@ class OsloToOpticConverter(BaseOpticReader):
         """Configure all surfaces on the optic."""
         # Check if any surface has decenters or tilts
         has_coord_transform = any(
-            any(k in sd for k in ["DCX", "DCY", "DCZ", "TLA", "TLB", "TLC"])
+            any(
+                k in sd
+                for k in [
+                    "DCX",
+                    "DCY",
+                    "DCZ",
+                    "TLA",
+                    "TLB",
+                    "TLC",
+                    "GC",
+                    "RCO",
+                    "BEN",
+                    "TOX",
+                    "TOY",
+                    "TOZ",
+                ]
+            )
             for sd in self.data.surfaces.values()
         )
 
         # Determine if any surface is explicitly marked as the stop
         has_stop = any(sd.get("AST", False) for sd in self.data.surfaces.values())
+        self._coordinates = (
+            surface_coordinates(self.data.surfaces, self.data.units)
+            if has_coord_transform
+            else {}
+        )
 
         for idx in sorted(self.data.surfaces.keys()):
             surf_data = self.data.surfaces[idx]
@@ -186,43 +208,8 @@ class OsloToOpticConverter(BaseOpticReader):
         surface_params["aperture"] = physical_aperture(data, scale)
 
         if has_coord_transform:
-            # Resolve effective global position and orientation
-            # OSLO decenters/tilts are applied to the surface.
-            dx = data.get("DCX", 0.0) * scale
-            dy = data.get("DCY", 0.0) * scale
-            dz = data.get("DCZ", 0.0) * scale
-            rx = be.deg2rad(data.get("TLA", 0.0))
-            ry = be.deg2rad(data.get("TLB", 0.0))
-            rz = be.deg2rad(data.get("TLC", 0.0))
-
-            if dx != 0 or dy != 0 or dz != 0 or rx != 0 or ry != 0 or rz != 0:
-                # Apply transform to current CS
-                self.current_cs = CoordinateSystem(
-                    x=dx, y=dy, z=dz, rx=rx, ry=ry, rz=rz, reference_cs=self.current_cs
-                )
-
-            translation, _ = self.current_cs.get_effective_transform()
-            rx_, ry_, rz_ = self.current_cs.get_effective_rotation_euler()
-
-            surface_params.update(
-                {
-                    "x": float(translation[0]),
-                    "y": float(translation[1]),
-                    "z": float(translation[2]),
-                    "rx": float(rx_),
-                    "ry": float(ry_),
-                    "rz": float(rz_),
-                }
-            )
-
-            # Advance CS by thickness for next surface
-            if not be.isinf(th):
-                self.current_cs = CoordinateSystem(
-                    z=th * scale, reference_cs=self.current_cs
-                )
-        else:
-            # Standard sequential path, thickness handled by Optiland automatically
-            pass
+            surface_params.pop("thickness")
+            surface_params.update(self._coordinates[index])
 
         self.optic.surfaces.add(**surface_params)
 

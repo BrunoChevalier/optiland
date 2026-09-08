@@ -289,3 +289,37 @@ def test_single_axis_mirror_bend_has_expected_physical_path(tmp_path, set_test_b
     optic.surfaces.trace(rays, skip=1)
     assert_allclose(rays.y, [-10], atol=1e-12)
     assert_allclose(rays.i, [1])
+
+
+def test_multiple_pickups_relative_indices_curvature_and_length(tmp_path, set_test_backend):
+    path = write_lens(tmp_path, 'LEN NEW "pickups" 1 4\nEBR 1\nANG 0\nTH 1e20\n'
+                      'NXT\nGLA 1.5\nRD 10\nCC -1\nAD .001\nTH 2\nAP 3\n'
+                      'NXT\nPK CVM -1 .01\nPK TH -1 1\nPK AP -1\nPK GLA -1\n'
+                      'NXT\nAIR\nPK CV -1 0\nPK LNM -2 0 10\nNXT\nAIR\nEND 4\n')
+    optic = load_oslo_file(path, strict=True)
+    assert_allclose(optic.surfaces[2].geometry.radius, 1 / (-.1 + .01))
+    assert_allclose(optic.surfaces[2].geometry.k, -1)
+    assert_allclose(optic.surfaces[2].geometry.coefficients[1], -.001)
+    assert_allclose(optic.surfaces[2].thickness, 3)
+    assert_allclose(optic.surfaces[3].thickness, 5)
+    assert_allclose(optic.surfaces[2].aperture.r_max, 3)
+    assert_allclose(optic.surfaces[2].material_post.n(.55), 1.5)
+
+
+def test_special_aperture_pickup_and_coordinate_inverse(tmp_path, set_test_backend):
+    path = write_lens(tmp_path, 'LEN NEW "pickup pose" 1 3\nEBR 1\nANG 0\nTH 1e20\nNXT\n'
+                      'AIR\nDCY 2\nTLA 10\nTLB 20\nTLC 30\nAPN 1\n'
+                      'ATP A 2\nAAC A 4\nAX1 A -1\nAX2 A 1\nAY1 A -2\nAY2 A 2\n'
+                      'NXT\nAIR\nPK TDM -1\nAPN 1\nAPK A -1 A\nTH 5\nNXT\nAIR\nEND 3\n')
+    optic = load_oslo_file(path, strict=True)
+    position, rotation = optic.surfaces[2].geometry.cs.get_effective_transform()
+    assert_allclose(position, [0, 0, 0], atol=1e-12)
+    assert_allclose(rotation, be.eye(3), atol=1e-12)
+    assert_allclose(optic.surfaces[2].aperture.contains(be.array([0, 2]), be.array([1.5, 0])), [True, False])
+
+
+@pytest.mark.parametrize('pickup', ['PK TH 2', 'PK TH -5', 'PK UNKNOWN -1'])
+def test_invalid_or_unsupported_pickups_rejected(tmp_path, pickup):
+    path = simple_lens(tmp_path, surface=pickup)
+    with pytest.raises(ValueError, match='PK'):
+        load_oslo_file(path, strict=True)

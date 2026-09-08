@@ -58,6 +58,7 @@ class OsloDataParser:
             "AP": self._read_ap,
             "APF": self._read_ap,
             "APN": self._read_apn,
+            "APK": self._read_aperture_pickup,
             "ATP": self._read_special_aperture,
             "AAC": self._read_special_aperture,
             "AAN": self._read_special_aperture,
@@ -407,6 +408,25 @@ class OsloDataParser:
             self._current_surf_data["PY"] = float(tokens[1])
 
     def _read_pickup(self, tokens: list[str]) -> None:
-        # TODO: Support standard pickups
-        # PK <surf> <cmd>
-        self._current_surf_data["PK"] = tokens[1:]
+        if tokens[1].upper() not in {
+            "CV",
+            "CVM",
+            "TH",
+            "THM",
+            "LN",
+            "LNM",
+            "AP",
+            "GLA",
+            "TD",
+            "TDM",
+        }:
+            self._unsupported("PK", f"pickup type {tokens[1]} is not mapped")
+            return
+        self._current_surf_data.setdefault("pickups", []).append(tokens[1:])
+
+    def _read_aperture_pickup(self, tokens: list[str]) -> None:
+        if len(tokens) != 4:
+            raise ValueError(
+                "APK expects target aperture, source surface and source aperture"
+            )
+        self._current_surf_data.setdefault("aperture_pickups", []).append(tokens[1:])

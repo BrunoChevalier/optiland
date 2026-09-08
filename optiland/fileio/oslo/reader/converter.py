@@ -8,6 +8,7 @@ Kramer Harrison, 2026
 from __future__ import annotations
 
 import warnings
+from copy import deepcopy
 from typing import TYPE_CHECKING, Any
 
 import optiland.backend as be
@@ -17,6 +18,7 @@ from optiland.fileio.oslo.reader.apertures import physical_aperture
 from optiland.fileio.oslo.reader.coordinates import surface_coordinates
 from optiland.fileio.oslo.reader.geometry import surface_geometry
 from optiland.fileio.oslo.reader.parser import OsloDataParser
+from optiland.fileio.oslo.reader.pickups import resolve_pickups
 from optiland.materials import AbbeMaterial, IdealMaterial, Material, TabulatedMaterial
 from optiland.optic import Optic
 
@@ -127,6 +129,8 @@ class OsloToOpticConverter(BaseOpticReader):
         if self.data is None:
             raise ValueError("No OSLO data to convert.")
 
+        self.data = deepcopy(self.data)
+        self.data.surfaces = resolve_pickups(self.data.surfaces)
         self.optic = Optic(self.data.name)
         self.current_cs = CoordinateSystem()
         self._py_surface_indices = []

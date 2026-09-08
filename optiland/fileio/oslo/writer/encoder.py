@@ -275,10 +275,10 @@ class OpticToOsloEncoder:
                     "use native JSON"
                 )
             n = float(material.index.item())
-            # IdealMaterial with n≈1.0 is air - write AIR, not GLA 1.0 1.0 1.0
-            if abs(n - 1.0) < 1e-6:
+            # Small index differences still carry optical path and power.
+            if n == 1.0:
                 return "  AIR"
-            ns = f"{n:.7g}"
+            ns = str(n)
             return f"  GLA {ns} {ns} {ns}"
 
         # The remaining supported type is AbbeMaterial, sampled at the design

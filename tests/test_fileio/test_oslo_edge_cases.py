@@ -1001,3 +1001,21 @@ def test_higher_order_aspheres_remain_strictly_supported(lens_file, kind, coeffi
     load_oslo_file(
         lens_file(surface=f"ASP {kind} 6\nAS{coefficient} .001"), strict=True
     )
+
+
+@pytest.mark.parametrize("index", [1.0000004, 1.573123456789])
+def test_ideal_material_export_preserves_optical_path(
+    lens_file, tmp_path, set_test_backend, index
+):
+    from optiland.materials import IdealMaterial
+
+    optic = load_oslo_file(lens_file(), strict=True)
+    optic.surfaces[1].material_post = IdealMaterial(index)
+    optic.updater.set_thickness(1000, 1)
+    path = tmp_path / "index-precision.len"
+    save_oslo_file(optic, path)
+    restored = load_oslo_file(path, strict=True)
+    exported_index = float(restored.surfaces[1].material_post.n(0.55).item())
+    # One meter through the medium must retain its optical-path excess over
+    # vacuum; near-unity indices are still refracting media, not exactly air.
+    assert (exported_index - 1) * 1000 == pytest.approx((index - 1) * 1000, abs=1e-10)

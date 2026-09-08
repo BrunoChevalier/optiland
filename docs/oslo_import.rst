@@ -96,7 +96,7 @@ UTF-8 (including BOM) and legacy Windows-1252 text are accepted.
        LME do not affect ray tracing. Non-sequential LMO groups are diagnosed.
 
 Limits and deferred commands
----------------------------
+----------------------------
 
 OSLO is a complete optical-design environment. This importer handles a sequential
 snapshot. It does not implement multi-configuration execution (CFG), non-sequential
@@ -122,7 +122,7 @@ non-radial apertures raise before the destination file is opened, preventing
 silent loss of those features. Use native JSON for those systems.
 
 Specification and real-file validation
--------------------------------------
+--------------------------------------
 
 Mappings were checked against Lambda Research's
 `OSLO Program Reference (10 March 2021) <https://lambdares.com/hubfs/Support/support/oslo/oslo_releases/OSLOProgramReference.pdf>`_

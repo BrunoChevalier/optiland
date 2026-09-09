@@ -6,11 +6,15 @@ import math
 
 import pytest
 
+import optiland.backend as be
 from optiland.aperture import EPDAperture
 from optiland.fileio import load_oslo_file, save_oslo_file
 from optiland.fileio.oslo.reader.converter import OsloToOpticConverter
 from optiland.fileio.oslo.reader.parser import OsloDataParser
+from optiland.interactions import RefractiveReflectiveModel
+from optiland.rays import RealRays
 from tests.test_fileio.test_oslo_edge_cases import lens_file
+from tests.utils import assert_allclose
 
 
 def test_export_without_system_aperture_omits_aperture_command(lens_file, tmp_path):
@@ -84,3 +88,28 @@ def test_finite_object_on_first_surface_cannot_define_nonzero_beam(
         load_oslo_file(
             lens_file(distance="0", surface="AIR\nRD 0", second="AST"), strict=True
         )
+
+
+def test_export_cannot_discard_custom_ray_interactions(
+    lens_file, tmp_path, set_test_backend
+):
+    class AttenuatingInteraction(RefractiveReflectiveModel):
+        def interact_real_rays(self, rays):
+            rays = super().interact_real_rays(rays)
+            rays.i *= 0.25
+            return rays
+
+    optic = load_oslo_file(lens_file(), strict=True)
+    surface = optic.surfaces[1]
+    surface.interaction_model = AttenuatingInteraction(surface, is_reflective=False)
+    zeros = be.zeros(1)
+    rays = RealRays(zeros, zeros, zeros, zeros, zeros, be.ones(1), 1, 0.55)
+    surface.interaction_model.interact_real_rays(rays)
+    # This model inherits the standard interaction_type string, but changes
+    # transmitted power. Exporting only its GLA record would lose that physics.
+    assert_allclose(rays.i, [0.25])
+    output = tmp_path / "custom-interaction.len"
+    output.write_text("saved design", encoding="utf-8")
+    with pytest.raises(NotImplementedError, match="interaction model"):
+        save_oslo_file(optic, output)
+    assert output.read_text() == "saved design"

@@ -20,6 +20,7 @@ from optiland.fileio.oslo.constants import (
 from optiland.fileio.oslo.model import OsloDataModel
 from optiland.fileio.oslo.surfaces import get_handler_for_optiland_type
 from optiland.fileio.oslo.validation import validate_object_na
+from optiland.interactions import RefractiveReflectiveModel, ThinLensInteractionModel
 from optiland.materials import AbbeMaterial, IdealMaterial, Material, TabulatedMaterial
 from optiland.physical_apertures import RadialAperture, UnclippedAperture
 from optiland.propagation import HomogeneousPropagation
@@ -158,6 +159,7 @@ class OpticToOsloEncoder:
 
     def _encode_surfaces(self) -> None:
         for idx, surface in enumerate(self.optic.surfaces):
+            interaction = surface.interaction_model
             position, rotation = surface.geometry.cs.get_effective_transform()
             if (
                 abs(float(position[0])) > 1e-12
@@ -167,16 +169,22 @@ class OpticToOsloEncoder:
                 raise NotImplementedError(
                     "OSLO writer cannot export transformed surfaces; use native JSON"
                 )
-            if getattr(surface.interaction_model, "phase_profile", None) is not None:
+            if getattr(interaction, "phase_profile", None) is not None:
                 raise NotImplementedError(
                     "OSLO writer cannot export phase profiles; use native JSON"
                 )
-            if (
-                surface.interaction_model.coating is not None
-                or surface.interaction_model.bsdf is not None
-            ):
+            if interaction.coating is not None or interaction.bsdf is not None:
                 raise NotImplementedError(
                     "OSLO writer cannot export coatings or scattering; use native JSON"
+                )
+            # Subclasses can change the ray physics while inheriting a supported
+            # interaction_type name. Only the explicitly mapped models are safe.
+            if type(interaction) not in {
+                RefractiveReflectiveModel,
+                ThinLensInteractionModel,
+            }:
+                raise NotImplementedError(
+                    "OSLO writer cannot export this interaction model; use native JSON"
                 )
             s_type = getattr(surface, "surface_type", "standard") or "standard"
             handler = get_handler_for_optiland_type(s_type)
@@ -198,10 +206,9 @@ class OpticToOsloEncoder:
                 surf_data["AST"] = True
 
             # Material — detect mirror via interaction_model.is_reflective
-            im = getattr(surface, "interaction_model", None)
-            is_mirror = bool(getattr(im, "is_reflective", False))
-            is_paraxial = bool(im.interaction_type == "thin_lens")
-            material_to_encode = "mirror" if is_mirror else surface.material_post
+            material_to_encode = (
+                "mirror" if interaction.is_reflective else surface.material_post
+            )
             if isinstance(material_to_encode, TabulatedMaterial):
                 surf_data["glass_wavelengths"] = material_to_encode.wavelengths
             elif isinstance(material_to_encode, AbbeMaterial):
@@ -241,8 +248,8 @@ class OpticToOsloEncoder:
                     surf_data["AP"] = float(self.optic.paraxial.EPD()) / 2.0
 
             # Paraxial case
-            if is_paraxial:
-                surf_data["PFL"] = float(surface.interaction_model.f)
+            if isinstance(interaction, ThinLensInteractionModel):
+                surf_data["PFL"] = float(interaction.f)
 
             self.data_model.surfaces[idx] = surf_data
 

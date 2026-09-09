@@ -145,7 +145,7 @@ The OSLO writer supports its documented surface subset, direct spectral samples,
 correct even-asphere powers, explicit angular/object-height fields and radial
 aperture checking flags, and object-space telecentricity. Unsupported field
 definitions, transformed surfaces, phase profiles, offset/non-radial apertures,
-custom material or propagation models, ideal-material absorption, coatings and
+custom interaction, material or propagation models, ideal-material absorption, coatings and
 scattering raise before the destination file is opened. Names and notes must fit
 on a single line. Use native JSON for those systems. Finite-object and floating-stop
 apertures export the actual axial beam radius at surface 1.

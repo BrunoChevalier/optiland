@@ -115,6 +115,9 @@ UTF-8 (including BOM) and legacy Windows-1252 text are accepted.
        unsatisfied solves restore saved values with a warning in permissive mode;
        strict mode rejects. General simultaneous constraint solving is not provided:
        a coupled case can be rejected even if a joint solution exists in OSLO.
+       EC verifies physical contact at the first surface's local meridional edge
+       after positioning both surfaces. Relative transforms that prevent this
+       contact restore the saved prescription rather than accepting TH alone.
        Telecentric PYC/PUC solves are not mapped because the native paraxial chief
        ray used by those solves does not implement the telecentric launch.
    * - ``GSP``, ``GOR``

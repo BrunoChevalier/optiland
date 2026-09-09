@@ -40,6 +40,9 @@ def apply_solve(optic, index: int, command: str, value: float, scale: float) -> 
             raise ValueError("EC edge is outside the surface's sag domain")
         optic.updater.set_thickness(thickness, index)
         return
+    # OSLO paraxial analysis deliberately ignores tilts/decenters (Program
+    # Reference p. 251), as native scalar traces do on straight paths.
+    # https://lambdares.com/hubfs/Support/support/oslo/oslo_releases/OSLOProgramReference.pdf#page=265
     is_height = command in {"PY", "PYC"}
     target_index = index + 1 if is_height else index
     target = value * scale if is_height else value
@@ -85,13 +88,21 @@ def check_solve(optic, index: int, command: str, value: float, scale: float) -> 
     """Verify a solve target against the current, fully rebuilt prescription."""
     if command == "EC":
         x, y = be.array([0.0]), be.array([value * scale])
-        target = float(
-            (
-                optic.surfaces[index].geometry.sag(x, y)
-                - optic.surfaces[index + 1].geometry.sag(x, y)
-            ).item()
+        first = optic.surfaces[index].geometry
+        second = optic.surfaces[index + 1].geometry
+        # EC requires physical contact (Program Reference p. 45), not just
+        # a TH equal to the difference of two unpositioned local sags. Express
+        # the first surface's edge point in the second surface's coordinates
+        # and check that it lies on that surface after all pickups/transforms.
+        # https://lambdares.com/hubfs/Support/support/oslo/oslo_releases/OSLOProgramReference.pdf#page=59
+        edge = be.array([0.0, value * scale, float(first.sag(x, y).item())])
+        origin1, rotation1 = first.cs.get_effective_transform()
+        origin2, rotation2 = second.cs.get_effective_transform()
+        local_edge = rotation2.T @ (origin1 + rotation1 @ edge - origin2)
+        target = 0.0
+        actual = float(
+            (local_edge[2] - second.sag(local_edge[0], local_edge[1])).item()
         )
-        actual = float(optic.surfaces[index].thickness)
     else:
         is_height = command in {"PY", "PYC"}
         ray = (

@@ -82,7 +82,8 @@ class OsloDataFormatter:
         if "FNO" in self.model.aperture:
             lines.append(f"FNO {self._fmt(self.model.aperture['FNO'])}")
         if "NAO" in self.model.aperture:
-            lines.append(f"NAO {self._fmt(self.model.aperture['NAO'])}")
+            # Rounding upward can turn a valid cone into NA == n_object.
+            lines.append(f"NAO {float(self.model.aperture['NAO'])}")
 
     def _format_field_commands(self, lines: list[str]) -> None:
         if "y" not in self.model.fields:
@@ -91,7 +92,9 @@ class OsloDataFormatter:
             "OBH" if self.model.fields.get("type") == "object_height" else "ANG"
         )
         for y in self.model.fields["y"]:
-            lines.append(f"{field_type_cmd} {self._fmt(y)}")
+            # Preserve the normalization used to encode fractional fields,
+            # including angular references immediately below 90 degrees.
+            lines.append(f"{field_type_cmd} {float(y)}")
 
     def _format_notes(self, lines: list[str]) -> None:
         for cmd, content in self.model.notes.items():
@@ -119,8 +122,8 @@ class OsloDataFormatter:
             lines.append(f"WW {self._fmt_vals(weights[: len(vals)])}")
 
     def _fmt_vals(self, values: list[float]) -> str:
-        """Preserve all spectral and field entries with sufficient precision."""
-        return " ".join(f"{v:.12g}" for v in values)
+        """Preserve distinct spectral samples and field normalization exactly."""
+        return " ".join(str(float(v)) for v in values)
 
     def _format_surface(
         self, lines: list[str], index: int, data: dict[str, Any]

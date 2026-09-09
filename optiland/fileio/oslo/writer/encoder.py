@@ -290,7 +290,7 @@ class OpticToOsloEncoder:
             return f"  GLA {material.name}"
 
         if isinstance(material, TabulatedMaterial):
-            return "  GLA " + " ".join(f"{n:.12g}" for n in material.indices)
+            return "  GLA " + " ".join(str(n) for n in material.indices)
 
         if isinstance(material, IdealMaterial):
             if float(material.absorp.item()) != 0:
@@ -311,5 +311,5 @@ class OpticToOsloEncoder:
             self.data_model.wavelengths.get("values") or DEFAULT_WAVELENGTHS_UM
         )
         return "  GLA " + " ".join(
-            f"{float(material.n(w).item()):.12g}" for w in wavelengths
+            str(float(material.n(w).item())) for w in wavelengths
         )

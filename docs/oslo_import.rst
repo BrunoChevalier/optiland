@@ -165,6 +165,8 @@ It writes the physical final gap with zero image defocus, so exporting an import
 focus shift does not apply it twice. Unused native image thickness is not defocus.
 Constant refractive indices retain their saved precision, including small
 differences from unity. Invalid object-NA launches are rejected before writing.
+Field references, object NA, wavelengths and sampled indices preserve floating-point
+precision, avoiding rounded hemisphere boundaries or collapsed spectral samples.
 Explicit surface aperture radii must be finite and positive: zero cannot retain
 a native zero-radius clipping boundary, and infinity is not a finite OSLO radius.
 

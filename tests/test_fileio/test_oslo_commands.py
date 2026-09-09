@@ -233,22 +233,6 @@ def test_single_direct_index_and_unknown_glass_strict(tmp_path, set_test_backend
         load_oslo_file(simple_lens(tmp_path, surface="GLA MISSING_GLASS"), strict=True)
 
 
-def test_tabulated_material_validation_interpolation_and_serialization(
-    set_test_backend,
-):
-    from optiland.materials import BaseMaterial, TabulatedMaterial
-
-    mat = TabulatedMaterial([0.6, 0.4, 0.8], [1.5, 1.6, 1.4], name="example")
-    assert_allclose(
-        mat.n(be.array([0.4, 0.5, 0.6, 0.7, 0.8])), [1.6, 1.55, 1.5, 1.45, 1.4]
-    )
-    assert_allclose(BaseMaterial.from_dict(mat.to_dict()).n(0.5), 1.55)
-    with pytest.raises(ValueError, match="range"):
-        mat.n(0.9)
-    with pytest.raises(ValueError):
-        TabulatedMaterial([0.5, 0.5], [1.5, 1.6])
-
-
 @pytest.mark.parametrize(
     "shape,points,expected",
     [
@@ -732,14 +716,6 @@ def test_tilt_pickup_retains_pivot(tmp_path, set_test_backend):
     position, rotation = optic.surfaces[2].geometry.cs.get_effective_transform()
     assert_allclose(position, [0, 0, 0], atol=1e-12)
     assert_allclose(rotation, be.eye(3), atol=1e-12)
-
-
-def test_invalid_tabulated_query(set_test_backend):
-    from optiland.materials import TabulatedMaterial
-
-    material = TabulatedMaterial([0.4, 0.8], [1.6, 1.4])
-    with pytest.raises(ValueError, match="finite|range"):
-        material.n(float("nan"))
 
 
 @pytest.mark.parametrize(

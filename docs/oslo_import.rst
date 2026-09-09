@@ -83,7 +83,9 @@ UTF-8 (including BOM) and legacy Windows-1252 text are accepted.
    * - ``AIR``, ``AIF``, ``RFL``, ``RFH``, ``GLA``, ``GLF``
      - Air, reflection, named catalog glass, constant index and sampled index
        data. Distinct saved indices use ``TabulatedMaterial``: exact at samples,
-       linear between samples, with extrapolation rejected. Two-parameter model
+       linear between samples, with extrapolation rejected. Wavelengths that
+       collapse together in the active backend precision cannot be interpolated;
+       use higher precision for those samples. Two-parameter model
        glass and historical fallback glasses use approximate Abbe dispersion.
    * - ``AP``, ``APF``, ``AP CHK/UNC``, ``APCK``, ``AST``
      - Ordinary AP retains drawing bounds; CHK enables clipping. APCK OFF

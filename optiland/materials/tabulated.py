@@ -19,6 +19,7 @@ class TabulatedMaterial(BaseMaterial):
 
     Values between samples are linearly interpolated. Extrapolation is rejected;
     samples alone do not determine a dispersion formula outside their range.
+    Sample wavelengths must remain distinct in the active backend precision.
     """
 
     def __init__(self, wavelengths: list[float], indices: list[float], name: str = ""):
@@ -40,9 +41,15 @@ class TabulatedMaterial(BaseMaterial):
             raise ValueError("Tabulated wavelengths must be finite")
         if be.any(wave < self.wavelengths[0]) or be.any(wave > self.wavelengths[-1]):
             raise ValueError(f"Wavelength outside tabulated range for {self.name!r}")
-        return be.atleast_1d(
-            be.interp(wave, be.array(self.wavelengths), be.array(self.indices))
-        )
+        samples = be.array(self.wavelengths)
+        # Distinct Python floats can coincide after conversion to float32.
+        # A zero-width interpolation interval would produce NaN indices.
+        if be.any(samples[1:] <= samples[:-1]):
+            raise ValueError(
+                "Tabulated wavelengths must remain distinct at the active "
+                "backend precision"
+            )
+        return be.atleast_1d(be.interp(wave, samples, be.array(self.indices)))
 
     def _calculate_k(self, wavelength: Any, **kwargs: Any) -> Any:
         return be.zeros_like(be.asarray(wavelength))

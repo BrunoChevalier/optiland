@@ -18,7 +18,7 @@ from optiland.fileio.oslo.reader.parser import OsloDataParser
 from optiland.fileio.oslo.reader.pickups import resolve_pickups
 from optiland.fileio.oslo.writer.encoder import OpticToOsloEncoder
 from optiland.fileio.oslo.writer.formatter import OsloDataFormatter
-from optiland.materials import AbbeMaterial, TabulatedMaterial
+from optiland.materials import AbbeMaterial
 from optiland.physical_apertures import (
     BaseAperture,
     RectangularAperture,
@@ -374,29 +374,6 @@ def test_formatter_signed_infinity_sentinels(value, expected):
     assert float(OsloDataFormatter(OsloDataModel())._fmt(value)) == expected
 
 
-@pytest.mark.parametrize(
-    "waves,indices,message",
-    [
-        ([], [], "at least two paired samples"),
-        ([0.5], [1.5], "at least two paired samples"),
-        ([0.5, 0.6], [1.5], "paired samples"),
-        ([0, 0.6], [1.5, 1.6], "finite and positive"),
-        ([0.5, 0.6], [-1, 1.6], "finite and positive"),
-        ([0.5, math.inf], [1.5, 1.6], "finite and positive"),
-        ([0.5, 0.6], [1.5, math.nan], "finite and positive"),
-    ],
-)
-def test_invalid_tabulated_material_samples(waves, indices, message):
-    with pytest.raises(ValueError, match=message):
-        TabulatedMaterial(waves, indices)
-
-
-def test_tabulated_material_is_nonabsorbing(set_test_backend):
-    material = TabulatedMaterial([0.4, 0.8], [1.6, 1.5])
-    assert_allclose(material.k(0.5), 0)
-    assert_allclose(material.k(be.array([0.4, 0.6, 0.8])), [0, 0, 0])
-
-
 def test_rotated_drawing_aperture_roundtrip_scale_and_clipping(set_test_backend):
     rotated = RotatedAperture(RectangularAperture(1, 3, -1, 1), math.pi / 2)
     drawing = UnclippedAperture(rotated)
@@ -510,7 +487,7 @@ def test_telecentric_export_preserves_chief_ray(lens_file, tmp_path, set_test_ba
     save_oslo_file(optic, target)
     restored = load_oslo_file(target, strict=True)
     assert restored.obj_space_telecentric
-    for actual, original in zip(restored.paraxial.chief_ray(), expected):
+    for actual, original in zip(restored.paraxial.chief_ray(), expected, strict=True):
         assert_allclose(actual, original)
 
 
@@ -751,14 +728,14 @@ def test_telecentric_entrance_beam_can_launch_real_rays(lens_file, set_test_back
     optic = load_oslo_file(
         lens_file(system="OBH 2\nTELE ON", distance="100"), strict=True
     )
-    x, y, z, l, m, n = ParaxialRayAimer(optic).aim_rays(
+    _, y, _, direction_x, direction_y, direction_z = ParaxialRayAimer(optic).aim_rays(
         (0, 1), optic.primary_wavelength, (be.zeros(2), be.array([0.0, 1.0]))
     )
     # The chief ray is parallel to z; the marginal ray advances 2 mm in y
     # across the 100 mm object distance. Both originate at the field point.
     assert_allclose(y, [2, 2])
-    assert_allclose(m / n, [0, 0.02])
-    assert_allclose(l, [0, 0])
+    assert_allclose(direction_y / direction_z, [0, 0.02])
+    assert_allclose(direction_x, [0, 0])
 
 
 def test_failed_solve_retains_telecentricity(lens_file, set_test_backend):

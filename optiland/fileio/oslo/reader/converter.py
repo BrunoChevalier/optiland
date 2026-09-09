@@ -485,6 +485,13 @@ class OsloToOpticConverter(BaseOpticReader):
         else:
             y_coords = [y * self.data.units for y in y_coords]
 
+        # The reference field must stay below 90 degrees even in OSLO's
+        # separate WARM mode (Program Reference p. 215). Our ordinary field
+        # mapping uses tan/atan, which would fold 100 degrees onto -80 degrees.
+        # https://lambdares.com/hubfs/Support/support/oslo/oslo_releases/OSLOProgramReference.pdf#page=229
+        if field_type == "angle" and any(abs(y) >= 90 for y in y_coords):
+            raise ValueError("OSLO angular reference must be less than 90 degrees")
+
         self.optic.fields.set_type(field_type)
 
         if "points" in field_data:

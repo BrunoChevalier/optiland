@@ -49,7 +49,8 @@ UTF-8 (including BOM) and legacy Windows-1252 text are accepted.
    * - ``ANG``, ``OBH``, ``GIH``; ``RST NEW`` / ``F``
      - Maximum field or explicit fractional X/Y positions, weights and symmetric
        pupil vignetting. Fractional object positions are converted through tangent
-       space for angular fields. GIH refers to the Gaussian focal plane.
+       space for angular fields. The angular reference must be below 90 degrees;
+       wide-angle ray aiming (WARM) is not mapped. GIH refers to the Gaussian focal plane.
        Without a table, generate on-axis, 0.7 and full-field points.
    * - ``WV``, ``WVn``, ``WW``, ``WWn``
      - Replacement and indexed wavelength/weight assignments. Default d/F/C

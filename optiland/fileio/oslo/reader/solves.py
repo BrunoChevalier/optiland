@@ -86,6 +86,7 @@ def apply_solve(optic, index: int, command: str, value: float, scale: float) -> 
 
 def check_solve(optic, index: int, command: str, value: float, scale: float) -> None:
     """Verify a solve target against the current, fully rebuilt prescription."""
+    absolute_tolerance = 1e-9
     if command == "EC":
         x, y = be.array([0.0]), be.array([value * scale])
         first = optic.surfaces[index].geometry
@@ -103,6 +104,16 @@ def check_solve(optic, index: int, command: str, value: float, scale: float) -> 
         actual = float(
             (local_edge[2] - second.sag(local_edge[0], local_edge[1])).item()
         )
+        # Transforming and subtracting positioned points incurs roundoff in
+        # the active precision. Allow a small error budget at that coordinate
+        # scale, including cancellation away from the global origin.
+        epsilon = be.finfo(be.to_numpy(local_edge).dtype).eps
+        magnitude = max(
+            abs(float(component.item()))
+            for vector in (origin1, origin2, edge)
+            for component in vector
+        )
+        absolute_tolerance = max(absolute_tolerance, 8 * epsilon * magnitude)
     else:
         is_height = command in {"PY", "PYC"}
         ray = (
@@ -115,7 +126,7 @@ def check_solve(optic, index: int, command: str, value: float, scale: float) -> 
             ray()[0 if is_height else 1][index + 1 if is_height else index].item()
         )
     if not math.isfinite(actual) or not math.isclose(
-        actual, target, rel_tol=1e-7, abs_tol=1e-9
+        actual, target, rel_tol=1e-7, abs_tol=absolute_tolerance
     ):
         raise ValueError(
             f"{command} at surface {index}: target {target:g} could not be reached "

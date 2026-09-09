@@ -153,6 +153,8 @@ The writer rejects finite object distances that OSLO would interpret as infinite
 and preserves thickness precision to avoid rounding across that boundary.
 Constant refractive indices retain their saved precision, including small
 differences from unity. Invalid object-NA launches are rejected before writing.
+Explicit surface aperture radii must be finite and positive: zero cannot retain
+a native zero-radius clipping boundary, and infinity is not a finite OSLO radius.
 
 Specification and real-file validation
 --------------------------------------

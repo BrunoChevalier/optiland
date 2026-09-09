@@ -228,6 +228,14 @@ class OpticToOsloEncoder:
                 raise NotImplementedError(
                     "OSLO writer cannot export this aperture shape; use native JSON"
                 )
+            if aperture is not None and (
+                not math.isfinite(aperture.r_max) or aperture.r_max <= 0
+            ):
+                # AP=0 does not retain a native zero-radius clipping boundary;
+                # infinite radii would be formatted as finite OSLO sentinels.
+                raise ValueError(
+                    "OSLO export requires a finite positive surface aperture radius"
+                )
             if idx == 0 and surface.is_infinite:
                 # Object surface with infinite conjugate: emit a large AP sentinel
                 # matching OSLO EDU convention: AP = tan(max_field_angle) * 1e10

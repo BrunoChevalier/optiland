@@ -12,6 +12,7 @@ from optiland.fileio import load_oslo_file, save_oslo_file
 from optiland.fileio.oslo.reader.converter import OsloToOpticConverter
 from optiland.fileio.oslo.reader.parser import OsloDataParser
 from optiland.interactions import RefractiveReflectiveModel
+from optiland.physical_apertures import RadialAperture, UnclippedAperture
 from optiland.rays import RealRays
 from tests.test_fileio.test_oslo_edge_cases import lens_file
 from tests.utils import assert_allclose
@@ -113,3 +114,33 @@ def test_export_cannot_discard_custom_ray_interactions(
     with pytest.raises(NotImplementedError, match="interaction model"):
         save_oslo_file(optic, output)
     assert output.read_text() == "saved design"
+
+
+@pytest.mark.parametrize("radius", [0, -1, math.inf, math.nan])
+@pytest.mark.parametrize("checked", [True, False])
+def test_export_rejects_unrepresentable_surface_radius_without_overwriting(
+    lens_file, tmp_path, radius, checked
+):
+    optic = load_oslo_file(lens_file(), strict=True)
+    aperture = RadialAperture(radius)
+    optic.surfaces[1].aperture = aperture if checked else UnclippedAperture(aperture)
+    output = tmp_path / "invalid-surface-radius.len"
+    output.write_text("saved design", encoding="utf-8")
+    with pytest.raises(ValueError, match="finite positive surface aperture radius"):
+        save_oslo_file(optic, output)
+    assert output.read_text() == "saved design"
+
+
+def test_export_cannot_turn_a_zero_radius_clip_into_an_open_aperture(
+    lens_file, tmp_path, set_test_backend
+):
+    optic = load_oslo_file(lens_file(), strict=True)
+    optic.surfaces[1].aperture = RadialAperture(0)
+    zeros = be.zeros(2)
+    rays = RealRays(zeros, [0, 1], zeros, zeros, zeros, be.ones(2), [1, 1], 0.55)
+    optic.surfaces[1].aperture.clip(rays)
+    assert_allclose(rays.i, [1, 0])
+    # AP CHK 0 has no explicit radius in the importer. A native zero-radius
+    # aperture really blocks off-axis rays, so the writer must reject the loss.
+    with pytest.raises(ValueError, match="finite positive surface aperture radius"):
+        save_oslo_file(optic, tmp_path / "zero-radius.len")

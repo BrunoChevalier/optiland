@@ -7,6 +7,11 @@ The ``optiland.fileio`` package handles saving and loading of optical systems.
 It supports the native Optiland JSON format, as well as Zemax (.zmx), CODE V (.seq), 
 and OSLO (.len) files.
 
+.. toctree::
+   :maxdepth: 1
+
+   /oslo_import
+
 .. autosummary::
    :toctree: generated
    :nosignatures:

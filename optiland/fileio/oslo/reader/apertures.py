@@ -57,9 +57,25 @@ def physical_aperture(
                     ap, math.radians(spec["AAN"]), (x1 + x0) / 2, (y1 + y0) / 2
                 )
         elif kind in {3, 4}:
+            vertices = [
+                (spec.get(f"AVX{i}", 0.0), spec.get(f"AVY{i}", 0.0))
+                for i in range(1, kind + 1)
+            ]
+            # OSLO requires nondegenerate triangles and strictly convex,
+            # cyclically ordered quadrangles (Program Reference pp. 49–50).
+            # Validate in lens units so unit conversion cannot collapse area.
+            # https://lambdares.com/hubfs/Support/support/oslo/oslo_releases/OSLOProgramReference.pdf#page=63
+            turns = []
+            for i, (ax, ay) in enumerate(vertices):
+                bx, by = vertices[(i + 1) % kind]
+                cx, cy = vertices[(i + 2) % kind]
+                turns.append((bx - ax) * (cy - by) - (by - ay) * (cx - bx))
+            if not (all(turn > 0 for turn in turns) or all(turn < 0 for turn in turns)):
+                raise ValueError(
+                    "OSLO polygon aperture must be nondegenerate and strictly convex"
+                )
             ap = PolygonAperture(
-                [spec.get(f"AVX{i}", 0.0) * scale for i in range(1, kind + 1)],
-                [spec.get(f"AVY{i}", 0.0) * scale for i in range(1, kind + 1)],
+                [x * scale for x, _ in vertices], [y * scale for _, y in vertices]
             )
         else:
             raise ValueError(f"OSLO special aperture type {kind} is not supported")

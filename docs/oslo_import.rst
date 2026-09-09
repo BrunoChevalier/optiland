@@ -95,6 +95,8 @@ UTF-8 (including BOM) and legacy Windows-1252 text are accepted.
        obstructions and unions of intersecting aperture groups. Omitted legacy
        coordinates are zero. Transmitting/obstructing actions are supported; undeviated holes are
        diagnosed. APK copies a preceding special aperture.
+       Polygon boundaries must be nondegenerate; quadrangles must have strictly
+       convex vertices in clockwise or counterclockwise order.
    * - ``DCX/Y/Z``, ``TLA/B/C``, ``DT``, ``TOX/Y/Z``, ``GC``, ``RCO``, ``BEN``
      - OSLO intrinsic Euler rotations, signed X/Y tilts, translation order,
        pivots, preceding global references and coordinate returns. BEN supports

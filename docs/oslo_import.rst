@@ -144,6 +144,8 @@ differs from a paraxial thin lens. Permissive import retains the existing thin-l
 approximation and warns; strict mode rejects it. ``PFM`` does not restore exact
 perfect imagery. Do not interpret successful imports of GRIN, non-sequential or
 user-surface examples as faithful optical models.
+Export of native thin-lens interactions is rejected because PFL would change
+their off-axis physics into OSLO's perfect-imaging model.
 
 Import coverage is broader than OSLO export coverage. Native Optiland JSON is the
 preferred way to retain imported general geometry, aperture composition and poses.

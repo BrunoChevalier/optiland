@@ -12,7 +12,7 @@ from optiland.fileio import load_oslo_file, save_oslo_file
 from optiland.fileio.oslo.reader.converter import OsloToOpticConverter
 from optiland.fileio.oslo.reader.parser import OsloDataParser
 from optiland.geometries import EvenAsphere, OddAsphere, StandardGeometry
-from optiland.interactions import RefractiveReflectiveModel
+from optiland.interactions import RefractiveReflectiveModel, ThinLensInteractionModel
 from optiland.physical_apertures import RadialAperture, UnclippedAperture
 from optiland.rays import RealRays
 from tests.utils import assert_allclose
@@ -165,5 +165,25 @@ def test_export_checks_geometry_instead_of_trusting_the_surface_label(
     output = tmp_path / "mismatched-geometry.len"
     output.write_text("saved design", encoding="utf-8")
     with pytest.raises(NotImplementedError, match="geometry"):
+        save_oslo_file(optic, output)
+    assert output.read_text() == "saved design"
+
+
+@pytest.mark.parametrize("surface_type", ["standard", "paraxial"])
+def test_thin_lens_export_does_not_silently_claim_perfect_imaging(
+    lens_file, tmp_path, set_test_backend, surface_type
+):
+    optic = load_oslo_file(lens_file(), strict=True)
+    surface = optic.surfaces[1]
+    surface.interaction_model = ThinLensInteractionModel(
+        surface, is_reflective=False, focal_length=20
+    )
+    surface.surface_type = surface_type
+    output = tmp_path / "thin-lens.len"
+    output.write_text("saved design", encoding="utf-8")
+    # OSLO PFL is an exact perfect-imaging model, not the same off-axis
+    # interaction as the native thin-lens phase. Import already diagnoses this
+    # approximation; export must not silently describe it as equivalent either.
+    with pytest.raises(NotImplementedError, match="thin-lens.*perfect-imaging"):
         save_oslo_file(optic, output)
     assert output.read_text() == "saved design"

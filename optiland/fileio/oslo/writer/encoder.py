@@ -177,12 +177,17 @@ class OpticToOsloEncoder:
                 raise NotImplementedError(
                     "OSLO writer cannot export coatings or scattering; use native JSON"
                 )
+            if isinstance(interaction, ThinLensInteractionModel):
+                # PFL transforms rays exactly between principal planes, unlike
+                # the native thin-lens phase (OSLO Program Reference p. 68).
+                # https://lambdares.com/hubfs/Support/support/oslo/oslo_releases/OSLOProgramReference.pdf#page=82
+                raise NotImplementedError(
+                    "OSLO writer cannot export native thin-lens interactions as "
+                    "perfect-imaging PFL surfaces; use native JSON"
+                )
             # Subclasses can change the ray physics while inheriting a supported
-            # interaction_type name. Only the explicitly mapped models are safe.
-            if type(interaction) not in {
-                RefractiveReflectiveModel,
-                ThinLensInteractionModel,
-            }:
+            # interaction_type name. Only the explicitly mapped model is safe.
+            if type(interaction) is not RefractiveReflectiveModel:
                 raise NotImplementedError(
                     "OSLO writer cannot export this interaction model; use native JSON"
                 )
@@ -258,10 +263,6 @@ class OpticToOsloEncoder:
                 # fields; without it only the chief ray is plotted.
                 with contextlib.suppress(Exception):
                     surf_data["AP"] = float(self.optic.paraxial.EPD()) / 2.0
-
-            # Paraxial case
-            if isinstance(interaction, ThinLensInteractionModel):
-                surf_data["PFL"] = float(interaction.f)
 
             self.data_model.surfaces[idx] = surf_data
 

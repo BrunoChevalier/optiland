@@ -62,6 +62,10 @@ UTF-8 (including BOM) and legacy Windows-1252 text are accepted.
      - Spheres/conics, planar RD=0, signed thickness and infinity sentinels.
        Object distances with magnitude at least 1e8 lens units are infinite,
        independently of the conversion to millimeters.
+       Image-surface TH is a focus shift added to the preceding nominal gap
+       after solves and pickups. The physical detector position and final gap
+       retain that shift; native image thickness is zero. Focus shifts require
+       an interior surface; combining them with an image GC reference is not mapped.
        Fixed markers describe editing constraints and do not change the snapshot.
    * - ``AD`` through ``AG``; ``ASP ADO/ASR/ARA/ASX`` and ``ASn``
      - AD starts at r^4. ASR uses even radial powers, ARA all positive radial
@@ -151,6 +155,8 @@ on a single line. Use native JSON for those systems. Finite-object and floating-
 apertures export the actual axial beam radius at surface 1.
 The writer rejects finite object distances that OSLO would interpret as infinite
 and preserves thickness precision to avoid rounding across that boundary.
+It writes the physical final gap with zero image defocus, so exporting an imported
+focus shift does not apply it twice. Unused native image thickness is not defocus.
 Constant refractive indices retain their saved precision, including small
 differences from unity. Invalid object-NA launches are rejected before writing.
 Explicit surface aperture radii must be finite and positive: zero cannot retain

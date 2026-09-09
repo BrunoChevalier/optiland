@@ -191,7 +191,11 @@ class OpticToOsloEncoder:
             surf_data = handler.format(surface)
 
             # Common properties
-            th = float(surface.thickness)
+            # Native final-surface thickness does not move the detector. OSLO
+            # image TH would add defocus to the preceding physical gap instead.
+            th = (
+                0.0 if idx == self.data_model.num_surfaces else float(surface.thickness)
+            )
             if idx == 0 and math.isfinite(th) and abs(th) >= OBJECT_INFINITY_THRESHOLD:
                 raise NotImplementedError(
                     "OSLO cannot represent this finite object distance; use native JSON"

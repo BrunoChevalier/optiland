@@ -138,7 +138,45 @@ class OsloToOpticConverter(BaseOpticReader):
         self.data.surfaces = resolve_pickups(self.data.surfaces)
         self._build_optic()
         self._apply_solves()
+        self._apply_image_focus()
         return self.optic
+
+    def _apply_image_focus(self) -> None:
+        """Move the detector by OSLO's defocus after nominal solves and pickups."""
+        image_index = max(self.data.surfaces)
+        shift = self.data.surfaces[image_index].get("TH", 0.0)
+        image = self.optic.surfaces[image_index]
+        image.thickness = 0.0
+        if not shift:
+            return
+        if image_index < 2:
+            raise ValueError("OSLO image focus shift requires an interior surface")
+        if "GC" in self.data.surfaces[image_index]:
+            raise ValueError(
+                "OSLO image focus shift with a global reference is not mapped"
+            )
+
+        # Image TH adds to the preceding nominal gap; it does not advance a
+        # nonexistent next surface. Apply it after solves so PY=0 may retain
+        # deliberate defocus. Program Reference pp. 46 and 122:
+        # https://lambdares.com/hubfs/Support/support/oslo/oslo_releases/OSLOProgramReference.pdf#page=60
+        if self._coordinates:
+            # Reuse the coordinate convention, including bends and returns,
+            # rather than moving a tilted image leg along global z.
+            surfaces = deepcopy(self.data.surfaces)
+            previous = surfaces[image_index - 1]
+            previous["TH"] = previous.get("TH", 0.0) + shift
+            position = surface_coordinates(surfaces, self.data.units)[image_index]
+            for axis in ("x", "y", "z"):
+                setattr(image.geometry.cs, axis, be.array(position[axis]))
+        else:
+            image.geometry.cs.z = image.geometry.cs.z + shift * self.data.units
+        self.optic.surfaces[image_index - 1].thickness += shift * self.data.units
+        if image.is_stop:
+            # Moving the stop moves its entrance pupil. Preserve OSLO's beam
+            # specification with the new pupil while keeping nominal GIH fields.
+            self._configure_aperture()
+            self._configure_telecentric_launch()
 
     def _build_optic(self) -> None:
         """Build from the current resolved prescription without applying solves."""

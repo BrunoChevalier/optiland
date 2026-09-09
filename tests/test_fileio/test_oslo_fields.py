@@ -7,7 +7,6 @@ import math
 import pytest
 
 from optiland.fileio import load_oslo_file
-from tests.test_fileio.test_oslo_edge_cases import lens_file
 
 
 @pytest.mark.parametrize("angle", [90, 100, -100])

@@ -10,7 +10,6 @@ import optiland.backend as be
 from optiland.fileio import load_oslo_file, save_oslo_file
 from optiland.fileio.oslo.reader.parser import OsloDataParser
 from optiland.rays import RealRays
-from tests.test_fileio.test_oslo_edge_cases import lens_file
 from tests.utils import assert_allclose
 
 

@@ -15,7 +15,6 @@ from optiland.geometries import EvenAsphere, OddAsphere, StandardGeometry
 from optiland.interactions import RefractiveReflectiveModel
 from optiland.physical_apertures import RadialAperture, UnclippedAperture
 from optiland.rays import RealRays
-from tests.test_fileio.test_oslo_edge_cases import lens_file
 from tests.utils import assert_allclose
 
 

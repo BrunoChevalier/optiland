@@ -50,7 +50,8 @@ UTF-8 (including BOM) and legacy Windows-1252 text are accepted.
      - Maximum field or explicit fractional X/Y positions, weights and symmetric
        pupil vignetting. Fractional object positions are converted through tangent
        space for angular fields. The angular reference must be below 90 degrees;
-       wide-angle ray aiming (WARM) is not mapped. GIH refers to the Gaussian focal plane.
+       wide-angle ray aiming (WARM) is not mapped. GIH refers to the Gaussian
+       focal plane.
        Without a table, generate on-axis, 0.7 and full-field points.
    * - ``WV``, ``WVn``, ``WW``, ``WWn``
      - Replacement and indexed wavelength/weight assignments. Default d/F/C
@@ -65,7 +66,8 @@ UTF-8 (including BOM) and legacy Windows-1252 text are accepted.
        Image-surface TH is a focus shift added to the preceding nominal gap
        after solves and pickups. The physical detector position and final gap
        retain that shift; native image thickness is zero. Focus shifts require
-       an interior surface; combining them with an image GC reference is not mapped.
+       an interior surface; combining them with an image GC reference is not
+       mapped.
        Fixed markers describe editing constraints and do not change the snapshot.
    * - ``AD`` through ``AG``; ``ASP ADO/ASR/ARA/ASX`` and ``ASn``
      - AD starts at r^4. ASR uses even radial powers, ARA all positive radial
@@ -149,10 +151,10 @@ The OSLO writer supports its documented surface subset, direct spectral samples,
 correct even-asphere powers, explicit angular/object-height fields and radial
 aperture checking flags, and object-space telecentricity. Unsupported field
 definitions, transformed surfaces, phase profiles, offset/non-radial apertures,
-custom interaction, material or propagation models, ideal-material absorption, coatings and
-scattering raise before the destination file is opened. Names and notes must fit
-on a single line. Use native JSON for those systems. Finite-object and floating-stop
-apertures export the actual axial beam radius at surface 1.
+custom interaction, material or propagation models, ideal-material absorption,
+coatings and scattering raise before the destination file is opened. Names and
+notes must fit on a single line. Use native JSON for those systems. Finite-object
+and floating-stop apertures export the actual axial beam radius at surface 1.
 The standard and even-asphere handlers also validate the concrete geometry;
 a surface label cannot authorize dropping or changing its actual sag terms.
 The writer rejects finite object distances that OSLO would interpret as infinite

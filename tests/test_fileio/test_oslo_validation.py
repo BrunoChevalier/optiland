@@ -11,6 +11,7 @@ from optiland.aperture import EPDAperture
 from optiland.fileio import load_oslo_file, save_oslo_file
 from optiland.fileio.oslo.reader.converter import OsloToOpticConverter
 from optiland.fileio.oslo.reader.parser import OsloDataParser
+from optiland.geometries import EvenAsphere, OddAsphere, StandardGeometry
 from optiland.interactions import RefractiveReflectiveModel
 from optiland.physical_apertures import RadialAperture, UnclippedAperture
 from optiland.rays import RealRays
@@ -144,3 +145,26 @@ def test_export_cannot_turn_a_zero_radius_clip_into_an_open_aperture(
     # aperture really blocks off-axis rays, so the writer must reject the loss.
     with pytest.raises(ValueError, match="finite positive surface aperture radius"):
         save_oslo_file(optic, tmp_path / "zero-radius.len")
+
+
+@pytest.mark.parametrize(
+    "geometry_type,surface_type,sag_excess",
+    [(EvenAsphere, "standard", 0.04), (OddAsphere, "even_asphere", 0.02)],
+)
+def test_export_checks_geometry_instead_of_trusting_the_surface_label(
+    lens_file, tmp_path, set_test_backend, geometry_type, surface_type, sag_excess
+):
+    optic = load_oslo_file(lens_file(), strict=True)
+    surface = optic.surfaces[1]
+    base = StandardGeometry(surface.geometry.cs, 20)
+    surface.geometry = geometry_type(surface.geometry.cs, 20, coefficients=[0.01])
+    surface.surface_type = surface_type
+    x, y = be.zeros(1), be.array([2.0])
+    assert_allclose(surface.geometry.sag(x, y) - base.sag(x, y), [sag_excess])
+    # A mutable surface label cannot establish the sag equation. The standard
+    # handler would drop this term; the even handler would change its power.
+    output = tmp_path / "mismatched-geometry.len"
+    output.write_text("saved design", encoding="utf-8")
+    with pytest.raises(NotImplementedError, match="geometry"):
+        save_oslo_file(optic, output)
+    assert output.read_text() == "saved design"

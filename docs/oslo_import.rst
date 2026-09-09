@@ -153,6 +153,8 @@ custom interaction, material or propagation models, ideal-material absorption, c
 scattering raise before the destination file is opened. Names and notes must fit
 on a single line. Use native JSON for those systems. Finite-object and floating-stop
 apertures export the actual axial beam radius at surface 1.
+The standard and even-asphere handlers also validate the concrete geometry;
+a surface label cannot authorize dropping or changing its actual sag terms.
 The writer rejects finite object distances that OSLO would interpret as infinite
 and preserves thickness precision to avoid rounding across that boundary.
 It writes the physical final gap with zero image defocus, so exporting an imported

@@ -12,6 +12,7 @@ from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any, ClassVar
 
 import optiland.backend as be
+from optiland.geometries import EvenAsphere, Plane, StandardGeometry
 
 if TYPE_CHECKING:
     from optiland.surfaces.standard_surface import Surface
@@ -91,6 +92,11 @@ class StandardSurfaceHandler(BaseSurfaceHandler):
 
     def format(self, surface: Surface) -> dict[str, Any]:
         geom = surface.geometry
+        # surface_type is mutable metadata, not proof of the actual sag model.
+        if type(geom) not in {StandardGeometry, Plane}:
+            raise NotImplementedError(
+                "OSLO writer cannot export this geometry as a standard surface"
+            )
         return {
             "RD": float(geom.radius),
             "CC": float(getattr(geom, "k", 0.0)),
@@ -122,6 +128,10 @@ class EvenAsphereSurfaceHandler(BaseSurfaceHandler):
 
     def format(self, surface: Surface) -> dict[str, Any]:
         geom = surface.geometry
+        if type(geom) is not EvenAsphere:
+            raise NotImplementedError(
+                "OSLO writer cannot export this geometry as an even asphere"
+            )
         coeffs = list(geom.coefficients) if geom.coefficients else []
         while len(coeffs) < 5:
             coeffs.append(0.0)

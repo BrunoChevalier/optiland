@@ -17,6 +17,21 @@ from optiland.fileio.oslo.constants import DEFAULT_WAVELENGTHS_UM
 from optiland.fileio.oslo.model import OsloDataModel, OsloDiagnostic
 from optiland.fileio.oslo.syntax import decode_text, tokenize
 
+# Pickup variants constrain the same underlying surface property. Use one
+# definition for validation, replacement by literal values/solves, and deletion.
+_PICKUP_FAMILIES = {
+    "CV": "CV",
+    "CVM": "CV",
+    "TH": "TH",
+    "THM": "TH",
+    "LN": "TH",
+    "LNM": "TH",
+    "AP": "AP",
+    "GLA": "GLA",
+    "TD": "TD",
+    "TDM": "TD",
+}
+
 
 class OsloDataParser:
     """Parses an OSLO .len file into an OsloDataModel.
@@ -511,20 +526,14 @@ class OsloDataParser:
                 "RCO",
                 "BEN",
             ],
-            "CSD": ["PU", "PUC"],
-            "TSD": ["PY", "PYC", "EC"],
+            "CSD": [],  # Solves and pickups are cleared together below.
+            "TSD": [],
         }[tokens[0]]
         for key in keys:
             data.pop(key, None)
-        kinds = {
-            "CSD": {"CV", "CVM"},
-            "TSD": {"TH", "THM", "LN", "LNM"},
-            "TDD": {"TD", "TDM"},
-        }.get(tokens[0], set())
-        if kinds:
-            data["pickups"] = [
-                p for p in data.get("pickups", []) if p[0].upper() not in kinds
-            ]
+        family = {"CSD": "CV", "TSD": "TH", "TDD": "TD"}.get(tokens[0])
+        if family:
+            self._clear_constraint(family)
 
     def _read_rd(self, tokens: list[str]) -> None:
         self._clear_constraint("CV")
@@ -668,35 +677,22 @@ class OsloDataParser:
         self._current_surf_data[tokens[0]] = float(tokens[1])
 
     def _clear_constraint(self, kind: str) -> None:
-        kinds = {
-            "CV": {"CV", "CVM"},
-            "TH": {"TH", "THM", "LN", "LNM"},
-            "TD": {"TD", "TDM"},
-        }.get(kind, {kind})
+        family = _PICKUP_FAMILIES[kind]
         data = self._current_surf_data
         if "pickups" in data:
-            data["pickups"] = [p for p in data["pickups"] if p[0].upper() not in kinds]
-        for key in {"CV": ("PU", "PUC"), "TH": ("PY", "PYC", "EC")}.get(kind, ()):
+            data["pickups"] = [
+                p for p in data["pickups"] if _PICKUP_FAMILIES[p[0].upper()] != family
+            ]
+        for key in {"CV": ("PU", "PUC"), "TH": ("PY", "PYC", "EC")}.get(family, ()):
             data.pop(key, None)
 
     def _read_pickup(self, tokens: list[str]) -> None:
         if len(tokens) < 3:
             raise ValueError("PK requires a pickup type and preceding source")
-        if tokens[1].upper() not in {
-            "CV",
-            "CVM",
-            "TH",
-            "THM",
-            "LN",
-            "LNM",
-            "AP",
-            "GLA",
-            "TD",
-            "TDM",
-        }:
+        kind = tokens[1].upper()
+        if kind not in _PICKUP_FAMILIES:
             self._unsupported("PK", f"pickup type {tokens[1]} is not mapped")
             return
-        kind = tokens[1].upper()
         expected = {
             "LN": {4, 5},
             "LNM": {4, 5},
@@ -710,10 +706,7 @@ class OsloDataParser:
         int(tokens[2])
         if kind in {"LN", "LNM"}:
             int(tokens[3])
-        family = {"CVM": "CV", "THM": "TH", "LN": "TH", "LNM": "TH", "TDM": "TD"}.get(
-            kind, kind
-        )
-        self._clear_constraint(family)
+        self._clear_constraint(kind)
         self._current_surf_data.setdefault("pickups", []).append(tokens[1:])
 
     def _read_aperture_pickup(self, tokens: list[str]) -> None:

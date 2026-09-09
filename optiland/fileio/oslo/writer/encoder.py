@@ -16,6 +16,7 @@ from optiland.fileio.common import FIELD_CLASS_TO_TYPE
 from optiland.fileio.oslo.constants import (
     DEFAULT_WAVELENGTHS_UM,
     OBJECT_INFINITY_THRESHOLD,
+    THICKNESS_INFINITY_THRESHOLD,
 )
 from optiland.fileio.oslo.model import OsloDataModel
 from optiland.fileio.oslo.surfaces import get_handler_for_optiland_type
@@ -158,6 +159,7 @@ class OpticToOsloEncoder:
             self.data_model.wavelengths["primary_index"] = 0
 
     def _encode_surfaces(self) -> None:
+        positions = self.optic.surfaces.global_z_positions
         for idx, surface in enumerate(self.optic.surfaces):
             interaction = surface.interaction_model
             position, rotation = surface.geometry.cs.get_effective_transform()
@@ -195,17 +197,31 @@ class OpticToOsloEncoder:
             handler = get_handler_for_optiland_type(s_type)
             surf_data = handler.format(surface)
 
-            # Common properties
+            # Coordinates define the traced geometry. The construction-time
+            # thickness attribute can be zero for absolute-coordinate systems
+            # or stale after direct coordinate edits.
             # Native final-surface thickness does not move the detector. OSLO
             # image TH would add defocus to the preceding physical gap instead.
             th = (
-                0.0 if idx == self.data_model.num_surfaces else float(surface.thickness)
+                0.0
+                if idx == self.data_model.num_surfaces
+                else float((positions[idx + 1] - positions[idx]).item())
             )
+            if math.isnan(th):
+                raise ValueError("OSLO export requires defined axial surface spacings")
             if idx == 0 and math.isfinite(th) and abs(th) >= OBJECT_INFINITY_THRESHOLD:
                 raise NotImplementedError(
                     "OSLO cannot represent this finite object distance; use native JSON"
                 )
-            if be.isinf(th):
+            if (
+                idx > 0
+                and math.isfinite(th)
+                and abs(th) >= THICKNESS_INFINITY_THRESHOLD
+            ):
+                raise NotImplementedError(
+                    "OSLO cannot represent this finite surface spacing; use native JSON"
+                )
+            if math.isinf(th):
                 th = math.copysign(1e10, th)
             surf_data["TH"] = th
 

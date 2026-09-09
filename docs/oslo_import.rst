@@ -164,8 +164,11 @@ notes must fit on a single line. Use native JSON for those systems. Finite-objec
 and floating-stop apertures export the actual axial beam radius at surface 1.
 The standard and even-asphere handlers also validate the concrete geometry;
 a surface label cannot authorize dropping or changing its actual sag terms.
-The writer rejects finite object distances that OSLO would interpret as infinite
-and preserves thickness precision to avoid rounding across that boundary.
+The writer derives spacings from the actual axial coordinates, including lenses
+built with absolute positions or edited coordinates. A common axial translation
+is removed by anchoring the first surface at zero. It rejects finite object or
+interior distances that import would interpret as infinite and preserves thickness
+precision to avoid rounding across those boundaries.
 It writes the physical final gap with zero image defocus, so exporting an imported
 focus shift does not apply it twice. Unused native image thickness is not defocus.
 Constant refractive indices retain their saved precision, including small

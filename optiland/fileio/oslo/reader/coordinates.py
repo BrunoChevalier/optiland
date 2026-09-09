@@ -8,7 +8,10 @@ from typing import Any
 import numpy as np
 from scipy.spatial.transform import Rotation
 
-from optiland.fileio.oslo.constants import OBJECT_INFINITY_THRESHOLD
+from optiland.fileio.oslo.constants import (
+    OBJECT_INFINITY_THRESHOLD,
+    THICKNESS_INFINITY_THRESHOLD,
+)
 
 
 def reference_index(value: int, current: int) -> int:
@@ -94,10 +97,10 @@ def surface_coordinates(
             extra = Rotation.from_euler("XYZ", angles, degrees=True).as_matrix()
             next_rotation = rotation @ extra
         distance = data.get("TH", 0.0)
-        if 0 < index < last_index and abs(distance) >= 9.9e9:
+        if 0 < index < last_index and abs(distance) >= THICKNESS_INFINITY_THRESHOLD:
             raise ValueError(
                 "OSLO infinite thickness with coordinate transforms is not mapped"
             )
-        if index != 0 and abs(distance) < 9.9e9:
+        if index != 0 and abs(distance) < THICKNESS_INFINITY_THRESHOLD:
             next_position = next_position + next_rotation[:, 2] * distance * scale
     return result

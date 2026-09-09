@@ -18,6 +18,7 @@ from optiland.fileio.base import BaseOpticReader
 from optiland.fileio.oslo.constants import (
     DEFAULT_WAVELENGTHS_UM,
     OBJECT_INFINITY_THRESHOLD,
+    THICKNESS_INFINITY_THRESHOLD,
 )
 from optiland.fileio.oslo.reader.apertures import physical_aperture
 from optiland.fileio.oslo.reader.coordinates import surface_coordinates
@@ -283,7 +284,9 @@ class OsloToOpticConverter(BaseOpticReader):
         th = data.get("TH", 0.0)
         # Object conjugates have a documented cutoff below the large sentinel
         # used for other distances (sometimes saved as 9.9999999996e+09).
-        infinity_threshold = OBJECT_INFINITY_THRESHOLD if index == 0 else 9.9e9
+        infinity_threshold = (
+            OBJECT_INFINITY_THRESHOLD if index == 0 else THICKNESS_INFINITY_THRESHOLD
+        )
         if abs(th) >= infinity_threshold:
             th = be.inf if th > 0 else -be.inf
         surface_params["thickness"] = th * scale

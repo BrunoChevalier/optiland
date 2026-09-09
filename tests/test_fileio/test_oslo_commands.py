@@ -784,7 +784,7 @@ def test_names_fields_and_signed_infinity_roundtrip(tmp_path, set_test_backend):
     optic.fields.fields.clear()
     optic.fields.add(y=-3, x=2, weight=2, vx=0.1, vy=0.2)
     optic.fields.add(y=5, x=-1, weight=0)
-    optic.surfaces[0].thickness = -float("inf")
+    optic.updater.set_thickness(-float("inf"), 0)
     path = tmp_path / "metadata.len"
     save_oslo_file(optic, path)
     restored = load_oslo_file(path, strict=True)

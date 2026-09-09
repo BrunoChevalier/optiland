@@ -12,3 +12,8 @@ DEFAULT_WAVELENGTHS_UM = (0.58756, 0.48613, 0.65627)
 # differs from the large sentinel values commonly written in lens files.
 # https://lambdares.com/hubfs/Support/support/OSLOOpticsReference_Sep21.pdf#page=151
 OBJECT_INFINITY_THRESHOLD = 1e8
+
+# Saved OSLO prescriptions use values near 1e10 for infinite non-object gaps
+# (including rounded values such as 9.9999999996e9). Keep import and export
+# consistent about which finite native spacings would become this sentinel.
+THICKNESS_INFINITY_THRESHOLD = 9.9e9

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pickle
 import uuid
+from dataclasses import replace
 
 from PySide6.QtCore import QEvent, QObject, QTimer, Slot
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QProgressBar, QPushButton, QWidget
@@ -209,3 +210,15 @@ class LayoutJobView(QObject):
             self._restyle_pending = False
             self.label.setToolTip("")
             self.label.setText("Layout is up to date.")
+        else:
+            self.label.setText("Previous layout is stale; apply to update.")
+            backend_changed = (
+                request.snapshot is not None
+                and request.snapshot.backend != BackendConfig.capture()
+            )
+            # Recheck document, target generation, visibility and shutdown while
+            # excluding only the obsolete backend. Cancellation must stay revoked.
+            if backend_changed and self.jobs.is_current(
+                replace(request, snapshot=None)
+            ):
+                self.invalidate()

@@ -766,3 +766,19 @@ QDoubleSpinBox:focus {
 QSpinBox, QDoubleSpinBox {
     padding-right: 2em;
 }
+
+/* Embedded lens-editor controls reveal the delegate's row/cell hover tint. */
+QTableWidget#LensDataTable::item:hover:!selected {
+    background-color: transparent;
+}
+QTableWidget#LensDataTable::item:hover:selected {
+    background-color: #DEE2E6;
+}
+QTableWidget#LensDataTable::item:hover:selected:focus {
+    background-color: #6C757D;
+}
+QTableWidget#LensDataTable QWidget[ldeHoverBackground="true"],
+QTableWidget#LensDataTable QLineEdit[ldeHoverBackground="true"],
+QTableWidget#LensDataTable QToolButton[ldeHoverBackground="true"] {
+    background-color: transparent;
+}

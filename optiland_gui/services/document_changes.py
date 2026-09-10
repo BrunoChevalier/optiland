@@ -19,6 +19,7 @@ class DocumentChange:
     """One committed edit, possibly assembled from a nested transaction."""
 
     token: DocumentToken
+    edit_token: DocumentToken
     categories: frozenset[str]
     surface_indices: frozenset[int] = frozenset()
     columns: frozenset[int] = frozenset()

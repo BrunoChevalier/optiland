@@ -30,7 +30,14 @@ if TYPE_CHECKING:
 
 
 class DocumentState(QObject):
-    """Conservative revision boundary, connected before any panel subscriptions."""
+    """Separate calculation validity from whole-document ownership.
+
+    ``token`` changes for optical inputs; ``edit_token`` changes for every
+    persisted edit, including metadata. Whole-document consumers must capture
+    ``edit_token`` alongside their detached snapshot and compare it immediately
+    before replacing the document or declaring a saved snapshot clean. Optical
+    job currency alone cannot authorize overwriting intervening comment edits.
+    """
 
     changed = Signal(object)
     committed = Signal(object)
@@ -38,9 +45,11 @@ class DocumentState(QObject):
     def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
         self.token = DocumentToken(uuid.uuid4().hex, 0)
+        self.edit_token = self.token
         self._transaction_depth = 0
         self._replacement_transaction = False
         self._invalidated = False
+        self._edit_invalidated = False
         self._categories = set()
         self._surface_indices = set()
         self._columns = set()
@@ -63,22 +72,31 @@ class DocumentState(QObject):
         if category not in CHANGE_CATEGORIES:
             raise ValueError(f"Unknown document change category: {category}")
         replacement = category == "replacement" or self._replacement_transaction
-        if category in OPTICAL_CATEGORIES and not self._invalidated:
-            self.token = (
-                DocumentToken(uuid.uuid4().hex, 0)
-                if replacement
-                else DocumentToken(self.token.document_id, self.token.revision + 1)
-            )
-            self._invalidated = bool(self._transaction_depth)
-            self.changed.emit(self.token)
-        elif (
+        if (
             category == "replacement"
-            and self._invalidated
+            and self._edit_invalidated
             and not self._replacement_transaction
         ):
             raise ValueError(
                 "Declare replacement=True before a replacement transaction."
             )
+        if category != "presentation" and not self._edit_invalidated:
+            self.edit_token = (
+                DocumentToken(uuid.uuid4().hex, 0)
+                if replacement
+                else DocumentToken(
+                    self.edit_token.document_id, self.edit_token.revision + 1
+                )
+            )
+            self._edit_invalidated = bool(self._transaction_depth)
+        if category in OPTICAL_CATEGORIES and not self._invalidated:
+            self.token = (
+                DocumentToken(self.edit_token.document_id, 0)
+                if replacement
+                else DocumentToken(self.token.document_id, self.token.revision + 1)
+            )
+            self._invalidated = bool(self._transaction_depth)
+            self.changed.emit(self.token)
         self._categories.add(category)
         self._surface_indices.update(surface_indices)
         self._columns.update(columns)
@@ -116,6 +134,7 @@ class DocumentState(QObject):
             if outer:
                 self._replacement_transaction = False
                 self._invalidated = False
+                self._edit_invalidated = False
                 if self._transaction_failed:
                     self._reset_pending()
                 else:
@@ -125,6 +144,7 @@ class DocumentState(QObject):
         if self._categories:
             change = DocumentChange(
                 self.token,
+                self.edit_token,
                 frozenset(self._categories),
                 frozenset(self._surface_indices),
                 frozenset(self._columns),

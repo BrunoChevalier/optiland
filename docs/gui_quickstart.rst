@@ -102,6 +102,17 @@ Optiland features a VS Code-style **Command Palette** that provides quick access
 
    All windows are dockable and can be rearranged to suit your workflow. You can also save your layout for future sessions. These can be loaded by pressing "1" or "2" in the top toolbar, corresponding to the slot used for saving your layout.
 
+Notifications
+-------------
+
+Notifications appear at the bottom-right of the main window. Click the
+notification card or its close button to dismiss it. You can also use ``Tab``
+to focus the close button, labeled "Dismiss notification", and press ``Space``.
+
+Error notifications stay visible until dismissed or replaced by newer
+notifications when the three-card stack is full. Information, success, and
+warning notifications disappear automatically after seven seconds.
+
 Light theme and Dark theme
 --------------------------
 

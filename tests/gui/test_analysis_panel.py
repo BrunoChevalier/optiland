@@ -147,3 +147,94 @@ def test_backend_change_labels_retained_result_outdated(panel):
     with patch.object(BackendConfig, "capture", return_value=BackendConfig("torch")):
         panel._update_page_status(page)
         assert "Out of date" in panel.dataInfoLabel.text()
+
+
+def test_settings_draft_survives_switch_and_closing_another_page(panel):
+    first, second = run_page(panel), run_page(panel)
+    jobs = panel.connector.calculation_jobs
+    jobs.complete(first["page_id"], result_data())
+    jobs.complete(second["page_id"], result_data())
+    panel.switch_plot_page(0)
+    panel.current_settings_widgets["num_points"].setValue(48)
+    panel.switch_plot_page(1)
+    panel.switch_plot_page(0)
+    assert panel.current_settings_widgets["num_points"].value() == 48
+    panel.current_settings_widgets["num_points"].setValue(64)
+    panel._remove_analysis_page(1)
+    assert panel.current_settings_widgets["num_points"].value() == 64
+    panel.analysisTypeCombo.setCurrentText("Spot Diagram")
+    panel.analysisTypeCombo.setCurrentText("Ray Fan")
+    assert panel.current_settings_widgets["num_points"].value() == 64
+    assert first["settings_dirty"]
+    assert first["constructor_args_used"]["num_points"] == 16
+    assert first["result_settings"]["constructor_args"]["num_points"] == 16
+    assert len(jobs.submissions) == 2
+
+
+def test_clone_copies_pending_draft_without_recalculating_or_sharing_edits(panel):
+    page = run_page(panel)
+    jobs = panel.connector.calculation_jobs
+    jobs.complete(page["page_id"], result_data())
+    panel.current_settings_widgets["num_points"].setValue(48)
+    panel._clone_analysis_page(0)
+    clone = panel.analysis_results_pages[1]
+    assert panel.current_settings_widgets["num_points"].value() == 48
+    assert clone["prepared"] is page["prepared"]
+    assert clone["draft_settings"] is not page["draft_settings"]
+    assert clone["settings_dirty"]
+    panel.current_settings_widgets["num_points"].setValue(64)
+    panel.switch_plot_page(0)
+    assert panel.current_settings_widgets["num_points"].value() == 48
+    panel.switch_plot_page(1)
+    assert panel.current_settings_widgets["num_points"].value() == 64
+    assert len(jobs.submissions) == 1
+
+
+def test_apply_submits_restored_draft_but_completion_keeps_later_edits(panel):
+    first, second = run_page(panel), run_page(panel)
+    jobs = panel.connector.calculation_jobs
+    jobs.complete(first["page_id"], result_data())
+    jobs.complete(second["page_id"], result_data())
+    panel.switch_plot_page(0)
+    panel.current_settings_widgets["num_points"].setValue(48)
+    panel.switch_plot_page(1)
+    panel.switch_plot_page(0)
+    panel._apply_settings_and_rerun_analysis_slot()
+    assert jobs.submissions[-1].parameters["constructor_args"]["num_points"] == 48
+    assert first["constructor_args_used"]["num_points"] == 48
+    assert first["draft_settings"] is None
+    assert not first["settings_dirty"]
+    panel.current_settings_widgets["num_points"].setValue(64)
+    jobs.complete(first["page_id"], result_data())
+    panel.switch_plot_page(1)
+    panel.switch_plot_page(0)
+    assert panel.current_settings_widgets["num_points"].value() == 64
+    assert first["settings_dirty"]
+    assert first["result_settings"]["constructor_args"]["num_points"] == 48
+    assert len(jobs.submissions) == 3
+
+
+def test_incomplete_text_and_control_drafts_survive_navigation(panel):
+    page = panel._execute_analysis(None, "FFT PSF", {"num_rays": 32}, {})
+    run_page(panel)
+    panel.switch_plot_page(0)
+    field = panel.current_settings_widgets["field"]
+    field.setText("0,")
+    field.textEdited.emit("0,")
+    panel.current_settings_widgets["remove_tilt"].setChecked(True)
+    panel.current_settings_widgets["strategy"].setCurrentText("centroid")
+    panel.current_settings_widgets["grid_size"].setValue(0)
+    panel.switch_plot_page(1)
+    panel.switch_plot_page(0)
+    assert panel.current_settings_widgets["field"].text() == "0,"
+    assert panel.current_settings_widgets["remove_tilt"].isChecked()
+    assert panel.current_settings_widgets["strategy"].currentText() == "centroid"
+    assert (
+        panel._get_value_from_spinbox(panel.current_settings_widgets["grid_size"])
+        is None
+    )
+    assert page["settings_dirty"]
+    panel._apply_settings_and_rerun_analysis_slot()
+    assert panel.current_settings_widgets["field"].text() == "0,"
+    assert page["settings_dirty"]
+    assert len(panel.connector.calculation_jobs.submissions) == 2

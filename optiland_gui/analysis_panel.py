@@ -923,6 +923,10 @@ class AnalysisPanel(QWidget):
         if analysis_name not in self._analysis_class_map:
             return  # category header or unrecognised item — skip
         self._update_settings_ui(analysis_name)
+        if 0 <= self.current_plot_page_index < len(self.analysis_results_pages):
+            page = self.analysis_results_pages[self.current_plot_page_index]
+            if page["name"] == analysis_name:
+                self._populate_settings_from_page_data(page)
         if self.current_plot_page_index == -1 or not self.analysis_results_pages:
             self.plotTitleLabel.setText(analysis_name)
 
@@ -996,6 +1000,7 @@ class AnalysisPanel(QWidget):
             "page_id": uuid.uuid4().hex,
             "constructor_args_used": copy.deepcopy(original["constructor_args_used"]),
             "view_args": copy.deepcopy(original["view_args"]),
+            "draft_settings": copy.deepcopy(original.get("draft_settings")),
             "state": "succeeded" if original.get("prepared") else "idle",
             "error": "",
         }
@@ -1105,6 +1110,47 @@ class AnalysisPanel(QWidget):
                 widget.blockSignals(True)
                 self._set_widget_value(widget, page_args[param_name], param_name)
                 widget.blockSignals(False)
+        self._restore_settings_draft(page_data.get("draft_settings") or {})
+
+    def _capture_settings_draft(self):
+        """Keep raw editor values, including incomplete text, without validation."""
+        draft = {}
+        for name, widget in self.current_settings_widgets.items():
+            if isinstance(widget, QLineEdit):
+                draft[name] = widget.text()
+            elif isinstance(widget, QComboBox):
+                draft[name] = (
+                    widget.currentText(),
+                    copy.deepcopy(widget.currentData()),
+                )
+            elif isinstance(widget, QCheckBox):
+                draft[name] = widget.isChecked()
+            elif isinstance(widget, (QSpinBox, QDoubleSpinBox)):
+                draft[name] = widget.value()
+        return draft
+
+    def _restore_settings_draft(self, draft):
+        """Restore pending inputs without changing submitted/result settings."""
+        for name, value in draft.items():
+            widget = self.current_settings_widgets.get(name)
+            if widget is None:
+                continue
+            blocked = widget.blockSignals(True)
+            try:
+                if isinstance(widget, QLineEdit):
+                    widget.setText(value)
+                elif isinstance(widget, QComboBox):
+                    text, data = value
+                    index = widget.findData(data) if data is not None else -1
+                    widget.setCurrentIndex(
+                        index if index != -1 else widget.findText(text)
+                    )
+                elif isinstance(widget, QCheckBox):
+                    widget.setChecked(value)
+                elif isinstance(widget, (QSpinBox, QDoubleSpinBox)):
+                    widget.setValue(value)
+            finally:
+                widget.blockSignals(blocked)
 
     # --- Load/Save Settings ---
     def _apply_loaded_settings_to_ui(self, loaded_settings):
@@ -1342,6 +1388,7 @@ class AnalysisPanel(QWidget):
             page = self.analysis_results_pages[self.current_plot_page_index]
             if page["name"] == self.analysisTypeCombo.currentText():
                 page["settings_dirty"] = True
+                page["draft_settings"] = self._capture_settings_draft()
                 self._update_page_status(page)
 
     def closeEvent(self, event):
@@ -1600,6 +1647,7 @@ class AnalysisPanel(QWidget):
             error="",
             requested_token=request.document,
             settings_dirty=False,
+            draft_settings=None,
         )
         if new_page:
             self.analysis_results_pages.append(page)
@@ -1735,6 +1783,7 @@ class AnalysisPanel(QWidget):
                     f"Settings loaded from {filepath}. "
                     "Click 'Apply' or 'Run' to see results."
                 )
+                self._settings_edited()
 
             except Exception as e:
                 msg = f"Could not load or apply settings:\n{e}"

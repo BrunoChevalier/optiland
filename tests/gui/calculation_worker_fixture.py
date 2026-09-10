@@ -30,5 +30,11 @@ while header := sys.stdin.buffer.read(4):
     if parameters.get("crash"):
         os._exit(7)
     time.sleep(parameters.get("delay", 0.01))
-    send({"event": "result", "job_id": job_id, "status": "succeeded",
-          "data": parameters.get("value", 42)})
+    send(
+        {
+            "event": "result",
+            "job_id": job_id,
+            "status": "succeeded",
+            "data": parameters.get("value", 42),
+        }
+    )

@@ -256,17 +256,23 @@ class CalculationJobs(QObject):
         process = self.sender()
         if process is not self._process:
             return
-        self._buffer.extend(bytes(process.readAllStandardOutput()))
+        chunk = process.readAllStandardOutput()
+        self._buffer.extend(memoryview(chunk))
         try:
             while len(self._buffer) >= 4:
-                size = struct.unpack("!I", self._buffer[:4])[0]
+                size = struct.unpack_from("!I", self._buffer)[0]
                 if size > MAX_MESSAGE_BYTES:
                     raise ValueError("Invalid calculation-worker message size.")
                 if len(self._buffer) < 4 + size:
                     break
-                payload = bytes(self._buffer[4 : 4 + size])
+                # In-band protocol-5 decoding owns reconstructed array buffers.
+                # Decode directly from the receive storage instead of making a
+                # bytearray slice and a second full-size bytes copy on Qt.
+                with memoryview(self._buffer) as frame:
+                    with frame[4 : 4 + size] as payload:
+                        message = pickle.loads(payload)
                 del self._buffer[: 4 + size]
-                self._message(pickle.loads(payload))
+                self._message(message)
         except Exception as exc:
             self._stderr = str(exc)
             self._kill_worker()

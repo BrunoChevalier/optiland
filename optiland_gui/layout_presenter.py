@@ -125,25 +125,34 @@ def present_3d(viewer, data, context, restyle=False):
         viewer.vtkWidget.GetRenderWindow().Render()
         return
     actors = []
+    geometry_cache = {}
     for mesh in data["meshes"]:
-        points = vtk.vtkPoints()
-        points.SetData(numpy_to_vtk(mesh["points"], deep=True))
-        polydata = vtk.vtkPolyData()
-        polydata.SetPoints(points)
-        if mesh.get("normals") is not None:
-            polydata.GetPointData().SetNormals(numpy_to_vtk(mesh["normals"], deep=True))
-        for name, (offsets, connectivity) in mesh["cells"].items():
-            cells = vtk.vtkCellArray()
-            cells.SetData(
-                numpy_to_vtkIdTypeArray(offsets, deep=True),
-                numpy_to_vtkIdTypeArray(connectivity, deep=True),
-            )
-            {
-                "polys": polydata.SetPolys,
-                "lines": polydata.SetLines,
-                "verts": polydata.SetVerts,
-                "strips": polydata.SetStrips,
-            }[name](cells)
+        # Pickle preserves these shared array identities: a standalone surface
+        # and its overlay need independent actors/materials, one retained mesh.
+        geometry_key = id(mesh["points"]), id(mesh["cells"]), id(mesh.get("normals"))
+        if geometry_key not in geometry_cache:
+            points = vtk.vtkPoints()
+            points.SetData(numpy_to_vtk(mesh["points"], deep=True))
+            polydata = vtk.vtkPolyData()
+            polydata.SetPoints(points)
+            if mesh.get("normals") is not None:
+                polydata.GetPointData().SetNormals(
+                    numpy_to_vtk(mesh["normals"], deep=True)
+                )
+            for name, (offsets, connectivity) in mesh["cells"].items():
+                cells = vtk.vtkCellArray()
+                cells.SetData(
+                    numpy_to_vtkIdTypeArray(offsets, deep=True),
+                    numpy_to_vtkIdTypeArray(connectivity, deep=True),
+                )
+                {
+                    "polys": polydata.SetPolys,
+                    "lines": polydata.SetLines,
+                    "verts": polydata.SetVerts,
+                    "strips": polydata.SetStrips,
+                }[name](cells)
+            geometry_cache[geometry_key] = polydata
+        polydata = geometry_cache[geometry_key]
         mapper = vtk.vtkPolyDataMapper()
         mapper.SetInputData(polydata)
         actor = vtk.vtkActor()

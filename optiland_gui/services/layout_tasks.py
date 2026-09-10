@@ -155,7 +155,9 @@ def prepare_3d(snapshot, parameters, progress, cancelled):
     """Return VTK polydata arrays without any native rendering context."""
     from vtk.util.numpy_support import vtk_to_numpy
 
+    from optiland.visualization.system.lens import Lens3D
     from optiland.visualization.system.rays import Rays3D
+    from optiland.visualization.system.surface import Surface3D
     from optiland.visualization.system.system import OpticalSystem
 
     progress("Restoring optical snapshot")
@@ -170,13 +172,45 @@ def prepare_3d(snapshot, parameters, progress, cancelled):
     groups = [(actor, "ray", ()) for actor in collector.actors]
     system = OpticalSystem(optic, rays, projection="3d")
     system._identify_components()
+    surface_views = {}
     for index, component in enumerate(system.components):
         progress("Preparing 3D components", index, len(system.components))
         collector.actors = []
         component.plot(collector)
-        groups.extend(
-            (actor, "lens", _surface_indices(component, indices))
-            for actor in collector.actors
+        component_surfaces = _surface_indices(component, indices)
+        body = isinstance(component, Lens3D)
+        for actor in collector.actors:
+            owned = getattr(component, "artist_surfaces", {}).get(actor)
+            surfaces = (
+                tuple(indices[id(surface)] for surface in owned)
+                if owned
+                else component_surfaces
+            )
+            groups.append((actor, "lens" if body else "surface", surfaces))
+            if body:
+                groups.append((_highlight_edges(actor), "body_edge", surfaces))
+        if body:
+            for surface in component.surfaces:
+                surface_views[indices[id(surface.surf)]] = surface
+        elif isinstance(component, Surface3D):
+            surface_views[indices[id(component.surf)]] = component
+
+    # Face and boundary overlays are prepared once beside the scene. Selection
+    # changes only visibility/material properties; no GUI-side sag or mesh work.
+    for index, surface in enumerate(optic.surfaces):
+        if getattr(surface, "is_infinite", False):
+            continue
+        progress("Preparing surface outlines", index, len(optic.surfaces))
+        view = surface_views.get(index)
+        if view is None:
+            extent = float(rays.r_extent[index])
+            if not np.isfinite(extent) or extent <= 0:
+                extent = 0.1
+            view = Surface3D(surface, extent)
+        face = view.get_surface()
+        groups.append((face, "face_highlight", (index,)))
+        groups.append(
+            (_highlight_edges(face, boundary_only=True), "surface_edge", (index,))
         )
     meshes = []
     for index, (actor, role, surfaces) in enumerate(groups):
@@ -229,6 +263,30 @@ def prepare_3d(snapshot, parameters, progress, cancelled):
         )
     check_cancelled(cancelled)
     return {"name": optic.name, "meshes": _batch_ray_meshes(meshes)}
+
+
+def _highlight_edges(actor, *, boundary_only=False):
+    """Extract retained outline geometry in the worker, preserving world pose."""
+    import vtk
+
+    actor.GetMapper().Update()
+    edges = vtk.vtkFeatureEdges()
+    edges.SetInputData(actor.GetMapper().GetInput())
+    edges.BoundaryEdgesOn()
+    edges.NonManifoldEdgesOff()
+    edges.ManifoldEdgesOff()
+    edges.SetFeatureEdges(not boundary_only)
+    edges.SetFeatureAngle(35)
+    edges.ColoringOff()
+    edges.Update()
+    mapper = vtk.vtkPolyDataMapper()
+    mapper.SetInputData(edges.GetOutput())
+    outline = vtk.vtkActor()
+    outline.SetMapper(mapper)
+    outline.SetUserMatrix(actor.GetMatrix())
+    outline.GetProperty().SetAmbient(1)
+    outline.GetProperty().SetDiffuse(0)
+    return outline
 
 
 def _batch_ray_meshes(meshes):

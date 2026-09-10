@@ -113,6 +113,7 @@ def present_3d(viewer, data, context, restyle=False):
 
     gui_plot_utils.apply_gui_matplotlib_styles(viewer.current_theme)
     theme = get_active_theme().parameters
+    viewer.clear_3d_highlights()
     if not viewer._initialized:
         viewer.iren.Initialize()
         viewer._initialized = True
@@ -120,6 +121,7 @@ def present_3d(viewer, data, context, restyle=False):
     if restyle and hasattr(viewer, "_scene_actor_specs"):
         for actor, mesh in viewer._scene_actor_specs:
             _style_3d_actor(actor, mesh, theme)
+        viewer.install_3d_highlights(viewer._scene_actor_specs, context)
         viewer.vtkWidget.GetRenderWindow().Render()
         return
     actors = []
@@ -149,12 +151,18 @@ def present_3d(viewer, data, context, restyle=False):
         matrix = vtk.vtkMatrix4x4()
         matrix.DeepCopy(mesh["matrix"].ravel())
         actor.SetUserMatrix(matrix)
+        if mesh["role"] in ("face_highlight", "body_edge", "surface_edge"):
+            actor.UseBoundsOff()
+            mapper.SetResolveCoincidentTopologyToPolygonOffset()
+            mapper.SetRelativeCoincidentTopologyPolygonOffsetParameters(-1, -1)
+            mapper.SetRelativeCoincidentTopologyLineOffsetParameters(-1, -1)
         _style_3d_actor(actor, mesh, theme)
         actors.append(actor)
     viewer._scene_actor_specs = list(zip(actors, data["meshes"], strict=True))
     viewer.renderer.RemoveAllViewProps()
     for actor in actors:
         viewer.renderer.AddActor(actor)
+    viewer.install_3d_highlights(viewer._scene_actor_specs, context)
     if (
         not viewer._has_scene
         or getattr(viewer, "_scene_document_id", None) != context["document_id"]
@@ -182,6 +190,9 @@ def _style_3d_actor(actor, mesh, theme):
     prop.SetSpecular(mesh["specular"])
     prop.SetSpecularPower(mesh["power"])
     prop.SetLineWidth(mesh["linewidth"])
+    actor.SetVisibility(
+        mesh["role"] not in ("face_highlight", "body_edge", "surface_edge")
+    )
 
 
 def present_sag(viewer, data, context, restyle=False):

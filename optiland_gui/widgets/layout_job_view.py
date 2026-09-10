@@ -60,7 +60,12 @@ class LayoutJobView(QObject):
         viewer.installEventFilter(self)
 
     def eventFilter(self, watched, event):
-        if watched is self.viewer:
+        # Qt may deliver final native events while Python is breaking the
+        # parent/child reference cycle during widget destruction.
+        viewer = getattr(self, "viewer", None)
+        if viewer is None:
+            return False
+        if watched is viewer:
             if event.type() == QEvent.Type.Show:
                 self.jobs.set_target_visible(self.target, True)
                 self._refresh_timer.start(0)

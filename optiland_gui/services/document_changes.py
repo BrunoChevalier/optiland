@@ -9,9 +9,9 @@ if TYPE_CHECKING:
     from .job_records import DocumentToken
 
 CHANGE_CATEGORIES = frozenset(
-    {"optical", "structure", "replacement", "metadata", "presentation"}
+    {"optical", "structure", "replacement", "metadata", "presentation", "polarization"}
 )
-OPTICAL_CATEGORIES = frozenset({"optical", "structure", "replacement"})
+OPTICAL_CATEGORIES = frozenset({"optical", "structure", "replacement", "polarization"})
 
 
 @dataclass(frozen=True)

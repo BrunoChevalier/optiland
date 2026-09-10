@@ -86,6 +86,10 @@ class SystemPropertiesPanel(QWidget):
         self.connector.document_state.committed.connect(self._on_document_change)
 
     def _on_document_change(self, change):
+        if "polarization" in change.categories:
+            self.polarizationEditor.load_data()
+        if change.categories <= {"polarization", "presentation"}:
+            return
         if change.structural or (change.affects_optics and not change.surface_indices):
             self.load_properties()
 
@@ -431,7 +435,6 @@ class FieldsEditor(PropertyEditorBase):
         self._notify_optical_edit()
 
 
-
 class WavelengthsEditor(PropertyEditorBase):
     """A widget for editing the wavelengths of the optical system."""
 
@@ -588,7 +591,6 @@ class WavelengthsEditor(PropertyEditorBase):
             wavelength._unit = "um"
             wavelength._value_in_um = value
         self._notify_optical_edit()
-
 
 
 class PolarizationEditor(PropertyEditorBase):

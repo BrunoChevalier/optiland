@@ -23,6 +23,50 @@ def make_editor(minimal_optic):
     return connector, editor
 
 
+def test_polarization_invalidates_rays_without_reading_any_lens_cells(
+    qapp, minimal_optic, monkeypatch
+):
+    connector, editor = make_editor(minimal_optic)
+    props = SystemPropertiesPanel(connector)
+    changes = []
+    connector.document_state.committed.connect(changes.append)
+    original = connector.document_state.token
+    try:
+        with monkeypatch.context() as scope:
+            scope.setattr(
+                connector,
+                "get_surface_data",
+                MagicMock(
+                    side_effect=AssertionError("Polarization queried a lens cell")
+                ),
+            )
+            connector.set_polarization_state("unpolarized")
+        assert len(changes) == 1
+        assert changes[0].categories == {"polarization"}
+        assert changes[0].affects_optics
+        assert connector.document_state.token.revision == original.revision + 1
+        assert props.polarizationEditor.cmbMode.currentText() == "Unpolarized"
+        queried = MagicMock(wraps=connector.get_surface_data)
+        monkeypatch.setattr(connector, "get_surface_data", queried)
+        with connector.change_transaction():
+            connector.set_polarization_state("ignore")
+            connector.set_surface_data(1, connector.COL_COMMENT, "Changed comment")
+        assert (
+            editor.tableWidget.item(1, connector.COL_COMMENT).text()
+            == "Changed comment"
+        )
+        assert props.polarizationEditor.cmbMode.currentText() == "Ignore"
+        assert len(queried.call_args_list) <= 2
+        assert all(
+            call.args == (1, connector.COL_COMMENT) for call in queried.call_args_list
+        )
+    finally:
+        props.close()
+        props.deleteLater()
+        editor.close()
+        editor.deleteLater()
+
+
 def test_local_update_keeps_type_widget_selection_and_scroll(
     qapp, minimal_optic, monkeypatch
 ):
@@ -167,9 +211,10 @@ def test_stop_change_updates_both_type_labels_and_same_stop_is_noop(
         connector.set_stop_surface(1)
         for row, widget in zip((1, 2), original, strict=True):
             assert table.cellWidget(row, 0) is widget
-            assert widget.type_edit.text() == connector.get_surface_type_info(row)[
-                "display_text"
-            ]
+            assert (
+                widget.type_edit.text()
+                == connector.get_surface_type_info(row)["display_text"]
+            )
         token = connector.document_state.token
         connector.set_stop_surface(1)
         assert connector.document_state.token == token

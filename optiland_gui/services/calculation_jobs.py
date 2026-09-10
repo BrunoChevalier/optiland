@@ -103,7 +103,7 @@ class DocumentState(QObject):
         surface_indices, columns = tuple(surface_indices), tuple(columns)
         self._surface_indices.update(surface_indices)
         self._columns.update(columns)
-        if category != "presentation":
+        if category not in {"presentation", "polarization"}:
             self._all_surfaces |= not surface_indices
             self._all_columns |= not columns
         if not self._transaction_depth:

@@ -142,7 +142,9 @@ class SystemService:
         optic.updater.set_polarization(state)
         self._connector._undo_redo_manager.add_state(old_state)
         self._connector.set_modified(True)
-        self._connector.notify_change("optical")
+        # This setter changes no surface property or derived geometry. Traces
+        # are invalidated, while the lens table can retain all existing cells.
+        self._connector.notify_change("polarization")
 
     @staticmethod
     def _same_polarization(first, second):

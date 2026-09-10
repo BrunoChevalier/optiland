@@ -387,8 +387,9 @@ class LensEditor(QWidget):
 
     def _on_document_change(self, change):
         """Keep local data updates from replacing active editors or selection."""
-        if change.categories == {"presentation"}:
-            self.tableWidget.viewport().update()
+        if change.categories <= {"polarization", "presentation"}:
+            if "presentation" in change.categories:
+                self.tableWidget.viewport().update()
             return
         if change.structural:
             self._refresh_structure()

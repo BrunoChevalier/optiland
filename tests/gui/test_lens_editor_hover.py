@@ -1,5 +1,7 @@
 """Row/cell hover is visual feedback, never an edit or selection operation."""
 
+from __future__ import annotations
+
 from pathlib import Path
 
 import pytest
@@ -37,7 +39,7 @@ def test_whole_row_changes_and_pointed_cell_is_lighter(themed_editor, qapp):
     baseline = [sample(table, 1, column) for column in range(1, 7)]
     move_to_cell(editor, 1, 3)
     hovered = [sample(table, 1, column) for column in range(1, 7)]
-    assert all(before != after for before, after in zip(baseline, hovered))
+    assert all(before != after for before, after in zip(baseline, hovered, strict=True))
     assert hovered[2].lightnessF() > hovered[1].lightnessF()
     move_to_cell(editor, 1, 4)
     assert sample(table, 1, 4).lightnessF() > sample(table, 1, 3).lightnessF()

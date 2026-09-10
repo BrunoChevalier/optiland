@@ -27,7 +27,19 @@ def test_nested_transaction_invalidates_once_before_commit(qapp):
     assert len(invalidations) == 1 and len(commits) == 1
     assert commits[0].categories == {"optical", "structure", "metadata"}
     assert commits[0].surface_indices == {2, 4}
-    assert commits[0].columns == {1, 3}
+    assert not commits[0].columns  # The structural change affects all columns.
+
+
+def test_global_change_is_not_narrowed_by_another_local_edit(qapp):
+    state = DocumentState()
+    commits = []
+    state.committed.connect(commits.append)
+    with state.transaction():
+        state.record("optical")
+        state.record("metadata", surface_indices=(1,), columns=(1,))
+    assert not commits[0].surface_indices and not commits[0].columns
+    state.record("metadata", surface_indices=(2,), columns=(1,))
+    assert commits[1].surface_indices == {2} and commits[1].columns == {1}
 
 
 def test_replacement_and_changed_pair_is_one_epoch(qapp):

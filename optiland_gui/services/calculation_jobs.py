@@ -53,6 +53,8 @@ class DocumentState(QObject):
         self._categories = set()
         self._surface_indices = set()
         self._columns = set()
+        self._all_surfaces = False
+        self._all_columns = False
         self._transaction_failed = False
 
     @Slot()
@@ -98,8 +100,12 @@ class DocumentState(QObject):
             self._invalidated = bool(self._transaction_depth)
             self.changed.emit(self.token)
         self._categories.add(category)
+        surface_indices, columns = tuple(surface_indices), tuple(columns)
         self._surface_indices.update(surface_indices)
         self._columns.update(columns)
+        if category != "presentation":
+            self._all_surfaces |= not surface_indices
+            self._all_columns |= not columns
         if not self._transaction_depth:
             self._publish()
 
@@ -146,8 +152,8 @@ class DocumentState(QObject):
                 self.token,
                 self.edit_token,
                 frozenset(self._categories),
-                frozenset(self._surface_indices),
-                frozenset(self._columns),
+                frozenset() if self._all_surfaces else frozenset(self._surface_indices),
+                frozenset() if self._all_columns else frozenset(self._columns),
             )
             self._reset_pending()
             self.committed.emit(change)
@@ -156,6 +162,8 @@ class DocumentState(QObject):
         self._categories.clear()
         self._surface_indices.clear()
         self._columns.clear()
+        self._all_surfaces = False
+        self._all_columns = False
 
 
 class CalculationJobs(QObject):

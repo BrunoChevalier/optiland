@@ -159,7 +159,7 @@ class SagViewer(QWidget):
         self.layout_job = LayoutJobView(
             self, "sag", plot_layout, self._layout_parameters, self._present_layout
         )
-        self.connector.opticChanged.connect(self.update_surface_range)
+        self.connector.document_state.committed.connect(self._on_document_change)
         self.update_surface_range()
         self.layout_job.redraw()
         self.update_theme()
@@ -208,6 +208,10 @@ class SagViewer(QWidget):
         """Updates the range of the surface selector spinbox."""
         count = self.connector.get_surface_count()
         self.surface_selector.setRange(0, max(0, count - 1))
+
+    def _on_document_change(self, change):
+        if change.structural:
+            self.update_surface_range()
 
     def update_theme(self, theme="dark"):
         self.current_theme = theme
@@ -274,8 +278,9 @@ class ViewerPanel(QWidget):
 
         main_layout.addWidget(self.tabWidget)
 
-        self.connector.opticLoaded.connect(self.update_viewers)
-        self.connector.opticChanged.connect(self.update_viewers)
+        # Each LayoutJobView owns immediate optical invalidation and coalesced
+        # visible requests. Public Loaded/Changed signals must not request a
+        # synchronous duplicate while a classified transaction is still open.
 
     def _create_2d_viewer_tab(self):
         """Creates the container widget for the 2D viewer, including its toolbar."""
@@ -289,12 +294,17 @@ class ViewerPanel(QWidget):
         self.preserve_zoom_checkbox.setToolTip(
             "Lock the current zoom and pan level when the system updates."
         )
+        self.preserve_zoom_checkbox.toggled.connect(self._set_preserve_zoom)
         toolbar_layout.addWidget(self.preserve_zoom_checkbox)
         toolbar_layout.addStretch()
 
         layout.addLayout(toolbar_layout)
         layout.addWidget(self.viewer2D)
         return container
+
+    def _set_preserve_zoom(self, checked):
+        self.viewer2D.preserve_zoom = checked
+        self.viewer2D._preserve_next = checked
 
     @Slot()
     def update_viewers(self):
@@ -442,6 +452,7 @@ class MatplotlibViewer(QWidget):
         self._is_panning = False
 
         self._preserve_next = False
+        self.preserve_zoom = False
         self.layout_job = LayoutJobView(
             self, "2d", self.layout, self._layout_parameters, self._present_layout
         )
@@ -581,7 +592,7 @@ class MatplotlibViewer(QWidget):
 
     def plot_optic(self, preserve_zoom=False):
         """Request the latest visible layout; calculation belongs to its worker."""
-        self._preserve_next = bool(preserve_zoom)
+        self._preserve_next = self.preserve_zoom or bool(preserve_zoom)
         self.layout_job.request()
 
 

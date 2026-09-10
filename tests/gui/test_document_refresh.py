@@ -164,14 +164,14 @@ def test_stop_change_updates_both_type_labels_and_same_stop_is_noop(
     try:
         table = editor.tableWidget
         original = [table.cellWidget(row, 0) for row in (1, 2)]
-        connector.set_stop_surface(2)
+        connector.set_stop_surface(1)
         for row, widget in zip((1, 2), original, strict=True):
             assert table.cellWidget(row, 0) is widget
             assert widget.type_edit.text() == connector.get_surface_type_info(row)[
                 "display_text"
             ]
         token = connector.document_state.token
-        connector.set_stop_surface(2)
+        connector.set_stop_surface(1)
         assert connector.document_state.token == token
     finally:
         editor.close()

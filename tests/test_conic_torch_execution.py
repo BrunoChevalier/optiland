@@ -92,6 +92,61 @@ def test_forward_mode_and_jacobians_match_native_path(with_aperture):
         torch.testing.assert_close(got, want, rtol=2e-13, atol=2e-13)
 
 
+@pytest.mark.parametrize("materialize", [False, True])
+@pytest.mark.parametrize("dual_input", [0, 6], ids=["ray-x", "radius"])
+def test_single_input_jvp_matches_analytic_sphere_derivative(
+    materialize, dual_input
+):
+    from optiland.geometries._conic_torch import _ConicCPU
+
+    received_tangents = []
+
+    class TangentProbe(_ConicCPU):
+        @staticmethod
+        def setup_context(ctx, inputs, output):
+            _ConicCPU.setup_context(ctx, inputs, output)
+            # Torch normally replaces absent tangents with zero tensors. Use
+            # its supported option to exercise the callback's None contract
+            # without changing the production function's default behavior.
+            ctx.set_materialize_grads(materialize)
+
+        @staticmethod
+        def jvp(ctx, aperture_tangent, *tangents):
+            received_tangents.append(tangents)
+            return _ConicCPU.jvp(ctx, aperture_tangent, *tangents)
+
+    inputs = list(_inputs())
+    inputs[3] = torch.zeros_like(inputs[0])
+    inputs[4] = torch.zeros_like(inputs[0])
+    inputs[5] = torch.ones_like(inputs[0])
+    inputs[7] = torch.zeros_like(inputs[7])
+    x, y, z, _, _, _, radius, _ = inputs
+    root = torch.sqrt(radius.square() - x.square() - y.square())
+    expected_value = radius - root - z
+    expected_tangent = x / root if dual_input == 0 else 1 - radius / root
+
+    with torch.autograd.forward_ad.dual_level():
+        inputs[dual_input] = torch.autograd.forward_ad.make_dual(
+            inputs[dual_input], torch.ones_like(inputs[dual_input])
+        )
+        value, tangent = torch.autograd.forward_ad.unpack_dual(
+            TangentProbe.apply(None, *inputs)[0]
+        )
+        torch.testing.assert_close(value, expected_value, rtol=2e-14, atol=2e-14)
+        torch.testing.assert_close(
+            tangent, expected_tangent, rtol=2e-13, atol=2e-13
+        )
+
+    assert len(received_tangents) == 1
+    for index, tangent in enumerate(received_tangents[0]):
+        if index == dual_input:
+            assert torch.equal(tangent, torch.ones_like(inputs[index]))
+        elif materialize:
+            assert torch.equal(tangent, torch.zeros_like(inputs[index]))
+        else:
+            assert tangent is None
+
+
 @pytest.mark.parametrize("batch", [0, 1, 4])
 def test_vmap_matches_native_path(batch):
     inputs = _inputs()
@@ -102,6 +157,35 @@ def test_vmap_matches_native_path(batch):
         return
     expected = torch.vmap(lambda *values: _solve(*values, native=True))(*stacked)
     torch.testing.assert_close(actual, expected, rtol=2e-14, atol=2e-14)
+
+
+@pytest.mark.parametrize("parameter", [6, 7], ids=["radius", "conic"])
+def test_empty_parameter_batch_preserves_unbatched_ray_shape(parameter):
+    inputs = _inputs()
+    original_values = tuple(value.clone() for value in inputs)
+    dimensions = tuple(0 if index == parameter else None for index in range(8))
+
+    def batched_values(size):
+        return tuple(
+            value.expand(size) if index == parameter else value
+            for index, value in enumerate(inputs)
+        )
+
+    # First verify the batching contract on nonempty inputs against the native
+    # tensor calculation, then require an empty result with the same ray axis.
+    mapped = torch.vmap(_solve, in_dims=dimensions)
+    reference = torch.vmap(
+        lambda *values: _solve(*values, native=True), in_dims=dimensions
+    )(*batched_values(2))
+    torch.testing.assert_close(
+        mapped(*batched_values(2)), reference, rtol=2e-14, atol=2e-14
+    )
+    actual = mapped(*batched_values(0))
+    expected = reference[:0]
+    torch.testing.assert_close(actual, expected, rtol=0, atol=0)
+    assert actual.shape == (0, inputs[0].numel())
+    for value, original in zip(inputs, original_values, strict=True):
+        torch.testing.assert_close(value, original, rtol=0, atol=0)
 
 
 def test_vmap_of_gradient_matches_native_path():

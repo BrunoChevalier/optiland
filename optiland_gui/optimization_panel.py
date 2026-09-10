@@ -1223,7 +1223,8 @@ class OptimizationPanel(QWidget):
                 self.tblOperands.setItem(index, 2, item)
             item.setText(text)
             item.setToolTip(
-                error or (
+                error
+                or (
                     "Previous value; awaiting an update"
                     if state in {"pending", "stale"}
                     else "Current optical revision"

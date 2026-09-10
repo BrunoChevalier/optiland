@@ -444,7 +444,9 @@ class SurfaceService:
         """
         if not (0 <= row < self.get_surface_count()):
             return
-        if col_idx == self._connector.COL_COMMENT:
+        if col_idx == self._connector.COL_COMMENT and not (
+            self._connector._optic.pickups or self._connector._optic.solves
+        ):
             surface = self._connector._optic.surfaces[row]
             if surface.comment == value_str:
                 return
@@ -601,6 +603,8 @@ class SurfaceService:
         if not (0 < row < self.get_surface_count() - 1):
             logger.warning("SurfaceService: Stop must be an intermediate surface.")
             return
+        if self._connector._optic.surfaces.stop_index == row:
+            return
 
         old_state = self._connector._capture_optic_state()
         try:
@@ -608,7 +612,8 @@ class SurfaceService:
             self._connector._optic.updater.update()
             self._connector._undo_redo_manager.add_state(old_state)
             self._connector.set_modified(True)
-            self._connector.notify_change("optical", surface_indices=(row,))
+            # The old stop label and system aperture information also change.
+            self._connector.notify_change("optical")
         except Exception as exc:
             logger.warning("SurfaceService: Error setting stop surface: %s", exc)
             self._connector._restore_optic_state(old_state)

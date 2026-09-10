@@ -86,6 +86,19 @@ def test_canonical_connector_notification_preserves_public_signal_once(qapp):
     assert len(invalidations) == 2
 
 
+def test_external_replacement_is_detected_even_with_only_changed_signal(qapp):
+    from optiland.optic import Optic
+
+    connector = OptilandConnector()
+    original = connector.document_state.token
+    commits = []
+    connector.document_state.committed.connect(commits.append)
+    connector._optic = Optic()
+    connector.opticChanged.emit()
+    assert connector.document_state.token.document_id != original.document_id
+    assert commits[0].structural
+
+
 def test_comment_edit_skips_optical_update_and_noop(qapp, monkeypatch):
     connector = OptilandConnector()
     optic = connector.get_optic()

@@ -83,8 +83,11 @@ class SystemPropertiesPanel(QWidget):
             self.navTree.setCurrentItem(self.navTree.topLevelItem(0))
             self.stackedWidget.setCurrentIndex(0)
 
-        self.connector.opticLoaded.connect(self.load_properties)
-        self.connector.opticChanged.connect(self.load_properties)
+        self.connector.document_state.committed.connect(self._on_document_change)
+
+    def _on_document_change(self, change):
+        if change.structural or (change.affects_optics and not change.surface_indices):
+            self.load_properties()
 
     def _init_ui(self):
         """Initializes the main layout, navigation tree,
@@ -177,8 +180,6 @@ class PropertyEditorBase(QWidget):
         self.is_loading = False
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         self.init_ui()
-        self.connector.opticLoaded.connect(self.load_data)
-        self.connector.opticChanged.connect(self.load_data)
 
     def init_ui(self):
         """

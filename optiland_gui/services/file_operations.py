@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 import uuid
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from PySide6.QtCore import QObject, QTimer, Signal, Slot
@@ -26,6 +26,7 @@ class FileOperation:
     phase: str = "preparing"
     staged_path: str | None = None
     digest: str | None = None
+    load_options: dict = field(default_factory=dict)
 
 
 class FileOperations(QObject):
@@ -52,7 +53,7 @@ class FileOperations(QObject):
     def busy(self):
         return bool(self._operations)
 
-    def request_load(self, path, file_format=None, *, snapshot=None):
+    def request_load(self, path, file_format=None, *, snapshot=None, load_options=None):
         if self._closing:
             return None
         self._candidate = None
@@ -62,6 +63,7 @@ class FileOperations(QObject):
             "open", path, file_format, "file-open", snapshot
         )
         self._latest_open = operation.identifier
+        operation.load_options = dict(load_options or {})
         return self._queue(operation, "load_file")
 
     def request_output(self, path, file_format="optiland"):
@@ -110,6 +112,7 @@ class FileOperations(QObject):
             "staged_path": operation.staged_path,
             "digest": operation.digest,
             "backend": BackendConfig.capture(),
+            "load_options": operation.load_options,
         }
         try:
             request = self.jobs.submit(

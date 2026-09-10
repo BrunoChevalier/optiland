@@ -71,9 +71,8 @@ def build_problem(optic, variables, operands, operand_metadata):
             if isinstance(values, dict)
             else json.loads(definition.get("input_data_str") or "{}")
         )
-        if (
-            "wavelength" in values
-            or "wavelength" in operand_metadata.get(definition["type"], {})
+        if "wavelength" in values or "wavelength" in operand_metadata.get(
+            definition["type"], {}
         ):
             values["wavelength"] = resolve_wavelength(
                 optic, values.get("wavelength", "primary")

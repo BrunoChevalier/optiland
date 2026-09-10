@@ -17,7 +17,9 @@ import numpy as np
 import optiland.backend as be
 from optiland.visualization.base import BaseViewer2D
 from optiland.visualization.system.interaction import InteractionManager
+from optiland.visualization.system.lens import Lens2D
 from optiland.visualization.system.rays import Rays2D
+from optiland.visualization.system.surface import Surface2D
 from optiland.visualization.system.system import OpticalSystem
 
 
@@ -201,6 +203,17 @@ class OpticViewer(BaseViewer2D):
         auto_xlim = (z_min - z_margin, z_max + z_margin)
 
         r_extent = be.to_numpy(self.rays.r_extent)[start_idx:]
+        # Include the actual drawn boundaries: an explicit aperture or a
+        # schematic image marker can be larger than its illuminated samples.
+        drawn_extents = []
+        for component in self.system.components:
+            if isinstance(component, Surface2D):
+                drawn_extents.append(float(be.to_numpy(component.extent)))
+            elif isinstance(component, Lens2D):
+                drawn_extents.extend(
+                    float(be.to_numpy(surface.extent)) for surface in component.surfaces
+                )
+        r_extent = np.concatenate((r_extent, np.asarray(drawn_extents)))
         r_extent = r_extent[np.isfinite(r_extent)]
         if r_extent.size == 0:
             return auto_xlim, None

@@ -444,6 +444,18 @@ class SurfaceService:
         """
         if not (0 <= row < self.get_surface_count()):
             return
+        if col_idx == self._connector.COL_COMMENT:
+            surface = self._connector._optic.surfaces[row]
+            if surface.comment == value_str:
+                return
+            old_state = self._connector._optic.to_dict()
+            self._set_comment_data(surface, value_str)
+            self._connector._undo_redo_manager.add_state(old_state)
+            self._connector.set_modified(True)
+            self._connector.notify_change(
+                "metadata", surface_indices=(row,), columns=(col_idx,)
+            )
+            return
         old_state = self._connector._capture_optic_state()
         try:
             c = self._connector
@@ -462,7 +474,7 @@ class SurfaceService:
             c._optic.updater.update()
             c._undo_redo_manager.add_state(old_state)
             c.set_modified(True)
-            c.opticChanged.emit()
+            c.notify_change("optical", surface_indices=(row,), columns=(col_idx,))
         except Exception as exc:
             logger.warning(
                 "SurfaceService: Error setting data at (%d, %d) to '%s': %s",
@@ -526,7 +538,7 @@ class SurfaceService:
             self._connector._optic.updater.update()
             self._connector._undo_redo_manager.add_state(old_state)
             self._connector.set_modified(True)
-            self._connector.opticChanged.emit()
+            self._connector.notify_change("structure", surface_indices=(row,))
 
         except Exception as exc:
             logger.warning("SurfaceService: Error setting surface type: %s", exc)
@@ -556,7 +568,7 @@ class SurfaceService:
         self._connector._optic.updater.update()
         self._connector._undo_redo_manager.add_state(old_state)
         self._connector.set_modified(True)
-        self._connector.opticChanged.emit()
+        self._connector.notify_change("structure", surface_indices=(insert_idx,))
 
     def remove_surface(self, lde_row_index: int) -> None:
         """Remove a surface by its LDE row index.
@@ -576,7 +588,7 @@ class SurfaceService:
             self._connector._optic.updater.update()
             self._connector._undo_redo_manager.add_state(old_state)
             self._connector.set_modified(True)
-            self._connector.opticChanged.emit()
+            self._connector.notify_change("structure", surface_indices=(lde_row_index,))
         except Exception:
             self._connector._restore_optic_state(old_state)
 
@@ -596,7 +608,7 @@ class SurfaceService:
             self._connector._optic.updater.update()
             self._connector._undo_redo_manager.add_state(old_state)
             self._connector.set_modified(True)
-            self._connector.opticChanged.emit()
+            self._connector.notify_change("optical", surface_indices=(row,))
         except Exception as exc:
             logger.warning("SurfaceService: Error setting stop surface: %s", exc)
             self._connector._restore_optic_state(old_state)
@@ -799,7 +811,7 @@ class SurfaceService:
             self._connector._optic.updater.update()
             self._connector._undo_redo_manager.add_state(old_state)
             self._connector.set_modified(True)
-            self._connector.opticChanged.emit()
+            self._connector.notify_change("optical", surface_indices=(row,))
 
         except Exception as exc:
             logger.warning("SurfaceService: Error setting geometry params: %s", exc)

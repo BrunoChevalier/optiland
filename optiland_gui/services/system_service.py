@@ -8,7 +8,10 @@ from __future__ import annotations
 
 import math
 
+import numpy as np
+
 import optiland.aperture  # noqa: F401 — ensures all subclasses are registered
+import optiland.backend as be
 from optiland.aperture import BaseSystemAperture
 from optiland.rays import PolarizationState
 
@@ -110,10 +113,9 @@ class SystemService:
         if optic is None:
             return
         if mode == "ignore":
-            optic.updater.set_polarization("ignore")
+            state = "ignore"
         elif mode == "unpolarized":
             state = PolarizationState(is_polarized=False)
-            optic.updater.set_polarization(state)
         elif mode == "polarized":
             if None in (Ex, Ey, phase_x_deg, phase_y_deg):
                 raise ValueError(
@@ -121,6 +123,10 @@ class SystemService:
                 )
             phase_x = math.radians(phase_x_deg)
             phase_y = math.radians(phase_y_deg)
+            if not all(math.isfinite(value) for value in (Ex, Ey, phase_x, phase_y)):
+                raise ValueError("Polarization values must be finite.")
+            if Ex == 0 and Ey == 0:
+                raise ValueError("Polarized light requires a nonzero field amplitude.")
             state = PolarizationState(
                 is_polarized=True,
                 Ex=Ex,
@@ -128,10 +134,37 @@ class SystemService:
                 phase_x=phase_x,
                 phase_y=phase_y,
             )
-            optic.updater.set_polarization(state)
         else:
             raise ValueError(f"Unknown polarization mode: {mode}")
-        self._connector.opticChanged.emit()
+        if self._same_polarization(optic.polarization, state):
+            return
+        old_state = optic.to_dict()
+        optic.updater.set_polarization(state)
+        self._connector._undo_redo_manager.add_state(old_state)
+        self._connector.set_modified(True)
+        self._connector.notify_change("optical")
+
+    @staticmethod
+    def _same_polarization(first, second):
+        if isinstance(first, str) or isinstance(second, str):
+            return (
+                isinstance(first, str) and isinstance(second, str) and first == second
+            )
+        if first.is_polarized != second.is_polarized:
+            return False
+        if not first.is_polarized:
+            return True
+        values = []
+        for state in (first, second):
+            values.append(
+                [
+                    float(be.to_numpy(state.Ex)),
+                    float(be.to_numpy(state.Ey)),
+                    float(be.to_numpy(state.phase_x)) % math.tau,
+                    float(be.to_numpy(state.phase_y)) % math.tau,
+                ]
+            )
+        return bool(np.allclose(values[0], values[1], rtol=0, atol=1e-12))
 
     def get_field_types(self) -> list[tuple[str, str]]:
         """Return all four supported field types.

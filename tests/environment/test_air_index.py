@@ -128,9 +128,9 @@ def test_wavelength_validation_passed_to_models(typical_conditions, set_test_bac
         else:
             raise
 
-    # Kohlrausch is known to check for non-zero wavelength.
+    # Kohlrausch rejects non-finite and non-positive wavelengths.
     try:
-        with pytest.raises(ValueError, match="Wavelength must be non-zero"):
+        with pytest.raises(ValueError, match="Wavelength must be finite and positive"):
             refractive_index_air(0.0, typical_conditions, model="kohlrausch")
     except ModuleNotFoundError as e:
         if "numpy" in str(e) or "optiland.backend" in str(e):

@@ -25,7 +25,7 @@ class TestKohlrauschRefractiveIndex:
     # Reference value for Kohlrausch from Zemax OpticStudio documentation.
     # For 0.55 um, 15C, 101325 Pa, calculated from the authoritative formula.
     REF_WAVELENGTH_UM = 0.55
-    REF_N_KOHLRAUSCH = 1.00271728
+    REF_N_KOHLRAUSCH = 1.00027782604165
 
     def setup_method(self):
         """Set up standard conditions for tests."""
@@ -115,15 +115,13 @@ class TestKohlrauschRefractiveIndex:
 
     def test_kohlrausch_refractive_index_invalid_wavelength_zero(self):
         """Test Kohlrausch model with zero wavelength."""
-        with pytest.raises(ValueError, match="Wavelength must be non-zero."):
+        with pytest.raises(ValueError, match="Wavelength must be finite and positive"):
             kohlrausch_refractive_index(0.0, self.std_conditions)
 
     def test_kohlrausch_refractive_index_invalid_wavelength_negative(self):
-        """Test model with negative wavelength (computes, but physically invalid)."""
-        # The model computes with negative wavelength, but the result is not
-        # physically meaningful. This test ensures it doesn't crash.
-        n_neg_wavelength = kohlrausch_refractive_index(-0.5, self.std_conditions)
-        assert isinstance(n_neg_wavelength, float)
+        """Reject a physically invalid wavelength instead of returning an index."""
+        with pytest.raises(ValueError, match="Wavelength must be finite and positive"):
+            kohlrausch_refractive_index(-0.5, self.std_conditions)
 
     def test_kohlrausch_refractive_index_invalid_conditions_type(self):
         """Test Kohlrausch model with incorrect conditions type."""

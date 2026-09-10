@@ -34,15 +34,24 @@ FIELD_CLASS_TO_TYPE: dict[str, str] = {
 
 
 def is_air(material: Any) -> bool:
-    """Return True if *material* represents air (n ~= 1.0, non-absorbing)."""
+    """Return True for exact unit index without extinction."""
     if material is None:
         return True
     if isinstance(material, str) and material.lower() in ("air", ""):
         return True
     if isinstance(material, IdealMaterial):
         n_val = float(be.atleast_1d(material.index)[0])
-        return abs(n_val - 1.0) < 1e-6
+        k_val = float(be.atleast_1d(material.absorp)[0])
+        return n_val == 1.0 and k_val == 0.0
     return False
+
+
+def reject_unsupported_ideal_absorption(material: Any) -> None:
+    """Fail before encoding an ideal material into a format that would lose k."""
+    if isinstance(material, IdealMaterial) and be.any(material.absorp != 0):
+        raise NotImplementedError(
+            "This writer cannot preserve ideal-material absorption; use native JSON"
+        )
 
 
 def field_type_string(optic: Optic) -> str:

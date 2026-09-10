@@ -13,7 +13,13 @@ import warnings
 from typing import TYPE_CHECKING, Any
 
 import optiland.backend as be
-from optiland.fileio.common import WL_D, compute_abbe_number, field_type_string, is_air
+from optiland.fileio.common import (
+    WL_D,
+    compute_abbe_number,
+    field_type_string,
+    is_air,
+    reject_unsupported_ideal_absorption,
+)
 from optiland.fileio.zemax.model import ZemaxDataModel
 from optiland.fileio.zemax.surfaces import (
     CoordinateBreakSurfaceHandler,
@@ -323,6 +329,7 @@ class OpticToZemaxConverter:
         if is_reflective:
             return {"name": "MIRROR"}
 
+        reject_unsupported_ideal_absorption(mat)
         if is_air(mat):
             return None
 

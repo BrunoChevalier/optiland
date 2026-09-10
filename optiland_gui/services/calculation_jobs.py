@@ -188,12 +188,14 @@ class CalculationJobs(QObject):
         *,
         max_pending: int = 16,
         cancel_grace_ms: int = 1000,
+        publication_deadline_ms: int = 30000,
         worker_command: list[str] | None = None,
     ) -> None:
         super().__init__(parent)
         self.document = document
         self.max_pending = max_pending
         self._cancel_grace_ms = cancel_grace_ms
+        self._publication_deadline_ms = publication_deadline_ms
         self._command = worker_command or [
             sys.executable,
             "-u",
@@ -234,6 +236,7 @@ class CalculationJobs(QObject):
         replace: bool = True,
         cancel_on_document_change: bool = True,
         document_token: DocumentToken | None = None,
+        cancellable: bool = True,
         context: Any = None,
     ) -> JobRequest:
         """Queue detached inputs; replace previews while keeping explicit FIFO jobs."""
@@ -257,6 +260,7 @@ class CalculationJobs(QObject):
             pickle.loads(pickle.dumps(parameters, protocol=5)),
             cancel_on_document_change,
             context,
+            cancellable,
         )
         self._pending.append(request)
         self.state_changed.emit(request, "queued")
@@ -292,7 +296,11 @@ class CalculationJobs(QObject):
         cancelled = []
         while self._pending:
             request = self._pending.popleft()
-            (cancelled if request.target == target else retained).append(request)
+            (
+                cancelled
+                if request.target == target and request.cancellable
+                else retained
+            ).append(request)
         self._pending = retained
         for request in cancelled:
             self._terminal(request, "cancelled")
@@ -303,7 +311,9 @@ class CalculationJobs(QObject):
     def _document_changed(self, token: DocumentToken) -> None:
         pending, self._pending = self._pending, deque()
         for request in pending:
-            if self._closed or request.cancel_on_document_change:
+            if request.cancellable and (
+                self._closed or request.cancel_on_document_change
+            ):
                 self._terminal(request, "cancelled")
             else:
                 self._pending.append(request)
@@ -315,6 +325,9 @@ class CalculationJobs(QObject):
     def _request_cancel(self) -> None:
         if self._active is None or self._cancelling:
             return
+        if not self._active.cancellable:
+            self.state_changed.emit(self._active, "finishing")
+            return
         self._cancelling = True
         self.state_changed.emit(self._active, "cancelling")
         self._send({"command": "cancel", "job_id": self._active.job_id})
@@ -322,11 +335,12 @@ class CalculationJobs(QObject):
 
     @Slot()
     def _dispatch(self) -> None:
-        if self._closed or self._active is not None or not self._pending:
+        if self._active is not None or not self._pending:
             return
         request = self._pending[0]
-        eligible = (
-            request.generation == self._generations.get(request.target, 0)
+        eligible = not request.cancellable or (
+            not self._closed
+            and request.generation == self._generations.get(request.target, 0)
             and self._visible.get(request.target, True)
             and (not request.cancel_on_document_change or self.is_current(request))
         )
@@ -350,6 +364,8 @@ class CalculationJobs(QObject):
             QTimer.singleShot(0, self._dispatch)
             return
         self.state_changed.emit(request, "running")
+        if not request.cancellable:
+            self._kill_timer.start(self._publication_deadline_ms)
 
     def _launch(self) -> None:
         process = self._process = QProcess(self)
@@ -405,7 +421,7 @@ class CalculationJobs(QObject):
         if message["event"] == "ready":
             self._kill_timer.stop()
             self._ready = True
-            if self._closed:
+            if self._closed and not self._pending:
                 self._send({"command": "shutdown"})
                 self._kill_timer.start(self._cancel_grace_ms)
                 return
@@ -423,9 +439,13 @@ class CalculationJobs(QObject):
             self._active = None
             self._cancelling = False
             self._terminal(
-                request, status, message.get("data"), message.get("error", "")
+                request,
+                status,
+                message.get("data"),
+                message.get("error", ""),
+                outcome_unknown=not request.cancellable and status != "succeeded",
             )
-            if self._closed:
+            if self._closed and not self._pending:
                 self._send({"command": "shutdown"})
                 self._kill_timer.start(self._cancel_grace_ms)
             QTimer.singleShot(0, self._dispatch)
@@ -438,6 +458,7 @@ class CalculationJobs(QObject):
         error: str = "",
         *,
         infrastructure_error: bool = False,
+        outcome_unknown: bool = False,
     ) -> None:
         self.state_changed.emit(request, status)
         self.finished.emit(
@@ -448,6 +469,7 @@ class CalculationJobs(QObject):
                 error,
                 status != "cancelled" and self.is_current(request),
                 infrastructure_error,
+                outcome_unknown,
             )
         )
 
@@ -489,10 +511,17 @@ class CalculationJobs(QObject):
             self._terminal(
                 request,
                 "cancelled" if self._cancelling else "failed",
-                error=self._stderr or "Calculation worker exited unexpectedly.",
+                error=(
+                    "Publication outcome could not be confirmed; "
+                    "the destination may have changed. "
+                    if not request.cancellable
+                    else ""
+                )
+                + (self._stderr or "Calculation worker exited unexpectedly."),
                 infrastructure_error=not self._cancelling,
+                outcome_unknown=not request.cancellable,
             )
-        elif not self._closed and self._pending:
+        elif self._pending:
             # A failed launch must not loop forever, or leave queued controls busy.
             pending, self._pending = self._pending, deque()
             for request in pending:
@@ -503,7 +532,7 @@ class CalculationJobs(QObject):
                     infrastructure_error=True,
                 )
         self._cancelling = False
-        if self._closed:
+        if self._closed and not self._pending:
             self.stopped.emit()
         else:
             QTimer.singleShot(0, self._dispatch)
@@ -515,8 +544,10 @@ class CalculationJobs(QObject):
             return
         self._closed = True
         self._document_changed(self.document.token)
-        if self._process is None:
+        if self._process is None and not self._pending:
             self.stopped.emit()
-        elif self._active is None:
+        elif self._active is None and not self._pending:
             self._send({"command": "shutdown"})
             self._kill_timer.start(self._cancel_grace_ms)
+        elif self._active is None:
+            QTimer.singleShot(0, self._dispatch)

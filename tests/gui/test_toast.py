@@ -109,10 +109,14 @@ def test_windows_hit_testing_keeps_clicks_out_of_console(toast_manager, target, 
     user32.WindowFromPoint.restype = wintypes.HWND
 
     window = toast_manager._parent
+    # WindowFromPoint uses desktop stacking, so keep this short-lived test
+    # window above unrelated applications while sampling the native target.
+    window.setWindowFlag(Qt.WindowStaysOnTopHint)
+    window.show()
+    toast = show_error(toast_manager)
     window.raise_()
     window.activateWindow()
     assert QTest.qWaitForWindowActive(window)
-    toast = show_error(toast_manager)
     widget = click_target(toast, target)
     global_point = widget.mapToGlobal(widget.rect().center())
     local_point = window.mapFromGlobal(global_point)

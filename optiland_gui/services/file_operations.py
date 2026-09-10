@@ -40,6 +40,8 @@ class FileOperations(QObject):
     completed = Signal()
     settled = Signal()
     close_aborted = Signal()
+    load_ready = Signal(str)
+    load_failed = Signal(str, str)
 
     def __init__(self, service, connector):
         super().__init__(connector)
@@ -189,7 +191,9 @@ class FileOperations(QObject):
             if operation.phase == "preparing":
                 self.jobs.cancel_target(operation.target)
 
-    def cancel_load(self):
+    def cancel_load(self, identifier=None):
+        if identifier is not None and identifier != self._latest_open:
+            return
         self._candidate = None
         self._latest_open = None
         self.jobs.cancel_target("file-open")
@@ -277,8 +281,15 @@ class FileOperations(QObject):
         if result.status != "succeeded":
             if operation.kind != "open":
                 self._abort_close(f"The write to {operation.path} was {result.status}")
+            lines = [line.strip() for line in result.error.splitlines() if line.strip()]
+            error = lines[-1][:2000] if lines else "File operation failed."
+            if operation.kind == "open":
+                self.load_failed.emit(
+                    operation.identifier,
+                    error if result.status == "failed" else "Import cancelled.",
+                )
             if result.status == "failed":
-                self._notify(f"File operation failed: {result.error}", "error")
+                self._notify(error, "error")
             self._cleanup(operation)
             return
         if operation.kind == "open":
@@ -287,9 +298,18 @@ class FileOperations(QObject):
             elif operation.edit_token != self.connector.document_state.edit_token:
                 self._candidate = (operation, result.data)
                 self._complete(operation)
+                self.load_ready.emit(operation.identifier)
                 self.candidate_conflict.emit(operation.identifier, operation.path)
             else:
-                self._accept(operation, result.data, operation.edit_token)
+                accepted = self._accept(operation, result.data, operation.edit_token)
+                if accepted:
+                    self.load_ready.emit(operation.identifier)
+                else:
+                    self.load_failed.emit(
+                        operation.identifier,
+                        "The loaded document could not be applied. "
+                        "See the notification for details.",
+                    )
                 self._complete(operation)
         else:
             operation.digest = result.data["digest"]
@@ -306,7 +326,7 @@ class FileOperations(QObject):
             return self._accept(operation, snapshot, expected_edit_token)
         return False
 
-    def _accept(self, operation, snapshot, expected_edit_token):
+    def _accept(self, operation, prepared, expected_edit_token):
         if (
             self._closing
             or operation.identifier != self._latest_open
@@ -319,6 +339,7 @@ class FileOperations(QObject):
             )
             return False
         try:
+            snapshot = prepared["snapshot"]
             if not isinstance(snapshot, PreparedOptic):
                 raise ValueError("Invalid prepared optical document.")
             # Install the owned worker model without repeating material lookup,
@@ -334,6 +355,8 @@ class FileOperations(QObject):
                 validated=True,
             )
             self._notify(f"Opened — {Path(operation.path).name}", "info")
+            for diagnostic in prepared["diagnostics"]:
+                self._notify(diagnostic, "warning")
             return True
         except Exception as exc:
             self._notify(f"Unable to install loaded document: {exc}", "error")

@@ -36,12 +36,8 @@ def test_lens_cancel_and_unsaved_cancel_never_open_options(qapp, discard, lens):
     assert chooser.called == discard
 
 
-@pytest.mark.parametrize("error", [None, "Missing GLASS_A"])
-def test_import_action_forwards_dialog_options_and_updates_title_only_on_success(
-    qapp, error
-):
+def test_import_action_uses_nonmodal_owned_file_options(qapp):
     window = host()
-    window.connector.import_oslo.return_value = error
     with (
         patch(
             "optiland_gui.main_window.QFileDialog.getOpenFileName",
@@ -52,14 +48,15 @@ def test_import_action_forwards_dialog_options_and_updates_title_only_on_success
         MainWindow.import_oslo_action(window)
         # Closing options alone never imports.
         window.connector.import_oslo.assert_not_called()
-        callback = options.call_args.kwargs["import_action"]
-        assert callback(True, ["a.glc", "sub/b.glc"], 3) == error
+        assert (
+            options.call_args.kwargs["file_operations"]
+            is window.connector.file_operations
+        )
     assert "*.len" in chooser.call_args.args[3]
-    window.connector.import_oslo.assert_called_once_with(
-        "lens.len", strict=True, glass_catalogs=["a.glc", "sub/b.glc"], configuration=3
-    )
-    assert window._update_project_name_in_title_bar.called == (error is None)
-    options.return_value.deleteLater.assert_called_once()
+    window.connector.import_oslo.assert_not_called()
+    window._update_project_name_in_title_bar.assert_not_called()
+    options.return_value.show.assert_called_once()
+    options.return_value.exec.assert_not_called()
 
 
 def test_file_import_menu_contains_wired_oslo_action(qapp):

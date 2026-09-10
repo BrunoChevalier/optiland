@@ -758,22 +758,13 @@ class MainWindow(FramelessWindow):
         if not filepath:
             return
 
-        def import_with_options(
-            strict: bool, catalogs: list[str], configuration: int
-        ) -> str | None:
-            error = self.connector.import_oslo(
-                filepath,
-                strict=strict,
-                glass_catalogs=catalogs,
-                configuration=configuration,
-            )
-            if error is None:
-                self._update_project_name_in_title_bar()
-            return error
-
-        dialog = OsloImportDialog(filepath, self, import_action=import_with_options)
-        dialog.exec()
-        dialog.deleteLater()
+        dialog = OsloImportDialog(
+            filepath, self, file_operations=self.connector.file_operations
+        )
+        dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        # Options and local progress remain available without preventing use of
+        # the main window while parsing/catalog resolution runs in the worker.
+        dialog.show()
 
     @Slot()
     def export_zemax_action(self):

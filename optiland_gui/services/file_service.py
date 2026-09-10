@@ -271,6 +271,7 @@ class FileService:
         native filename, modified flag or undo history. Diagnostics use the
         notification service; the returned error lets import options stay open.
         """
+        self.operations.cancel_load()
         try:
             with warnings.catch_warnings(record=True) as diagnostics:
                 warnings.simplefilter("always")

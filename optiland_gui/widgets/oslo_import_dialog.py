@@ -7,7 +7,7 @@ import warnings
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import QSignalBlocker, Qt
+from PySide6.QtCore import QSignalBlocker, Qt, QTimer
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QHBoxLayout,
     QLabel,
+    QProgressBar,
     QPushButton,
     QTreeWidget,
     QTreeWidgetItem,
@@ -229,6 +230,7 @@ class OsloImportDialog(QDialog):
         parent: QWidget | None = None,
         *,
         import_action: Callable[[bool, list[str], int], str | None] | None = None,
+        file_operations=None,
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Import OSLO lens")
@@ -237,6 +239,11 @@ class OsloImportDialog(QDialog):
         self.glass_catalogs: list[str] = []
         self._import_action = import_action
         self._metadata_error: str | None = None
+        self._file_operations = file_operations
+        self._pending_id = None
+        if file_operations is not None:
+            file_operations.load_ready.connect(self._load_ready)
+            file_operations.load_failed.connect(self._load_failed)
         layout = QVBoxLayout(self)
         filename = QLabel(Path(filepath).name)
         layout.addWidget(filename)
@@ -245,6 +252,7 @@ class OsloImportDialog(QDialog):
         self.configuration_combo = QComboBox()
         configuration_label.setBuddy(self.configuration_combo)
         reload_button = QPushButton("Reload lens")
+        self.reload_button = reload_button
         reload_button.clicked.connect(self.reload_configurations)
         configuration_row.addWidget(configuration_label)
         configuration_row.addWidget(self.configuration_combo, 1)
@@ -277,6 +285,16 @@ class OsloImportDialog(QDialog):
             Qt.TextInteractionFlag.TextSelectableByMouse
         )
         layout.addWidget(self.error_label)
+        self.activity = QProgressBar()
+        self.activity.setRange(0, 0)
+        self.activity.setAccessibleName("Importing OSLO lens")
+        self.activity.hide()
+        layout.addWidget(self.activity)
+        self._activity_timer = QTimer(self)
+        self._activity_timer.setSingleShot(True)
+        self._activity_timer.timeout.connect(
+            lambda: self.activity.setVisible(self._pending_id is not None)
+        )
         self.buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
         )
@@ -339,6 +357,24 @@ class OsloImportDialog(QDialog):
             or self.configuration_combo.currentIndex() < 0
         ):
             return
+        if self._file_operations is not None:
+            if self._pending_id is not None:
+                return
+            request = self._file_operations.request_load(
+                self.filepath,
+                "oslo",
+                load_options={
+                    "strict": self.strict_checkbox.isChecked(),
+                    "glass_catalogs": list(self.glass_catalogs),
+                    "configuration": self.configuration_combo.currentData(),
+                },
+            )
+            if request is None:
+                self.error_label.setText("The import could not start. Please retry.")
+                return
+            self._pending_id = request.context.identifier
+            self._set_pending(True)
+            return
         if self._import_action is not None:
             error = self._import_action(
                 self.strict_checkbox.isChecked(),
@@ -352,3 +388,43 @@ class OsloImportDialog(QDialog):
                 )
                 return
         self.accept()
+
+    def _set_pending(self, pending):
+        for control in (
+            self.strict_checkbox,
+            self.configuration_combo,
+            self.choose_catalogs_button,
+            self.reload_button,
+            self.buttons.button(QDialogButtonBox.StandardButton.Ok),
+        ):
+            control.setEnabled(not pending)
+        if pending:
+            self.error_label.setText(
+                "Importing lens… You can continue using the main window."
+            )
+            self._activity_timer.start(500)
+        else:
+            self._activity_timer.stop()
+            self.activity.hide()
+
+    def _load_ready(self, identifier):
+        if identifier == self._pending_id:
+            self._pending_id = None
+            self.accept()
+
+    def _load_failed(self, identifier, error):
+        if identifier == self._pending_id:
+            self._pending_id = None
+            self._set_pending(False)
+            self.error_label.setText(
+                error
+                + "\nRevise the configuration, catalogs or strict mode, then retry."
+            )
+
+    def done(self, result):
+        """Cancel only this dialog's open intent when it is dismissed."""
+        identifier, self._pending_id = self._pending_id, None
+        if identifier is not None and self._file_operations is not None:
+            self._file_operations.cancel_load(identifier)
+        self._activity_timer.stop()
+        super().done(result)

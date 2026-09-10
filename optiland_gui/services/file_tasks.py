@@ -6,6 +6,7 @@ import hashlib
 import importlib
 import json
 import os
+import warnings
 from pathlib import Path
 
 from optiland.fileio import (
@@ -27,6 +28,7 @@ def load_file(snapshot, parameters, progress, cancelled):
     parameters["backend"].apply()
     progress("Reading optical file")
     file_format = parameters["format"]
+    diagnostics = []
     if file_format == "optiland":
         with open(parameters["path"], encoding="utf-8") as stream:
             candidate = Optic.from_dict(
@@ -48,6 +50,23 @@ def load_file(snapshot, parameters, progress, cancelled):
         if not isinstance(sample_class, type) or not issubclass(sample_class, Optic):
             raise ValueError("The selected Gallery sample is not an Optic class.")
         candidate = sample_class()
+    elif file_format == "oslo":
+        # Combined-only adapter: keep the public GUI branch independent of the
+        # pending OSLO importer while transporting explicit choices as plain data.
+        from optiland.fileio import load_oslo_file
+
+        options = parameters["load_options"]
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            candidate = load_oslo_file(
+                parameters["path"],
+                strict=options.get("strict", False),
+                glass_catalogs=list(options.get("glass_catalogs", [])),
+                configuration=options.get("configuration", 1),
+            )
+        diagnostics = list(dict.fromkeys(str(item.message)[:2000] for item in caught))
+        if len(diagnostics) > 32:
+            diagnostics = diagnostics[:32] + ["Additional import warnings omitted."]
     else:
         raise ValueError(f"Unsupported file format: {file_format}")
     check_cancelled(cancelled)
@@ -58,7 +77,7 @@ def load_file(snapshot, parameters, progress, cancelled):
     progress("Validating optical document")
     initialize_loaded_optic(candidate)
     check_cancelled(cancelled)
-    return PreparedOptic.capture(candidate)
+    return {"snapshot": PreparedOptic.capture(candidate), "diagnostics": diagnostics}
 
 
 def _stage_path(parameters):

@@ -354,3 +354,30 @@ def test_current_must_be_rechecked_at_commit(qapp, jobs):
     assert receiver.results[0].current
     state.change()
     assert not service.is_current(request)
+
+
+def test_sequential_batch_preserves_its_captured_document_token(qapp, jobs):
+    state, service, receiver = jobs
+    captured = state.token
+    service.submit(
+        "batch-first",
+        "unused",
+        None,
+        {},
+        document_token=captured,
+        cancel_on_document_change=False,
+    )
+    wait_for(qapp, lambda: receiver.results)
+    state.change()
+    second = service.submit(
+        "batch-second",
+        "unused",
+        None,
+        {},
+        document_token=captured,
+        cancel_on_document_change=False,
+    )
+    wait_for(qapp, lambda: len(receiver.results) == 2)
+    assert second.document == captured
+    assert receiver.results[-1].status == "succeeded"
+    assert not receiver.results[-1].current

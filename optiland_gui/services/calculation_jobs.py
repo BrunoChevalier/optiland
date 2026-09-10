@@ -110,6 +110,7 @@ class CalculationJobs(QObject):
         *,
         replace: bool = True,
         cancel_on_document_change: bool = True,
+        document_token: DocumentToken | None = None,
         context: Any = None,
     ) -> JobRequest:
         """Queue detached inputs; replace previews while keeping explicit FIFO jobs."""
@@ -125,7 +126,7 @@ class CalculationJobs(QObject):
         generation = self._generations.setdefault(target, 0)
         request = JobRequest(
             self._serial,
-            self.document.token,
+            document_token if document_token is not None else self.document.token,
             target,
             generation,
             handler,

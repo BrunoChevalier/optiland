@@ -149,6 +149,15 @@ With the Cooke Triplet loaded:
 *   Experiment with the Matplotlib toolbar controls, such as zooming and panning.
 *   Switch to the **3D View** tab in the Viewer Panel to see the lens and rays in 3D. You can rotate, pan, and zoom this view.
 
+If the 2D layout cannot be drawn, its error message includes the underlying
+cause. Systems with polarization-dependent coatings require an incident
+polarization state before ray tracing. Open **System Properties > Polarization**,
+choose **Polarized** and enter the source amplitudes/phases, or choose
+**Unpolarized** when that describes the incident light, then click
+**Apply Polarization**. The layout refreshes after the setting is applied.
+**Ignore** cannot trace polarization-dependent coatings; importing a design
+does not establish an incident state that was absent from the source file.
+
 3. Changing a Surface Parameter
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 

@@ -10,6 +10,8 @@ plots and `VTKViewer` for 3D rendering.
 
 from __future__ import annotations
 
+import logging
+
 import matplotlib
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
@@ -49,6 +51,8 @@ from optiland.visualization.system.system import (
 
 from . import gui_plot_utils
 from .analysis_panel import CustomMatplotlibToolbar
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from .optiland_connector import OptilandConnector
@@ -666,9 +670,28 @@ class MatplotlibViewer(QWidget):
 
                         self.ax.set_aspect("equal")
 
-                except Exception:
+                except Exception as exc:
+                    logger.exception("Error plotting system: %s", exc)
+                    message = (
+                        f"Error plotting system\n\n{str(exc) or type(exc).__name__}"
+                    )
+                    if (
+                        optic.polarization == "ignore"
+                        and optic.surfaces.uses_polarization
+                    ):
+                        message += (
+                            "\n\nSet the incident state in System Properties > "
+                            "Polarization\nand click Apply Polarization."
+                        )
+                    self.ax.clear()
                     self.ax.text(
-                        0.5, 0.5, "Error plotting system", ha="center", va="center"
+                        0.5,
+                        0.5,
+                        message,
+                        transform=self.ax.transAxes,
+                        ha="center",
+                        va="center",
+                        wrap=True,
                     )
             else:
                 self.ax.text(0.5, 0.5, "No system loaded", ha="center", va="center")

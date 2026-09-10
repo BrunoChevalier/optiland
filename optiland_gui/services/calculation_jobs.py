@@ -268,9 +268,8 @@ class CalculationJobs(QObject):
                 # In-band protocol-5 decoding owns reconstructed array buffers.
                 # Decode directly from the receive storage instead of making a
                 # bytearray slice and a second full-size bytes copy on Qt.
-                with memoryview(self._buffer) as frame:
-                    with frame[4 : 4 + size] as payload:
-                        message = pickle.loads(payload)
+                with memoryview(self._buffer) as frame, frame[4 : 4 + size] as payload:
+                    message = pickle.loads(payload)
                 del self._buffer[: 4 + size]
                 self._message(message)
         except Exception as exc:

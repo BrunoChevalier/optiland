@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pickle
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -22,6 +23,30 @@ def wait_for(qapp, predicate, timeout=15):
         if time.monotonic() > deadline:
             raise AssertionError("Calculation condition timed out")
         time.sleep(0.002)
+
+
+def test_progress_preserves_bounded_plain_details_and_cancellation():
+    from optiland_gui.services.calculation_worker import (
+        _progress_reporter,
+        encode_message,
+    )
+    from optiland_gui.services.job_records import CalculationCancelled
+
+    encoded = []
+    cancelled = threading.Event()
+    report = _progress_reporter(
+        7, cancelled, lambda message: encoded.append(encode_message(message))
+    )
+    details = {"merit": 0.123, "evaluations": 12, "variables": [1.5, 2.5]}
+    report("Optimizing", details=details)
+    message = pickle.loads(encoded[0][4:])
+    assert message["job_id"] == 7
+    assert message["details"] == details
+    assert message["completed"] is None and message["total"] is None
+    cancelled.set()
+    with pytest.raises(CalculationCancelled):
+        report("Optimizing", details=details)
+    assert len(encoded) == 1
 
 
 class Receiver(QObject):
@@ -45,9 +70,15 @@ class Receiver(QObject):
 @pytest.fixture
 def jobs(qapp):
     state = DocumentState()
-    service = CalculationJobs(state, cancel_grace_ms=40,
-                              worker_command=[sys.executable, "-u", str(
-                                  Path(__file__).with_name("calculation_worker_fixture.py"))])
+    service = CalculationJobs(
+        state,
+        cancel_grace_ms=40,
+        worker_command=[
+            sys.executable,
+            "-u",
+            str(Path(__file__).with_name("calculation_worker_fixture.py")),
+        ],
+    )
     receiver = Receiver()
     service.finished.connect(receiver.result)
     service.progress.connect(receiver.update)
@@ -58,7 +89,9 @@ def jobs(qapp):
 
 def test_snapshot_is_owned_pure_and_numerically_equivalent(minimal_optic, monkeypatch):
     before = pickle.dumps(minimal_optic.to_dict(), protocol=5)
-    monkeypatch.setattr(minimal_optic.updater, "update", lambda: pytest.fail("capture ran solves"))
+    monkeypatch.setattr(
+        minimal_optic.updater, "update", lambda: pytest.fail("capture ran solves")
+    )
     snapshot = OpticSnapshot.capture(minimal_optic)
     assert pickle.dumps(minimal_optic.to_dict(), protocol=5) == before
     copy = snapshot.restore()
@@ -77,10 +110,14 @@ def test_polarized_snapshot_preserves_aperture_and_incident_state(minimal_optic)
 
     minimal_optic.polarization = PolarizationState(is_polarized=False)
     minimal_optic.surfaces[1].aperture = RectangularAperture(
-        x_min=-4.0, x_max=4.0, y_min=-3.0, y_max=3.0)
+        x_min=-4.0, x_max=4.0, y_min=-3.0, y_max=3.0
+    )
     copy = OpticSnapshot.capture(minimal_optic).restore()
     assert not copy.polarization.is_polarized
-    assert copy.surfaces[1].aperture.to_dict() == minimal_optic.surfaces[1].aperture.to_dict()
+    assert (
+        copy.surfaces[1].aperture.to_dict()
+        == minimal_optic.surfaces[1].aperture.to_dict()
+    )
 
 
 def test_worker_keeps_heartbeat_and_delivers_slots_on_gui(qapp, jobs):
@@ -124,10 +161,13 @@ def test_document_replacement_rejects_old_completion(qapp, jobs):
 
 def test_pending_replacement_has_exactly_one_terminal_each(qapp, jobs):
     state, service, receiver = jobs
-    requests = [service.submit("2d", "unused", None, {"value": value})
-                for value in range(5)]
+    requests = [
+        service.submit("2d", "unused", None, {"value": value}) for value in range(5)
+    ]
     wait_for(qapp, lambda: len(receiver.results) == 5)
-    assert sorted(r.request.job_id for r in receiver.results) == [r.job_id for r in requests]
+    assert sorted(r.request.job_id for r in receiver.results) == [
+        r.job_id for r in requests
+    ]
     assert sum(r.status == "succeeded" for r in receiver.results) == 1
     assert receiver.results[-1].data == 4
 
@@ -204,11 +244,17 @@ def test_actual_worker_reports_handler_failure_and_closes(qapp):
 
 def test_detached_explicit_job_survives_document_edit_as_stale(qapp, jobs):
     state, service, receiver = jobs
-    request = service.submit("save", "unused", None, {"delay": 0.2},
-                             replace=False, cancel_on_document_change=False)
+    request = service.submit(
+        "save",
+        "unused",
+        None,
+        {"delay": 0.2},
+        replace=False,
+        cancel_on_document_change=False,
+    )
     # Still pending: a save/analysis batch may start after edits to its document.
     state.change()
-    wait_for(qapp, lambda: request.job_id in receiver.progress or receiver.results)
+    wait_for(qapp, lambda: service.active_request is request)
     state.replace()
     wait_for(qapp, lambda: receiver.results)
     assert receiver.results[0].status == "succeeded"

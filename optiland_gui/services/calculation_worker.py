@@ -24,6 +24,31 @@ def encode_message(message: dict) -> bytes:
     return struct.pack("!I", len(payload)) + payload
 
 
+def _progress_reporter(job_id, cancelled, send):
+    """Create a cancellation-aware reporter for counts and plain job metadata."""
+
+    def progress(
+        stage: str,
+        completed: int | None = None,
+        total: int | None = None,
+        *,
+        details: dict | None = None,
+    ) -> None:
+        check_cancelled(cancelled)
+        send(
+            {
+                "event": "progress",
+                "job_id": job_id,
+                "stage": stage,
+                "completed": completed,
+                "total": total,
+                "details": details,
+            }
+        )
+
+    return progress
+
+
 def main() -> None:
     """Keep cancellation readable while numerical work occupies the main thread."""
     incoming: queue.Queue = queue.Queue()
@@ -75,24 +100,7 @@ def main() -> None:
         with state_lock:
             cancelled = cancellations[job_id]
 
-        def progress(
-            stage: str,
-            completed: int | None = None,
-            total: int | None = None,
-            *,
-            _cancelled=cancelled,
-            _job_id=job_id,
-        ) -> None:
-            check_cancelled(_cancelled)
-            send(
-                {
-                    "event": "progress",
-                    "job_id": _job_id,
-                    "stage": stage,
-                    "completed": completed,
-                    "total": total,
-                }
-            )
+        progress = _progress_reporter(job_id, cancelled, send)
 
         try:
             check_cancelled(cancelled)

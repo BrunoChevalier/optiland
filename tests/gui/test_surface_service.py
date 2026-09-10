@@ -37,10 +37,44 @@ def service(mock_connector):
 
 
 class TestSurfaceService:
+    @pytest.mark.parametrize('kind', ['samples', 'formula'])
+    def test_owned_material_label_and_unchanged_edit_preserve_definition(self, service, mock_connector, kind):
+        from optiland.materials import DataMaterial
+        from optiland.visualization.info.material_formatter import MaterialFormatter
+        material = (DataMaterial.from_samples([.4, .8], [1.6, 1.4], name='N-BK7')
+                    if kind == 'samples' else DataMaterial.from_coefficients('formula 5', [1.5], name='N-BK7'))
+        surface = mock_connector._optic.surfaces[1]
+        surface.material_post = material
+        definition = material.to_dict()
+        assert service._get_material_data(surface) == MaterialFormatter.format(surface) == 'N-BK7'
+        service.set_surface_data(1, mock_connector.COL_MATERIAL, 'N-BK7')
+        assert surface.material_post is material
+        assert surface.material_post.to_dict() == definition
+
+    @pytest.mark.parametrize('index,extinction,label', [(1., 0., 'Air'), (1., .01, '1.0'), (1.5, 0., '1.5')])
+    def test_material_display_uses_shared_label_without_array_formatting(self, service, mock_connector, index, extinction, label):
+        from optiland.materials import IdealMaterial
+        surface = mock_connector._optic.surfaces[1]
+        material = IdealMaterial(index, extinction)
+        surface.material_post = material
+        assert service._get_material_data(surface) == label
+        service.set_surface_data(1, mock_connector.COL_MATERIAL, label)
+        assert surface.material_post is material
+
     def test_add_surface_increases_count(self, service, mock_connector):
         initial = service.get_surface_count()
         service.add_surface()
         assert service.get_surface_count() == initial + 1
+        mock_connector.opticChanged.emit.assert_called()
+
+    def test_changed_material_label_replaces_owned_definition(self, service, mock_connector):
+        from optiland.materials import DataMaterial, IdealMaterial
+
+        surface = mock_connector._optic.surfaces[1]
+        surface.material_post = DataMaterial.from_samples([0.4, 0.8], [1.6, 1.4], name="Owned")
+        service.set_surface_data(1, mock_connector.COL_MATERIAL, "1.7")
+        assert isinstance(surface.material_post, IdealMaterial)
+        assert float(surface.material_post.n(0.55)) == 1.7
         mock_connector.opticChanged.emit.assert_called()
 
     def test_remove_surface_decreases_count(self, service, mock_connector):

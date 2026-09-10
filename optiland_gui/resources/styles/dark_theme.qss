@@ -808,3 +808,20 @@ QCheckBox::indicator:disabled {
 QCheckBox::indicator:checked:disabled, QCheckBox::indicator:indeterminate:disabled {
     background-color: #474B52;
 }
+
+/* OSLO import dialogs inherit the application's controls and surface colors. */
+OsloImportDialog, CatalogSelectionDialog {
+    background-color: #202020;
+    color: #E0E0E0;
+}
+
+CatalogSelectionDialog QTreeWidget {
+    background-color: #2E2E2E;
+    color: #E0E0E0;
+    border: 1px solid #4A4A4A;
+}
+
+CatalogSelectionDialog QTreeWidget::item:selected {
+    background-color: #0067A7;
+    color: #FFFFFF;
+}

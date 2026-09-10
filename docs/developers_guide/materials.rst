@@ -282,6 +282,13 @@ Runtime and persistence callers
      - Use ``display_name`` and ``spectral_range('n'/'k')``. ``plot_nk`` intersects
        requested and known limits and requires an explicit range if none are
        known. It plots in µm and converts to host arrays only at the display boundary.
+   * - GUI ``SurfaceService`` and OSLO import dialog
+     - Show the shared material label for catalog, sampled, analytic and constant
+       media. Committing an unchanged cell preserves the actual material object,
+       including optical data, extinction and propagation. A different user entry
+       explicitly replaces the medium through the existing material editor.
+       The OSLO dialog selects catalogs/configurations; it does not implement
+       optical equations or convert imported definitions into names.
 
 New file encodings require a separate feature with their physical validation and
 persistence tests. Material temperature/pressure keywords are not connected to the global

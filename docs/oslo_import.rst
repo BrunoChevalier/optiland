@@ -166,44 +166,6 @@ UTF-8 (including BOM) and legacy Windows-1252 text are accepted.
        DRW/LDP/CBK/ELMDF1/2/BDI/BDD/VX/PF and sequential LMO ELE/EGR, LMN,
        LME do not affect ray tracing. Non-sequential LMO groups are diagnosed.
 
-Specification and real-file validation
---------------------------------------
-
-Mappings were checked against Lambda Research's
-`OSLO Program Reference (10 March 2021) <https://lambdares.com/hubfs/Support/support/oslo/oslo_releases/OSLOProgramReference.pdf>`_
-(printed pp. 18-25: configurations; 43-50: solves/apertures; 51-68: media/coordinates;
-69-85: surfaces/gratings; 106-107: Jones elements; 120-123: system setup/wavelengths;
-184-190: glass catalogs; 208-210: fields; 215: telecentricity;
-508-514: commands),
-the `Optics Reference <https://lambdares.com/hubfs/Support/support/OSLOOpticsReference_Sep21.pdf>`_
-(pp. 105: special-aperture shapes and rotation; 142-145: coordinate transforms;
-151: object conjugates/telecentric launch;
-170-171: grating equation), and the
-`official demo library <https://lambdares.com/support-posts/lens-demos>`_.
-The `current release page <https://lambdares.com/support-posts/oslo-current-release>`_
-links the reference editions used during research.
-
-Download the official ``OSLOLensDemos.zip`` separately and run from the repository::
-
-    python scripts/audit_oslo_examples.py OSLOLensDemos.zip oslo-audit.json
-    python scripts/audit_oslo_examples.py OSLOLensDemos.zip oslo-audit-torch.json --backend torch
-
-The audit records archive/file SHA-256 hashes, source URL, filenames, backend,
-permissive warnings/errors, strict errors and an on-axis trace smoke check.
-It performs no network access and does not vendor the proprietary example archive.
-Smoke checks do not establish agreement with OSLO ray intercepts. Original minimal
-test prescriptions provide independent numerical assertions for units, sag,
-indices, poses, aperture clipping, grating directions and solve targets.
-
-
-Configuration snapshots
------------------------
-
-Use ``configuration=2`` to select the second snapshot. Each selection starts
-from the original parsed base; failed and repeated conversions do not change it.
-Inactive configurations may be selected. Alternate solves and thickness
-overrides of pickup-controlled values are rejected.
-
 Catalog handling and configuration selection
 --------------------------------------------
 
@@ -302,6 +264,45 @@ or material registry when reopened, including in a fresh process. The original
 catalog edition remains a provenance consideration. OSLO export of these embedded
 coefficient materials is rejected; save as native JSON to retain their full data.
 
+GUI import and catalog selection
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Choose **File > Import > From OSLO (.len)...**, select the lens, then review the
+import options. **Configuration** lists one-based indices, active/inactive state
+and weight, and initially selects configuration 1. Inactive configurations remain
+selectable. Import creates one independent lens snapshot. **Reload lens** refreshes
+the configuration list after a source-file correction, keeping the previous choice
+when it still exists. Malformed or unreadable configuration metadata disables
+import until corrected. Previewing metadata does not convert the lens or resolve
+materials; the final import enforces the selected strictness.
+
+**Strict mode** starts unchecked. **Choose glass catalogs...**
+opens a directory chooser initially at the lens directory; choose a directory
+explicitly to search it and its descendants for GLC files.
+
+Every discovered catalog starts checked. The list shows filenames and relative
+directories, supports individual toggles, **Check all** and **Uncheck all**, and
+displays selected/total counts. Choices survive new result batches; changing the
+directory starts a fresh selection. Only checked paths are passed to the loader.
+
+The search runs in a managed helper process with a 10-second GUI deadline,
+100,000-entry limit, 1,000-catalog limit and maximum depth 64. It skips symlinks,
+junctions and reparse directories, suppresses duplicate files and batches results.
+Inaccessible entries or a reached limit produce **Search incomplete** with a reason.
+Review and explicitly accept the available subset or select another directory.
+An empty search can be accepted with no catalogs. Cancellation terminates the
+worker and ignores late results; the application reaps its child processes.
+
+Cancel, Escape or window-close in catalog selection, or cancellation of its
+directory chooser, discards all selected catalogs and returns to the import options
+with ``[]``. Strict mode and configuration are preserved. Cancelling the primary lens chooser or the
+overall options cancels the import. After an error the options remain open for
+revision; the previous optic, native filename, modified state and undo history are
+preserved, including when a selected configuration requires an unsupported solve
+or references a configuration removed from the source file. Successful import
+installs the candidate, clears the native destination
+and undo history, and marks the document modified. Warnings appear as notifications.
+
 Polarization and transmission settings
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -372,3 +373,116 @@ Field references, object NA, wavelengths and sampled indices preserve floating-p
 precision, avoiding rounded hemisphere boundaries or collapsed spectral samples.
 Explicit surface aperture radii must be finite and positive: zero cannot retain
 a native zero-radius clipping boundary, and infinity is not a finite OSLO radius.
+
+Specification and real-file validation
+--------------------------------------
+
+Mappings were checked against Lambda Research's
+`OSLO Program Reference (10 March 2021) <https://lambdares.com/hubfs/Support/support/oslo/oslo_releases/OSLOProgramReference.pdf>`_
+(printed pp. 18-25: configurations; 43-50: solves/apertures; 51-68: media/coordinates;
+69-85: surfaces/gratings; 106-107: Jones elements; 120-123: system setup/wavelengths;
+184-190: glass catalogs; 208-210: fields; 215: telecentricity;
+508-514: commands),
+the `Optics Reference <https://lambdares.com/hubfs/Support/support/OSLOOpticsReference_Sep21.pdf>`_
+(pp. 105: special-aperture shapes and rotation; 142-145: coordinate transforms;
+151: object conjugates/telecentric launch;
+170-171: grating equation), and the
+`official demo library <https://lambdares.com/support-posts/lens-demos>`_.
+The `current release page <https://lambdares.com/support-posts/oslo-current-release>`_
+links the reference editions used during research.
+
+Download the official ``OSLOLensDemos.zip`` separately and run from the repository::
+
+    python scripts/audit_oslo_examples.py OSLOLensDemos.zip oslo-audit.json
+    python scripts/audit_oslo_examples.py OSLOLensDemos.zip oslo-audit-torch.json --backend torch
+
+The audit records archive/file SHA-256 hashes, source URL, filenames, backend,
+permissive warnings/errors, strict errors and an on-axis trace smoke check.
+It performs no network access and does not vendor the proprietary example archive.
+Smoke checks do not establish agreement with OSLO ray intercepts. Original minimal
+test prescriptions provide independent numerical assertions for units, sag,
+indices, poses, aperture clipping, grating directions and solve targets.
+
+The 2026-09-09 audit used archive SHA-256
+``d5d43924d945a0ef5a200a0e5f12e459095b7504c59c946770fe75711814f8cc``.
+With the current explicit-catalog policy and no supplied catalogs, both NumPy and
+Torch import 97 of 101 files permissively. NumPy has 6 without warnings and 91
+with warnings; Torch has 5 and 92 respectively. Strict import passes 6 on NumPy
+and 5 on Torch. Each backend has one fewer strict success than before explicit
+GLC resolution: ``demos/edu/anamorph.len`` now requires a supplied definition for
+its named glass. This change reflects catalog verification rather than a changed
+ray trace. The remaining backend
+difference is the PY solve in ``demos/premium/gedemo.len``: Torch's residual
+of approximately -2.38e-7 misses the required zero-height tolerance.
+The on-axis smoke trace
+transmitted at least one finite ray in 78 files, transmitted none in 19, and
+raised no errors among imported files. These figures include deliberately
+unsupported examples and are compatibility results,
+not 101 validated optical designs. The audit JSON lists every filename and reason.
+The rejected ``demos/edu/prismirr.len`` has a BEN bend that relies on
+TIR-controlled reflection, which is not mapped. Earlier permissive imports
+accepted this file while tracing the affected surface with a refracting model.
+Two other rejected files, ``demos/edu/ebert.len`` and
+``demos/premium/nonseq/cherryns.len``, require finite-object EBR conversion on
+geometry outside the native scalar paraxial model. Earlier imports treated EBR
+as an entrance-pupil radius without accounting for their finite object distance;
+the smoke trace failed for ebert and transmitted no rays for cherryns.
+The fourth rejection is ``demos/edu/xarmdemo.len``: its NAO=1 and XARM mode
+require extended ray aiming. The earlier import's finite smoke rays did not
+represent that specified source cone.
+Legacy ``RCO 0`` records in the demo archive are interpreted as the default undo
+of the current local transform, consistently with the examples' surface placement.
+
+Reproducible validation without OSLO
+----------------------------------------
+
+Development and CI require no OSLO installation or license key. The committed
+``tests/test_fileio/fixtures/oslo_glc/`` corpus contains ten valid catalogs covering
+the accepted header versions and nine deliberately invalid examples. All names,
+coefficients, summaries and tables in these files are invented for these tests;
+no installer or manufacturer optical records are copied or altered. Additional
+temporary fixtures cover malformed input, encodings, truncation, resource bounds,
+duplicate definitions, interpolation ties and backend precision. The fixture
+README describes the coverage matrix and its limits.
+
+Independent equations verify dispersion, thermal units, transmission and optical
+attenuation on NumPy and Torch. A synthetic folded lens combines catalog import,
+configuration changes, in-glass reflection, holes, Jones matrices and clipping;
+its native snapshot is also traced in a fresh process after removing the temporary
+catalog. These checks validate the documented mapping, not undocumented historical
+formats or numerical agreement with running OSLO. Historical catalog acquisition,
+correction of proprietary source data and live OSLO comparisons are optional
+external validation, not prerequisites for building or testing this importer.
+
+For a local prescription, audit every declared configuration, including inactive
+ones, with explicit catalogs::
+
+    python scripts/audit_oslo_configurations.py design.len audit.json \
+        --catalog vendor.glc --catalog misc.glc \
+        --backend numpy --backend torch --polarization unpolarized
+
+Each backend uses CPU float64. The audit tests strict import, all normalized field
+coordinates and declared wavelengths with five ``line_y`` pupil rays, same-process
+native reload and fresh-process reload with external material reads disabled.
+It compares positions in millimeters, direction cosines and intensities with
+``rtol=1e-10`` and ``atol=1e-12``. This is a native-persistence comparison, not an
+OSLO-reference tolerance. Finite transmitted rays, zero intensity, nonfinite
+surviving coordinates and nonfinite intensity have separate counts. A ray with
+zero intensity is not necessarily aperture-clipped; absorption can also extinguish
+it. Matching native snapshots can reproduce an invalid trace, so nonfinite
+surviving coordinates or intensity fail the audit even when reload matches.
+
+``--polarization`` is an explicit audit assumption. Its default, ``ignore``, keeps
+the source unchanged and exposes a trace failure when Jones elements need a source
+state. Available explicit states are ``unpolarized``, ``H``, ``V``, ``L+45``,
+``L-45``, ``RCP`` and ``LCP``. The option does not recover an original OSLO session.
+``--no-fresh-process`` skips that check and records it as untested.
+
+The report records source/catalog hashes, code revision and working-tree status,
+backend/configuration identifiers, activity, counts and separate import/trace/
+reload outcomes. It omits filenames, glass names, prescription values, raw ray
+arrays and error text. Failures retain their phase and exception type; inspect
+the ordinary loader locally when a detailed source diagnostic is needed. The
+report includes an overall ``passed`` result, and the command returns a nonzero
+exit status on failed required checks. Keep private
+inputs and audit outputs outside version control.

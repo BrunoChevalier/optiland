@@ -10,10 +10,12 @@ from __future__ import annotations
 
 import json
 import os
+import warnings
 
 import optiland.backend as be
 from optiland.fileio import (
     load_codev_file,
+    load_oslo_file,
     load_zemax_file,
     save_codev_file,
     save_zemax_file,
@@ -256,6 +258,47 @@ class FileService:
             self._connector.notify_change("replacement")
         except Exception as e:
             self._toast(f"Failed to import CODE V file from {filepath}: {e}", "error")
+
+    def import_oslo(
+        self,
+        filepath: str,
+        *,
+        strict: bool = False,
+        glass_catalogs: list[str] | None = None,
+        configuration: int = 1,
+    ) -> str | None:
+        """Import an OSLO lens transactionally, returning an error or None.
+
+        Construct and initialize the candidate before changing the document,
+        native filename, modified flag or undo history. Diagnostics use the
+        notification service; the returned error lets import options stay open.
+        """
+        try:
+            with warnings.catch_warnings(record=True) as diagnostics:
+                warnings.simplefilter("always")
+                candidate = load_oslo_file(
+                    filepath,
+                    strict=strict,
+                    glass_catalogs=[] if glass_catalogs is None else glass_catalogs,
+                    configuration=configuration,
+                )
+                self._connector._initialize_optic_structure(
+                    candidate, is_specific_new_system=False
+                )
+        except Exception as exc:
+            error = str(exc) or type(exc).__name__
+            self._toast(f"OSLO import failed: {error}", "error")
+            return error
+
+        self._connector._optic = candidate
+        self._current_filepath = None
+        self._connector._undo_redo_manager.clear_stacks()
+        self._connector.set_modified(True)
+        self._connector.notify_change("replacement")
+        for message in dict.fromkeys(str(item.message) for item in diagnostics):
+            self._toast(message, "warning")
+        self._toast(f"Imported OSLO lens — {os.path.basename(filepath)}", "success")
+        return None
 
     def export_zemax(self, filepath: str) -> None:
         """Export the current system to a Zemax ``.zmx`` file.

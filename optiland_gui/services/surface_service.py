@@ -215,10 +215,7 @@ class SurfaceService:
         if surface.interaction_model.is_reflective:
             return "Mirror"
         mat = surface.material_post
-        if isinstance(mat, IdealMaterial):
-            n = mat.n(self._get_safe_primary_wavelength_value())
-            return "Air" if be.isclose(n, 1.0) else f"Ideal n={n:.4f}"
-        return mat.name if isinstance(mat, OptilandMaterial) else "Unknown"
+        return getattr(mat, "display_name", "Unknown")
 
     def _get_semi_diameter_data(self, surface: object) -> str:
         """Return the semi-diameter label for *surface*.
@@ -379,6 +376,10 @@ class SurfaceService:
             surface: Target surface object.
             value: Material name or value string.
         """
+        # Committing an unchanged label must not resolve owned data as a catalog
+        # name or replace a material's extinction and propagation definition.
+        if str(value).strip() == self._get_material_data(surface):
+            return
         new_material_name = str(value).strip().lower()
         if new_material_name == "mirror":
             surface.is_reflective = True

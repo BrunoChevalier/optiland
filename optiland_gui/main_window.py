@@ -64,6 +64,7 @@ from .widgets.command_palette import (
 )
 from .widgets.custom_title_bar import CustomTitleBar
 from .widgets.frameless_window import FramelessWindow
+from .widgets.oslo_import_dialog import OsloImportDialog
 from .widgets.sidebar import (
     SIDEBAR_MAX_WIDTH,
     SIDEBAR_MIN_WIDTH,
@@ -372,7 +373,9 @@ class MainWindow(FramelessWindow):
         file_menu.addActions(am.get_actions("new", "open", "save", "save_as"))
         file_menu.addSeparator()
         import_menu = file_menu.addMenu("&Import")
-        import_menu.addActions(am.get_actions("import_zemax", "import_codev"))
+        import_menu.addActions(
+            am.get_actions("import_zemax", "import_codev", "import_oslo")
+        )
         export_menu = file_menu.addMenu("&Export")
         export_menu.addActions(am.get_actions("export_zemax", "export_codev"))
         file_menu.addSeparator()
@@ -723,6 +726,34 @@ class MainWindow(FramelessWindow):
         if filepath:
             self.connector.import_codev(filepath)
             self._update_project_name_in_title_bar()
+
+    @Slot()
+    def import_oslo_action(self) -> None:
+        """Choose an OSLO lens and revise import options until success or Cancel."""
+        if not self._confirm_discard_changes():
+            return
+        filepath, _ = QFileDialog.getOpenFileName(
+            self, "Import OSLO File", "", "OSLO Files (*.len *.LEN);;All Files (*)"
+        )
+        if not filepath:
+            return
+
+        def import_with_options(
+            strict: bool, catalogs: list[str], configuration: int
+        ) -> str | None:
+            error = self.connector.import_oslo(
+                filepath,
+                strict=strict,
+                glass_catalogs=catalogs,
+                configuration=configuration,
+            )
+            if error is None:
+                self._update_project_name_in_title_bar()
+            return error
+
+        dialog = OsloImportDialog(filepath, self, import_action=import_with_options)
+        dialog.exec()
+        dialog.deleteLater()
 
     @Slot()
     def export_zemax_action(self):

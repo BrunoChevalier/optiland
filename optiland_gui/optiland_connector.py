@@ -392,6 +392,22 @@ class OptilandConnector(QObject):
         """
         self._file_service.import_zemax(filepath)
 
+    def import_oslo(
+        self,
+        filepath: str,
+        *,
+        strict: bool = False,
+        glass_catalogs: list[str] | None = None,
+        configuration: int = 1,
+    ) -> str | None:
+        """Import an OSLO lens with explicit options; return an error or None."""
+        return self._file_service.import_oslo(
+            filepath,
+            strict=strict,
+            glass_catalogs=glass_catalogs,
+            configuration=configuration,
+        )
+
     def import_codev(self, filepath: str) -> None:
         """Import a CODE V ``.seq`` file, replacing the current system.
 

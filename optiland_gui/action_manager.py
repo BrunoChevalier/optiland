@@ -110,6 +110,11 @@ class ActionManager:
             triggered=self.main_window.import_codev_action,
         )
         self._create_action(
+            "import_oslo",
+            "From &OSLO (.len)...",
+            triggered=self.main_window.import_oslo_action,
+        )
+        self._create_action(
             "export_zemax",
             "To &Zemax (.zmx)...",
             triggered=self.main_window.export_zemax_action,

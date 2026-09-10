@@ -23,6 +23,7 @@ from optiland_gui.services.file_service import (
     SpecialFloatEncoder,  # re-exported for backward compat
     json_inf_nan_hook,  # re-exported for backward compat
 )
+from optiland_gui.services.history_service import HistoryService
 from optiland_gui.services.job_records import BackendConfig
 from optiland_gui.services.optimization_service import OptimizationService
 from optiland_gui.services.surface_service import SurfaceService
@@ -97,6 +98,7 @@ class OptilandConnector(QObject):
 
         self._optic = Optic("Default System")
         self._undo_redo_manager = UndoRedoManager(self)
+        self.history = HistoryService(self)
 
         # Instantiate services — order does not matter; each receives *self*.
         self._file_service = FileService(self)
@@ -297,17 +299,32 @@ class OptilandConnector(QObject):
 
     def undo(self) -> None:
         """Revert to the previous design state."""
-        if self._undo_redo_manager.can_undo():
-            state = self._undo_redo_manager.undo(self._capture_optic_state())
-            if state:
-                self._restore_optic_state(state)
+        self._apply_history("undo")
 
     def redo(self) -> None:
         """Re-apply the next design state."""
-        if self._undo_redo_manager.can_redo():
-            state = self._undo_redo_manager.redo(self._capture_optic_state())
-            if state:
-                self._restore_optic_state(state)
+        self._apply_history("redo")
+
+    def _apply_history(self, direction):
+        state = self._undo_redo_manager.peek(direction)
+        if state is None:
+            return
+        current = self._capture_optic_state()
+        candidate = Optic.from_dict(state)
+        self._initialize_optic_structure(candidate, is_specific_new_system=False)
+        self._undo_redo_manager.move(direction, current, notify=False)
+        self._optic = candidate
+        self.notify_change("replacement")
+        self.set_modified(True)
+        self._undo_redo_manager.emit_availability()
+
+    def request_undo(self):
+        """Prepare Undo asynchronously for an interactive GUI action."""
+        return self.history.submit("undo")
+
+    def request_redo(self):
+        """Prepare Redo asynchronously for an interactive GUI action."""
+        return self.history.submit("redo")
 
     # ------------------------------------------------------------------
     # FileService delegation
@@ -427,6 +444,10 @@ class OptilandConnector(QObject):
             A string value or ``None``.
         """
         return self._surface_service.get_surface_data(row, col_idx)
+
+    def get_surface_display_rows(self, rows=None, columns=None):
+        """Capture display cells with one shared positions calculation per refresh."""
+        return self._surface_service.get_display_rows(rows, columns)
 
     def set_surface_data(self, row: int, col_idx: int, value_str: str) -> None:
         """Write a value to a specific LDE cell.

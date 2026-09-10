@@ -314,7 +314,8 @@ class CalculationJobs(QObject):
         if self._active is not None:
             requests.append(self._active)
         for target in {
-            request.target for request in requests
+            request.target
+            for request in requests
             if request.cancellable and request.target not in excluded
         }:
             self.cancel_target(target)

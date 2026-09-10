@@ -20,7 +20,8 @@ from PySide6.QtWidgets import (
 
 @pytest.fixture(params=["windows11", "fusion"])
 def styled_app(qapp, request):
-    names = {name.lower(): name for name in QStyleFactory.keys()}
+    # QStyleFactory is Qt's factory class, not a mapping.
+    names = {name.lower(): name for name in QStyleFactory.keys()}  # noqa: SIM118
     if request.param not in names:
         pytest.skip(f"Qt style {request.param} is unavailable")
     previous_style = qapp.style().objectName()
@@ -34,14 +35,20 @@ def styled_app(qapp, request):
 def button_rect(spin, control):
     option = QStyleOptionSpinBox()
     spin.initStyleOption(option)
-    return spin.style().subControlRect(QStyle.ComplexControl.CC_SpinBox, option, control, spin)
+    return spin.style().subControlRect(
+        QStyle.ComplexControl.CC_SpinBox, option, control, spin
+    )
 
 
 @pytest.mark.parametrize("theme", ["dark", "light"])
 @pytest.mark.parametrize("spin_type", [QSpinBox, QDoubleSpinBox])
 @pytest.mark.parametrize("width", [100, 180])
 def test_arrows_are_separate_and_clickable(styled_app, theme, spin_type, width):
-    theme_path = Path(__file__).parents[2] / "optiland_gui/resources/styles" / f"{theme}_theme.qss"
+    theme_path = (
+        Path(__file__).parents[2]
+        / "optiland_gui/resources/styles"
+        / f"{theme}_theme.qss"
+    )
     styled_app.setStyleSheet(theme_path.read_text(encoding="utf-8"))
     container = QWidget()
     container.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
@@ -66,7 +73,11 @@ def test_arrows_are_separate_and_clickable(styled_app, theme, spin_type, width):
                 rect = button_rect(spin, control)
                 assert not rect.isEmpty()
                 assert not spin.lineEdit().geometry().intersects(rect)
-                for point in (rect.center(), rect.topLeft() + QPoint(2, 2), rect.bottomRight() - QPoint(2, 2)):
+                for point in (
+                    rect.center(),
+                    rect.topLeft() + QPoint(2, 2),
+                    rect.bottomRight() - QPoint(2, 2),
+                ):
                     spin.setValue(50)
                     target = spin.childAt(point) or spin
                     assert target is spin
@@ -86,7 +97,9 @@ def test_arrows_are_separate_and_clickable(styled_app, theme, spin_type, width):
             (0, QStyle.SubControl.SC_SpinBoxDown),
         ):
             spin.setValue(value)
-            QTest.mouseClick(spin, Qt.MouseButton.LeftButton, pos=button_rect(spin, control).center())
+            QTest.mouseClick(
+                spin, Qt.MouseButton.LeftButton, pos=button_rect(spin, control).center()
+            )
             assert spin.value() == value
     finally:
         container.close()

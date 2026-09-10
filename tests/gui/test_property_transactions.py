@@ -21,6 +21,7 @@ def test_later_invalid_row_cannot_silently_mutate_earlier_rows(qapp, kind):
         editor = FieldsEditor(connector)
         table = editor.tableFields
         apply = editor.apply_table_field_changes
+
         def read():
             return [(f.x, f.y, f.vx, f.vy) for f in optic.fields]
 
@@ -30,6 +31,7 @@ def test_later_invalid_row_cannot_silently_mutate_earlier_rows(qapp, kind):
         editor = WavelengthsEditor(connector)
         table = editor.tableWavelengths
         apply = editor.apply_table_wavelength_changes
+
         def read():
             return [wave.value for wave in optic.wavelengths]
 

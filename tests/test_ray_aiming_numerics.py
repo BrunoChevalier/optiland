@@ -14,6 +14,7 @@ Pins the merge-gate numerics:
 
 from __future__ import annotations
 
+import contextlib
 import math
 
 import numpy as np
@@ -471,6 +472,46 @@ def _fail(result, n):
     return (x_, y_, z_, L_, M_, N_, conv & (be.zeros(n) > 0.0), nan_flag, report)
 
 
+@contextlib.contextmanager
+def _scan_only():
+    """Disable chief marching and fail every solve until the scan starts.
+
+    The first solve (the stop-radius pupil-center computation) is kept
+    intact so r_stop is the genuine real-reference value. The scan is
+    detected by entering ``_scan_chief`` itself rather than by batch size:
+    the scan drops candidates that do not trace before its polish, so that
+    batch can be small.
+    """
+    from optiland.rays.ray_aiming.robust import RobustRayAimer
+
+    state = {"scan_seen": False, "calls": 0}
+    march_orig = RobustRayAimer._march_chief
+    scan_orig = RobustRayAimer._scan_chief
+    solve_orig = IterativeRayAimer._solve_core
+
+    def scan(self, *args, **kwargs):
+        state["scan_seen"] = True
+        return scan_orig(self, *args, **kwargs)
+
+    def solve(self, x, *args, **kwargs):
+        result = solve_orig(self, x, *args, **kwargs)
+        if not state["scan_seen"]:
+            state["calls"] += 1
+            if state["calls"] > 1:
+                return _fail(result, len(be.as_array_1d(x)))
+        return result
+
+    RobustRayAimer._march_chief = lambda self, *a, **k: None
+    RobustRayAimer._scan_chief = scan
+    IterativeRayAimer._solve_core = solve
+    try:
+        yield state
+    finally:
+        RobustRayAimer._march_chief = march_orig
+        RobustRayAimer._scan_chief = scan_orig
+        IterativeRayAimer._solve_core = solve_orig
+
+
 class TestRobustReports:
     def test_fresh_calibration_report(self, set_test_backend):
         from optiland.rays.ray_aiming.robust import RobustRayAimer
@@ -714,6 +755,28 @@ class TestRobustReports:
 # ---------------------------------------------------------------------------
 
 
+def fisheye_front():
+    """Negative meniscus ahead of an air-spaced stop.
+
+    A ray beyond 90 degrees can reach this stop for real: it enters the rim
+    of the strongly curved front surface below the axis, the meniscus bends
+    it toward the axis, and it crosses the axis at the stop. In
+    ``straight()`` the stop is the vertex of the convex front surface, and
+    no ray beyond 90 degrees can arrive there from the object side.
+    """
+    optic = Optic(name="fisheye_front")
+    optic.surfaces.add(index=0, radius=be.inf, thickness=be.inf)
+    optic.surfaces.add(index=1, radius=20.0, thickness=2.0, material="N-BK7")
+    optic.surfaces.add(index=2, radius=8.0, thickness=6.0)
+    optic.surfaces.add(index=3, radius=be.inf, thickness=20.0, is_stop=True)
+    optic.surfaces.add(index=4)
+    optic.set_aperture(aperture_type="EPD", value=2.0)
+    optic.fields.set_type("angle")
+    optic.fields.add(y=0.0)
+    optic.wavelengths.add(value=0.55, is_primary=True)
+    return optic
+
+
 class TestSeedCenteredScan:
     @staticmethod
     def _seed_and_param(optic):
@@ -813,37 +876,12 @@ class TestSeedCenteredScan:
     def test_forced_scan_is_used_and_reported(self, set_test_backend):
         """Deterministically force direct solve and marching to fail so the
         scan branch definitely runs, converges and is reported."""
-        from optiland.rays.ray_aiming.iterative import IterativeRayAimer
         from optiland.rays.ray_aiming.robust import RobustRayAimer
 
         optic = stop_mid_straight()
         aimer = RobustRayAimer(optic)
-        march_orig = RobustRayAimer._march_chief
-        RobustRayAimer._march_chief = lambda self, *a, **k: None
-
-        original = IterativeRayAimer._solve_core
-        state = {"scan_seen": False, "calls": 0}
-
-        def fail_single_until_scan(self, x, y, z, L, M, N, *args, **kwargs):
-            n = len(be.as_array_1d(x))
-            if n > 100:
-                state["scan_seen"] = True
-            result = original(self, x, y, z, L, M, N, *args, **kwargs)
-            if n <= 100 and not state["scan_seen"]:
-                state["calls"] += 1
-                # The very first small solve is the stop-radius
-                # pupil-center computation; keep it intact so r_stop is
-                # the genuine real-reference value.
-                if state["calls"] > 1:
-                    return _fail(result, n)
-            return result
-
-        IterativeRayAimer._solve_core = fail_single_until_scan
-        try:
+        with _scan_only() as state:
             x, *_ = aimer.aim_rays((0.0, 0.3), 0.55, _pupil_batch())
-        finally:
-            IterativeRayAimer._solve_core = original
-            RobustRayAimer._march_chief = march_orig
 
         assert state["scan_seen"]
         assert not bool(be.any(be.isnan(x)))
@@ -854,43 +892,43 @@ class TestSeedCenteredScan:
     def test_wide_angle_1d_field_beyond_90_can_use_scan(self, set_test_backend):
         """A nonsingular 1-D field beyond 90 degrees can be solved through
         the scan fallback when the other strategies are disabled."""
-        from optiland.rays.ray_aiming.iterative import IterativeRayAimer
+        from optiland.rays import RealRays
         from optiland.rays.ray_aiming.robust import RobustRayAimer
 
-        optic = straight()
+        optic = fisheye_front()
         optic.fields.add(x=0.0, y=95.0)
         aimer = RobustRayAimer(optic)
-        march_orig = RobustRayAimer._march_chief
-        RobustRayAimer._march_chief = lambda self, *a, **k: None
-
-        original = IterativeRayAimer._solve_core
-        state = {"scan_seen": False, "calls": 0}
-
-        def fail_single_until_scan(self, x, y, z, L, M, N, *args, **kwargs):
-            n = len(be.as_array_1d(x))
-            if n > 100:
-                state["scan_seen"] = True
-            result = original(self, x, y, z, L, M, N, *args, **kwargs)
-            if n <= 100 and not state["scan_seen"]:
-                state["calls"] += 1
-                # The very first small solve is the stop-radius
-                # pupil-center computation; keep it intact so r_stop is
-                # the genuine real-reference value.
-                if state["calls"] > 1:
-                    return _fail(result, n)
-            return result
-
-        IterativeRayAimer._solve_core = fail_single_until_scan
-        try:
+        with _scan_only() as state:
             x, y, z, L, M, N = aimer.aim_rays(
                 (0.0, 1.0), 0.55, (be.array([0.0]), be.array([0.0]))
             )
-        finally:
-            IterativeRayAimer._solve_core = original
-            RobustRayAimer._march_chief = march_orig
 
         assert state["scan_seen"]
         field = aimer.last_report.field_reports[0]
         assert field.chief_seed_strategy == "scan"
         # The chief of a 95-degree field must run steeply in +y.
         assert float(be.to_numpy(M).reshape(-1)[0]) > 0.9
+        # It must also be a real ray: travelling in +y, it can only reach
+        # the stop center by entering the front surface below the axis. A
+        # hit above the axis is the far crossing of the front surface, from
+        # which the stop is reached only by propagating backwards.
+        rays = RealRays(x, y, z, L, M, N, be.ones_like(x), be.full_like(x, 0.55))
+        optic.surfaces.trace(rays)
+        assert float(be.to_numpy(optic.surfaces.y[1]).reshape(-1)[0]) < 0.0
+        assert abs(float(be.to_numpy(optic.surfaces.y[3]).reshape(-1)[0])) < 1e-6
+
+    def test_beyond_90_chief_cannot_reach_a_front_vertex_stop(
+        self, set_test_backend
+    ):
+        """With the stop on the vertex of the convex front surface, a
+        95-degree ray reaches the stop center only from inside the glass,
+        after crossing the front surface once already. No real chief ray
+        exists, so aiming must fail rather than return that ray."""
+        from optiland.rays.ray_aiming.robust import RobustRayAimer
+
+        optic = straight()
+        optic.fields.add(x=0.0, y=95.0)
+        with pytest.raises(ValueError, match="chief ray failed to converge"):
+            RobustRayAimer(optic).aim_rays(
+                (0.0, 1.0), 0.55, (be.array([0.0]), be.array([0.0]))
+            )

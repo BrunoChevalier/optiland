@@ -114,6 +114,18 @@ Key Widgets
     *   Similar to the command palette found in VS Code, it provides a centralized interface for discovering and running various tools, analyses, and layout operations.
     *   Triggered from the `MainWindow` via the `Ctrl+K` shortcut.
 
+*   **Toast Notifications (``widgets/toast.py``)**:
+
+    *   ``MainWindow`` owns a ``ToastManager``, also exposed as
+        ``connector.toast_manager``. Call ``notify(message, severity)`` for
+        information, success, warning, or error feedback.
+    *   Cards can be dismissed by clicking them or their accessible close button.
+        Non-error cards expire after seven seconds; errors persist until dismissed
+        or evicted from the three-card stack.
+    *   Keep these child widgets free of ``WA_TranslucentBackground``. Alongside
+        native console/VTK widgets on Windows, this flag creates a layered native
+        child window whose mouse hit testing can select the underlying console.
+
 Styling and Resources
 ~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -135,6 +147,20 @@ This command is a convenient shortcut to the main GUI script. Alternatively, you
 .. code-block:: bash
 
    python -m optiland_gui.run_gui
+
+Testing Notification Dismissal
+------------------------------
+
+Run ``python -m pytest tests/gui/test_toast.py`` for card and close-button clicks,
+keyboard activation, timeouts, and stack cleanup. On Windows, run with the native
+Qt platform (leave ``QT_QPA_PLATFORM`` unset) to include the native hit-testing
+regressions. These cases are skipped on other platforms and with ``offscreen``.
+
+The Windows regressions use ``WindowFromPoint`` to select the actual native
+mouse recipient over a notification above a native text editor, then send input
+to that window. Sending a test click directly to a label, or selecting it with
+``QApplication.widgetAt``, bypasses layered-window hit testing and does not
+reproduce clicks passing through to the console.
 
 Contributing to the GUI
 -----------------------

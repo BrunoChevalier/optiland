@@ -20,7 +20,9 @@ Kramer Harrison, 2025
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
+
+import optiland.backend as be
 
 if TYPE_CHECKING:
     from ..conditions import EnvironmentalConditions
@@ -29,12 +31,12 @@ if TYPE_CHECKING:
 
 # Constants for the reference dispersion formula (n_ref), from Zemax documentation.
 # This is a Sellmeier-2 formula written as:
-# (n_ref - 1) * 10^5 = A + B / (C - σ²) + D / (E - σ²)
+# (n_ref - 1) * 10^8 = A + B / (C - σ²) + D / (E - σ²)
 # where σ = 1/λ is the wavenumber in μm⁻¹.
-DISP_A = 64.328
-DISP_B = 29498.1
+DISP_A = 6432.8
+DISP_B = 2949810.0
 DISP_C = 146.0  # In μm⁻²
-DISP_D = 25.54
+DISP_D = 25540.0
 DISP_E = 41.0  # In μm⁻²
 
 # Reference and scaling constants for the pressure/temperature correction.
@@ -42,12 +44,12 @@ T_REF_C = 15.0  # Reference temperature in degrees Celsius.
 P_STD_PA = 101325.0  # Standard atmospheric pressure in Pascals (1 atm).
 
 # Linearized thermal coefficient for air, from Zemax documentation.
-ALPHA_T = 0.00348  # In °C⁻¹
+ALPHA_T = 0.0034785  # In °C⁻¹
 
 
 def kohlrausch_refractive_index(
-    wavelength_um: float, conditions: EnvironmentalConditions
-) -> float:
+    wavelength_um: Any, conditions: EnvironmentalConditions
+) -> Any:
     """Calculates air refractive index using the Kohlrausch (Zemax) formula.
 
     This model ignores the humidity and CO₂ concentration from the conditions
@@ -62,7 +64,7 @@ def kohlrausch_refractive_index(
         The refractive index of air (n).
 
     Raises:
-        ValueError: If the wavelength is zero or if the temperature results in
+        ValueError: If wavelengths are not finite and positive, or temperature gives
             a non-positive denominator in the scaling term.
 
     Example:
@@ -73,21 +75,20 @@ def kohlrausch_refractive_index(
         ... )
         >>> n = kohlrausch_refractive_index(0.55, conditions_std)
         >>> print(f"Refractive index at 0.55 µm is {n:.8f}")
-        Refractive index at 0.55 µm is 1.00271728
+        Refractive index at 0.55 µm is 1.00027783
     """
     # --- 1. Calculate the reference refractivity (n_ref - 1) ---
     # The formula uses λ directly, but we convert it to the standard Sellmeier
     # form which uses wavenumber σ = 1/λ for clarity and robustness.
-    try:
-        sigma_sq = (1.0 / wavelength_um) ** 2
-    except ZeroDivisionError as err:
-        raise ValueError("Wavelength must be non-zero.") from err
+    if not be.all(be.isfinite(wavelength_um)) or be.any(wavelength_um <= 0):
+        raise ValueError("Wavelength must be finite and positive (non-zero).")
+    sigma_sq = (1.0 / wavelength_um) ** 2
 
-    # Calculate (n_ref - 1) * 10^5
-    n_ref_minus_1_e5 = (
+    # Calculate (n_ref - 1) * 10^8
+    n_ref_minus_1_e8 = (
         DISP_A + DISP_B / (DISP_C - sigma_sq) + DISP_D / (DISP_E - sigma_sq)
     )
-    n_ref_minus_1 = n_ref_minus_1_e5 * 1.0e-5
+    n_ref_minus_1 = n_ref_minus_1_e8 * 1.0e-8
 
     # --- 2. Apply temperature and pressure scaling ---
     t_c = conditions.temperature
@@ -98,7 +99,7 @@ def kohlrausch_refractive_index(
 
     # Denominator of the scaling term.
     temp_scaling_denom = 1.0 + (t_c - T_REF_C) * ALPHA_T
-    if temp_scaling_denom <= 0:
+    if be.any(temp_scaling_denom <= 0):
         raise ValueError(
             f"Invalid temperature {t_c}°C results in non-positive denominator."
         )

@@ -273,6 +273,18 @@ class MainWindow(FramelessWindow):
         self.toast_manager = ToastManager(self)
         # Expose on connector so services can call it
         self.connector.toast_manager = self.toast_manager
+        from optiland_gui.widgets.file_operation_status import FileOperationStatus
+
+        self.file_operation_status = FileOperationStatus(
+            self.connector.file_operations, self
+        )
+        self.statusBar().addWidget(self.file_operation_status, 1)
+        self.connector.file_operations.completed.connect(
+            self._update_project_name_in_title_bar
+        )
+        self.connector.file_operations.candidate_conflict.connect(
+            self._resolve_file_candidate
+        )
 
         # Logging handler: route Python WARNING+ to toasts
         self._gui_log_handler = _log_handler.install(self.toast_manager)
@@ -627,6 +639,8 @@ class MainWindow(FramelessWindow):
     @Slot()
     def new_system_action(self) -> None:
         """Slot for the *New System* action."""
+        if not self._confirm_discard_changes():
+            return
         self.connector.new_system()
         self._update_project_name_in_title_bar()
         logger.debug("New System action triggered")
@@ -634,6 +648,8 @@ class MainWindow(FramelessWindow):
     @Slot()
     def open_system_action(self) -> None:
         """Slot for the *Open System* action — shows a file chooser dialog."""
+        if not self._confirm_discard_changes():
+            return
         filepath, _ = QFileDialog.getOpenFileName(
             self,
             "Open Optiland System",
@@ -641,7 +657,7 @@ class MainWindow(FramelessWindow):
             "Optiland JSON Files (*.json);;Zemax Files (*.zmx);;All Files (*)",
         )
         if filepath:
-            self.connector.load_optic_from_file(filepath)
+            self.connector.file_operations.request_load(filepath)
             self._update_project_name_in_title_bar()
             logger.debug("Open System action triggered: %s", filepath)
 
@@ -650,7 +666,7 @@ class MainWindow(FramelessWindow):
         """Slot for the *Save System* action — saves to the current file path."""
         current_path = self.connector.get_current_filepath()
         if current_path:
-            self.connector.save_optic_to_file(current_path)
+            self.connector.file_operations.request_output(current_path)
             self._update_project_name_in_title_bar()
             logger.debug("Save System action triggered: %s", current_path)
         else:
@@ -671,7 +687,7 @@ class MainWindow(FramelessWindow):
                 and "(*.json)" in selected_filter.split(";;")[0]
             ):
                 filepath += ".json"
-            self.connector.save_optic_to_file(filepath)
+            self.connector.file_operations.request_output(filepath)
             self._update_project_name_in_title_bar()
             logger.debug("Save System As action triggered: %s", filepath)
 
@@ -688,7 +704,7 @@ class MainWindow(FramelessWindow):
             self,
             "Unsaved Changes",
             "The current system has unsaved changes. "
-            "Importing will replace it. Continue?",
+            "Opening another system will replace it. Continue?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
             QMessageBox.StandardButton.Cancel,
         )
@@ -706,7 +722,7 @@ class MainWindow(FramelessWindow):
             "Zemax Files (*.zmx);;All Files (*)",
         )
         if filepath:
-            self.connector.import_zemax(filepath)
+            self.connector.file_operations.request_load(filepath, "zemax")
             self._update_project_name_in_title_bar()
 
     @Slot()
@@ -721,7 +737,7 @@ class MainWindow(FramelessWindow):
             "CODE V Files (*.seq);;All Files (*)",
         )
         if filepath:
-            self.connector.import_codev(filepath)
+            self.connector.file_operations.request_load(filepath, "codev")
             self._update_project_name_in_title_bar()
 
     @Slot()
@@ -736,7 +752,7 @@ class MainWindow(FramelessWindow):
         if filepath:
             if not filepath.lower().endswith(".zmx"):
                 filepath += ".zmx"
-            self.connector.export_zemax(filepath)
+            self.connector.file_operations.request_output(filepath, "zemax")
 
     @Slot()
     def export_codev_action(self):
@@ -750,7 +766,23 @@ class MainWindow(FramelessWindow):
         if filepath:
             if not filepath.lower().endswith(".seq"):
                 filepath += ".seq"
-            self.connector.export_codev(filepath)
+            self.connector.file_operations.request_output(filepath, "codev")
+
+    @Slot(str, str)
+    def _resolve_file_candidate(self, identifier, path):
+        token = self.connector.document_state.edit_token
+        reply = QMessageBox.question(
+            self,
+            "Document changed while opening",
+            f"The file is ready: {path}\n"
+            "The current document changed while it was loading. "
+            "Replace the current document with this loaded candidate?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Cancel,
+        )
+        self.connector.file_operations.resolve_candidate(
+            identifier, reply == QMessageBox.StandardButton.Yes, token
+        )
 
     @Slot()
     def about_action(self):
@@ -875,6 +907,16 @@ class MainWindow(FramelessWindow):
 
     def closeEvent(self, event: QEvent) -> None:
         """Revoke calculations and wait asynchronously before destroying Qt owners."""
+        operations = getattr(self.connector, "file_operations", None)
+        if operations is not None and not getattr(
+            self, "_file_operations_settled", False
+        ):
+            event.ignore()
+            if not getattr(self, "_file_close_requested", False):
+                self._file_close_requested = True
+                operations.settled.connect(self._files_settled)
+                operations.begin_close()
+            return
         if not getattr(self, "_calculation_shutdown_complete", False):
             event.ignore()
             if not getattr(self, "_calculation_shutdown_requested", False):
@@ -891,6 +933,11 @@ class MainWindow(FramelessWindow):
     @Slot()
     def _calculations_stopped(self) -> None:
         self._calculation_shutdown_complete = True
+        QTimer.singleShot(0, self.close)
+
+    @Slot()
+    def _files_settled(self) -> None:
+        self._file_operations_settled = True
         QTimer.singleShot(0, self.close)
 
     @Slot()

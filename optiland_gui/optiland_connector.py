@@ -10,6 +10,7 @@ Author: Manuel Fragata Mendes, 2025
 
 from __future__ import annotations
 
+import pickle
 from contextlib import contextmanager
 
 from PySide6.QtCore import QObject, Signal
@@ -92,6 +93,7 @@ class OptilandConnector(QObject):
 
         # Instantiate services — order does not matter; each receives *self*.
         self._file_service = FileService(self)
+        self.file_operations = self._file_service.operations
         self._surface_service = SurfaceService(self)
         self._system_service = SystemService(self)
         self._analysis_runner = AnalysisRunner(self)
@@ -239,35 +241,9 @@ class OptilandConnector(QObject):
         Args:
             optic: The optic to validate and repair if necessary.
         """
-        if optic.surfaces.num_surfaces < 2:
-            optic.surfaces.clear()
-            optic.surfaces.add(
-                surface_type="standard",
-                radius=float("inf"),
-                thickness=10.0,
-                comment="Object",
-                material="Air",
-            )
-            optic.surfaces.add(
-                surface_type="standard",
-                radius=float("inf"),
-                thickness=0.0,
-                comment="Image",
-                material="Air",
-            )
+        from optiland_gui.services.model_initialization import ensure_valid_structure
 
-        if optic.wavelengths.num_wavelengths == 0:
-            optic.wavelengths.add(
-                self.DEFAULT_WAVELENGTH_UM, is_primary=True, unit="um"
-            )
-        elif optic.wavelengths.primary_index is None:
-            optic.wavelengths.wavelengths[0].is_primary = True
-
-        if not hasattr(optic, "aperture") or optic.aperture is None:
-            try:
-                optic.set_aperture("EPD", 10.0)
-            except Exception as e:
-                print(f"Warning: Failed to set aperture for loaded system: {e}")
+        ensure_valid_structure(optic, self.DEFAULT_WAVELENGTH_UM)
 
     def _initialize_optic_structure(
         self,
@@ -288,22 +264,14 @@ class OptilandConnector(QObject):
         optic_instance.updater.update()
 
     def _capture_optic_state(self) -> dict:
-        """Serialise the current optic state for undo/redo.
+        """Capture an owned prescription without normalization or optical solves.
 
         Returns:
             A dict representation of the current optic.
         """
-        if self._optic.wavelengths.num_wavelengths == 0:
-            self._optic.wavelengths.add(
-                self.DEFAULT_WAVELENGTH_UM, is_primary=True, unit="um"
-            )
-        elif (
-            self._optic.wavelengths.primary_index is None
-            and self._optic.wavelengths.num_wavelengths > 0
-        ):
-            self._optic.wavelengths.wavelengths[0].is_primary = True
-        self._optic.updater.update()
-        return self._optic.to_dict()
+        # The undo state must not alias mutable arrays in the current optic.
+        # This transports our own serializer output, never an external pickle.
+        return pickle.loads(pickle.dumps(self._optic.to_dict(), protocol=5))
 
     def _restore_optic_state(self, state_data: dict) -> None:
         """Restore the optic from a previously captured state dict.
@@ -311,8 +279,9 @@ class OptilandConnector(QObject):
         Args:
             state_data: A dict returned by :meth:`_capture_optic_state`.
         """
-        self._optic = Optic.from_dict(state_data)
-        self._initialize_optic_structure(self._optic, is_specific_new_system=False)
+        candidate = Optic.from_dict(state_data)
+        self._initialize_optic_structure(candidate, is_specific_new_system=False)
+        self._optic = candidate
         self.notify_change("replacement")
 
     # ------------------------------------------------------------------

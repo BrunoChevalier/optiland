@@ -1,0 +1,204 @@
+"""Real-process save/open ownership, cancellation and publication boundaries."""
+
+from __future__ import annotations
+
+import json
+import sys
+import time
+from pathlib import Path
+
+import pytest
+from PySide6.QtCore import QTimer
+
+from optiland.optic import Optic
+from optiland_gui.optiland_connector import OptilandConnector
+from optiland_gui.services.file_service import SpecialFloatEncoder, json_inf_nan_hook
+
+from .test_calculation_jobs import wait_for
+
+
+@pytest.fixture
+def file_operations(qapp, minimal_optic):
+    connector = OptilandConnector()
+    connector._optic = minimal_optic
+    connector.set_modified(True)
+    operations = connector.file_operations
+    jobs = operations.jobs
+    jobs._cancel_grace_ms = 40
+    progress, results, notifications = [], [], []
+    jobs.progress.connect(lambda request, message: progress.append(message["stage"]))
+    jobs.finished.connect(results.append)
+    operations.service._toast = lambda text, kind: notifications.append((text, kind))
+    yield connector, operations, progress, results, notifications
+    operations.begin_close()
+    wait_for(qapp, lambda: not operations.busy, timeout=30)
+    jobs.shutdown()
+    wait_for(qapp, lambda: jobs._process is None)
+
+
+def stall(operations, handler, when="before", delay=0.2):
+    operations.jobs._command = [
+        sys.executable,
+        "-u",
+        str(Path(__file__).with_name("file_worker_fixture.py")),
+        handler,
+        when,
+        str(delay),
+    ]
+
+
+def read_optic(path):
+    return Optic.from_dict(json.loads(path.read_text(), object_hook=json_inf_nan_hook))
+
+
+def edit_comment(connector, text):
+    connector.get_optic().surfaces[1].comment = text
+    connector.set_modified(True)
+    connector.notify_change("metadata", surface_indices=(1,), columns=(1,))
+
+
+def test_save_uses_captured_document_and_keeps_later_edits_dirty(
+    qapp, tmp_path, file_operations
+):
+    connector, operations, progress, results, notifications = file_operations
+    edit_comment(connector, "saved version")
+    stall(operations, "prepare_output")
+    path = tmp_path / "saved.json"
+    operations.request_output(path)
+    edit_comment(connector, "new unsaved edit")
+    wait_for(qapp, lambda: not operations.busy)
+    assert read_optic(path).surfaces[1].comment == "saved version"
+    assert connector.get_optic().surfaces[1].comment == "new unsaved edit"
+    assert connector.is_modified()
+    assert operations.service.get_current_filepath() == str(path)
+    assert not list(tmp_path.glob(".optiland-*.tmp"))
+
+
+def test_cancel_after_staging_never_replaces_destination(
+    qapp, tmp_path, file_operations
+):
+    connector, operations, progress, results, notifications = file_operations
+    stall(operations, "prepare_output", "after", 10)
+    path = tmp_path / "saved.json"
+    path.write_bytes(b"previous contents")
+    operations.request_output(path)
+    wait_for(qapp, lambda: "Fixture completed prepare_output" in progress)
+    operations.cancel_pending()
+    wait_for(qapp, lambda: not operations.busy)
+    assert path.read_bytes() == b"previous contents"
+    assert any(result.status == "cancelled" for result in results)
+    assert not list(tmp_path.glob(".optiland-*.tmp"))
+    assert connector.is_modified()
+
+
+def test_new_save_supersedes_pending_save_for_same_destination(
+    qapp, tmp_path, file_operations
+):
+    connector, operations, progress, results, notifications = file_operations
+    stall(operations, "prepare_output", delay=0.1)
+    path = tmp_path / "saved.json"
+    edit_comment(connector, "old")
+    operations.request_output(path)
+    edit_comment(connector, "latest")
+    operations.request_output(path)
+    wait_for(qapp, lambda: not operations.busy)
+    assert read_optic(path).surfaces[1].comment == "latest"
+    assert not connector.is_modified()
+    assert not list(tmp_path.glob(".optiland-*.tmp"))
+
+
+def test_load_conflict_requires_current_explicit_acceptance(
+    qapp, tmp_path, file_operations, minimal_optic
+):
+    connector, operations, progress, results, notifications = file_operations
+    candidate = Optic.from_dict(minimal_optic.to_dict())
+    candidate.surfaces[1].comment = "loaded candidate"
+    path = tmp_path / "input.json"
+    path.write_text(json.dumps(candidate.to_dict(), cls=SpecialFloatEncoder))
+    stall(operations, "load_file")
+    original = connector.get_optic()
+    conflicts = []
+    operations.candidate_conflict.connect(lambda *args: conflicts.append(args))
+    operations.request_load(path)
+    edit_comment(connector, "edit while loading")
+    wait_for(qapp, lambda: not operations.busy)
+    assert connector.get_optic() is original
+    assert len(conflicts) == 1
+    accepted = operations.resolve_candidate(
+        conflicts[0][0], True, connector.document_state.edit_token
+    )
+    assert accepted
+    assert connector.get_optic().surfaces[1].comment == "loaded candidate"
+    assert not connector.is_modified()
+
+
+def test_invalid_file_leaves_existing_document_and_history(
+    qapp, tmp_path, file_operations
+):
+    connector, operations, progress, results, notifications = file_operations
+    original = connector.get_optic()
+    token = connector.document_state.edit_token
+    connector._undo_redo_manager.add_state({"existing": "undo entry"})
+    path = tmp_path / "invalid.json"
+    path.write_text("{broken input")
+    operations.request_load(path)
+    wait_for(qapp, lambda: not operations.busy)
+    assert connector.get_optic() is original
+    assert connector.document_state.edit_token == token
+    assert connector._undo_redo_manager.can_undo()
+    assert connector.is_modified()
+    assert any(kind == "error" for _, kind in notifications)
+
+
+def test_unknown_publication_reconciles_and_close_drains_without_blocking(
+    qapp, tmp_path, file_operations
+):
+    connector, operations, progress, results, notifications = file_operations
+    stall(operations, "publish_output", "after", 10)
+    operations.jobs._publication_deadline_ms = 500
+    path = tmp_path / "saved.json"
+    states, ticks, settled = [], [], []
+    operations.state_changed.connect(lambda *args: states.append(args))
+    operations.settled.connect(lambda: settled.append(True))
+    timer = QTimer()
+    timer.setInterval(10)
+    timer.timeout.connect(lambda: ticks.append(time.monotonic()))
+    timer.start()
+    operations.request_output(path)
+    wait_for(qapp, lambda: "Fixture completed publish_output" in progress)
+    started = time.monotonic()
+    operations.begin_close()
+    assert time.monotonic() - started < 0.1
+    assert operations.busy and not settled
+    assert not states[-1][2]
+    wait_for(qapp, lambda: not operations.busy, timeout=30)
+    timer.stop()
+    assert settled and len(ticks) >= 10
+    assert (
+        read_optic(path).surfaces.num_surfaces
+        == connector.get_optic().surfaces.num_surfaces
+    )
+    assert any(result.outcome_unknown for result in results)
+    assert any(kind == "success" for _, kind in notifications)
+    assert not any("cancelled" in text.lower() for text, _ in notifications)
+    assert not connector.is_modified()
+    assert not list(tmp_path.glob(".optiland-*.tmp"))
+
+
+def test_loaded_candidate_rechecks_edit_token_at_explicit_commit(
+    qapp, tmp_path, file_operations, minimal_optic
+):
+    connector, operations, progress, results, notifications = file_operations
+    path = tmp_path / "input.json"
+    path.write_text(json.dumps(minimal_optic.to_dict(), cls=SpecialFloatEncoder))
+    stall(operations, "load_file")
+    original = connector.get_optic()
+    operations.request_load(path)
+    edit_comment(connector, "first edit")
+    wait_for(qapp, lambda: not operations.busy)
+    operation, snapshot = operations._candidate
+    expected = connector.document_state.edit_token
+    edit_comment(connector, "edit while confirmation was displayed")
+    assert not operations.resolve_candidate(operation.identifier, True, expected)
+    assert connector.get_optic() is original
+    assert connector.get_optic().surfaces[1].comment.endswith("displayed")

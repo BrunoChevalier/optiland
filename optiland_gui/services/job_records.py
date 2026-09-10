@@ -55,16 +55,65 @@ class OpticSnapshot:
 
     data: bytes
     backend: BackendConfig
+    component_types: tuple = ()
 
     @classmethod
     def capture(cls, optic: Optic) -> OpticSnapshot:
-        return cls(pickle.dumps(optic.to_dict(), protocol=5), BackendConfig.capture())
+        from optiland.optic import Optic
+
+        if type(optic).trace is not Optic.trace or "trace" in vars(optic):
+            raise ValueError(
+                "This custom tracing model needs an owned snapshot adapter."
+            )
+        component_types = _component_types(optic)
+        return cls(
+            pickle.dumps(optic.to_dict(), protocol=5),
+            BackendConfig.capture(),
+            component_types,
+        )
 
     def restore(self) -> Optic:
         from optiland.optic import Optic
 
         self.backend.apply()
-        return Optic.from_dict(pickle.loads(self.data))
+        optic = Optic.from_dict(pickle.loads(self.data))
+        if self.component_types and _component_types(optic) != self.component_types:
+            raise ValueError(
+                "Snapshot reconstruction changed an optical component type."
+            )
+        return optic
+
+
+def _component_types(optic: Optic) -> tuple:
+    """Reject unsupported runtime extensions rather than silently losing their type."""
+    components = [optic.aperture, optic.apodization, optic.fields.field_definition]
+    for surface in optic.surfaces:
+        components.extend(
+            (
+                surface,
+                surface.geometry,
+                surface.geometry.cs,
+                surface.material_post,
+                surface.aperture,
+                surface.interaction_model,
+                getattr(surface.interaction_model, "coating", None),
+                getattr(surface, "source", None),
+            )
+        )
+    components.extend(optic.pickups.pickups)
+    components.extend(optic.solves.solves)
+    records = []
+    for component in components:
+        if component is None:
+            records.append(None)
+            continue
+        cls = type(component)
+        if not cls.__module__.startswith("optiland."):
+            raise ValueError(
+                f"Custom component {cls.__qualname__} needs a snapshot adapter."
+            )
+        records.append((cls.__module__, cls.__qualname__))
+    return tuple(records)
 
 
 @dataclass(frozen=True)

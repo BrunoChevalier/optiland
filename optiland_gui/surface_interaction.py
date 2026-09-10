@@ -95,6 +95,12 @@ class EditorHoverTracker(QObject):
         super().__init__(editor)
         self.editor = editor
         self.table = editor.tableWidget
+        self._refresh_timer = QTimer(self)
+        self._refresh_timer.setSingleShot(True)
+        self._refresh_timer.timeout.connect(self.refresh)
+        self._tracking_timer = QTimer(self)
+        self._tracking_timer.setSingleShot(True)
+        self._tracking_timer.timeout.connect(self._enable_tracking)
         self.table.setMouseTracking(True)
         self.table.viewport().setMouseTracking(True)
         self.table.verticalHeader().setMouseTracking(True)
@@ -112,13 +118,13 @@ class EditorHoverTracker(QObject):
                 self.update_at(event.globalPosition().toPoint())
         elif kind in (QEvent.Leave, QEvent.Hide, QEvent.Resize, QEvent.LayoutRequest):
             if source is self.table or source is self.table.viewport():
-                QTimer.singleShot(0, self.refresh)
+                self._refresh_timer.start(0)
         elif (
             kind == QEvent.ChildAdded
             and isinstance(source, QWidget)
             and self.table.isAncestorOf(source)
         ):
-            QTimer.singleShot(0, self._enable_tracking)
+            self._tracking_timer.start(0)
         return False
 
     def _enable_tracking(self):
@@ -131,6 +137,12 @@ class EditorHoverTracker(QObject):
     def update_at(self, global_position):
         state = self.editor.interaction_state
         if not self.table.isVisible():
+            state.set_hover()
+            return
+        target = QApplication.widgetAt(global_position)
+        if target is None or (
+            target is not self.table and not self.table.isAncestorOf(target)
+        ):
             state.set_hover()
             return
         viewport = self.table.viewport()

@@ -5,8 +5,9 @@ from __future__ import annotations
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
-from PySide6.QtCore import QItemSelectionModel, QPoint
+from PySide6.QtCore import QItemSelectionModel, QPoint, Qt
 from PySide6.QtTest import QTest
+from PySide6.QtWidgets import QWidget
 
 from optiland_gui.lens_editor import LensEditor
 from optiland_gui.surface_interaction import SurfaceInteractionState
@@ -77,13 +78,21 @@ def make_editor(minimal_optic):
     editor = LensEditor(conn)
     editor.resize(850, 400)
     editor.show()
-    QTest.qWait(10)
+    QTest.qWaitForWindowExposed(editor)
+    QTest.qWait(100)
     return editor, conn
 
 
 def move_to_cell(editor, row, column):
     rect = editor.tableWidget.visualRect(editor.tableWidget.model().index(row, column))
-    QTest.mouseMove(editor.tableWidget.viewport(), rect.center())
+    move_pointer(editor.tableWidget.viewport(), rect.center())
+
+
+def move_pointer(widget, position):
+    QTest.mouseMove(widget, position)
+    # Native Windows delivers synthesized cursor motion through its event
+    # queue; offscreen dispatches synchronously. Wait for the former too.
+    QTest.qWait(100)
 
 
 def test_editor_hover_selection_embedded_header_and_leave(qapp, minimal_optic):
@@ -99,16 +108,16 @@ def test_editor_hover_selection_embedded_header_and_leave(qapp, minimal_optic):
         assert state.hovered_column == 3
         assert state.selected_surfaces == (selected,)
         embedded = table.cellWidget(2, 0).type_edit
-        QTest.mouseMove(embedded, embedded.rect().center())
+        move_pointer(embedded, embedded.rect().center())
         assert state.hovered_surface is minimal_optic.surfaces[2]
         assert state.hovered_column == 0
         header = table.verticalHeader()
-        QTest.mouseMove(
+        move_pointer(
             header.viewport(), QPoint(5, header.sectionViewportPosition(1) + 10)
         )
         assert state.hovered_surface is selected
         assert state.hovered_column is None
-        QTest.mouseMove(table.viewport(), QPoint(20, table.viewport().height() - 5))
+        move_pointer(table.viewport(), QPoint(20, table.viewport().height() - 5))
         assert state.hovered_surface is None
         assert state.selected_surfaces == (selected,)
         table.clearSelection()
@@ -132,7 +141,7 @@ def test_selection_and_hover_survive_expanded_property_rows(qapp, minimal_optic)
         move_to_cell(editor, 3, 2)
         assert state.hovered_surface is minimal_optic.surfaces[2]
         props = table.cellWidget(2, 0)
-        QTest.mouseMove(props, QPoint(15, 15))
+        move_pointer(props, QPoint(15, 15))
         assert state.hovered_surface is minimal_optic.surfaces[1]
         assert state.hovered_column is None
         editor.load_data()
@@ -145,6 +154,51 @@ def test_selection_and_hover_survive_expanded_property_rows(qapp, minimal_optic)
             minimal_optic.surfaces[1],
             minimal_optic.surfaces[2],
         )
+        conn.set_surface_data.assert_not_called()
+    finally:
+        editor.close()
+        editor.deleteLater()
+
+
+def test_overlapping_window_and_pending_pointer_callbacks(qapp, minimal_optic):
+    editor, _ = make_editor(minimal_optic)
+    move_to_cell(editor, 1, 2)
+    assert editor.interaction_state.hovered_surface is minimal_optic.surfaces[1]
+    overlay = QWidget()
+    overlay.resize(editor.size())
+    overlay.move(editor.mapToGlobal(QPoint(0, 0)))
+    overlay.show()
+    overlay.raise_()
+    QTest.qWait(5)
+    move_pointer(overlay, QPoint(150, 60))
+    assert editor.interaction_state.hovered_surface is None
+    overlay.close()
+    editor.hover_tracker._refresh_timer.start(0)
+    editor.hover_tracker._tracking_timer.start(0)
+    editor.close()
+    editor.deleteLater()
+    QTest.qWait(5)  # Owned timers must not access widgets after destruction.
+
+
+def test_keyboard_selection_scroll_and_pointer_leave(qapp, minimal_optic):
+    editor, conn = make_editor(minimal_optic)
+    table = editor.tableWidget
+    state = editor.interaction_state
+    try:
+        table.setCurrentCell(1, 2)
+        table.setFocus()
+        QTest.keyClick(table, Qt.Key_Down)
+        assert state.selected_surfaces == (minimal_optic.surfaces[2],)
+        table.setFixedHeight(110)
+        QTest.qWait(5)
+        table.scrollToTop()
+        move_to_cell(editor, 0, 2)
+        assert state.hovered_surface is minimal_optic.surfaces[0]
+        table.verticalScrollBar().setValue(table.rowHeight(0))
+        assert state.hovered_surface is minimal_optic.surfaces[1]
+        move_pointer(editor.btnAddSurface, editor.btnAddSurface.rect().center())
+        assert state.hovered_surface is None
+        assert state.selected_surfaces == (minimal_optic.surfaces[2],)
         conn.set_surface_data.assert_not_called()
     finally:
         editor.close()

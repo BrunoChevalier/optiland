@@ -57,12 +57,14 @@ The solver classifies zero coefficients directly and preserves positive
 discriminants. Exact self-crossings are excluded. Sag evaluation can also
 leave a rounded origin slightly off the surface: when its implicit residual
 is within ``4 * eps * (x*x + y*y + abs(z)*(abs((1+k)*z) + 2*abs(R)))``,
-the smaller-magnitude root is treated as a self-hit for forward selection.
-The signed fallback remains available. This residual band has squared-length
-units and rescales with the equation; there is no absolute distance floor
-that would discard a resolvable nearby crossing. As with other floating-point
-calculations, roots near tangency
-remain ill-conditioned and large intermediate values can overflow.
+the smaller-magnitude root is a possible self-hit. It is excluded from forward
+selection only if its displacement is also within
+``4 * eps * sqrt(x*x + y*y + z*z)``. A small residual alone is insufficient
+near tangency, where it can correspond to a resolved propagation distance.
+The signed fallback remains available. Both bounds rescale with the geometry;
+there is no absolute distance floor. As with other floating-point calculations,
+roots near tangency remain ill-conditioned and large intermediate values can
+overflow.
 
 Torch execution preserves the input tensors' device and dtype and supports
 autograd through regular selected roots. An exact double root has a singular
@@ -71,14 +73,30 @@ contribution is explicitly zero. Root selection and aperture boundaries are
 also discrete transitions; derivatives describe the selected branch away
 from those boundaries.
 
-For NumPy, matching one-dimensional float64 ray arrays and scalar float64
-geometry parameters use a cached Numba loop when no aperture is supplied.
-This avoids allocating intermediate arrays for each root-selection step.
-The loop and the general array path share their arithmetic and selection
-policy. Other dtypes, broadcasting, and aperture handling use the general
-path. Benchmark after a warmup: the first compiled call has a compilation
-or cache-loading cost. CUDA benchmarks additionally require synchronization
-around the timed operation.
+Matching one-dimensional NumPy float64 arrays and scalar float64 geometry
+parameters use cached Numba loops. The no-aperture loop returns the selected
+distance directly. When an aperture is supplied, a second loop retains both
+roots so the existing aperture code can choose between them. Both loops and
+the general array path share their arithmetic and selection policy.
+
+Ordinary Torch CPU float64 tensors with the same ray shapes and scalar or
+single-element surface parameters reuse these loops through NumPy views of
+their existing storage. The solver neither copies nor mutates the input ray
+arrays. A custom autograd function supplies the implicit derivatives of the
+selected root. For hit coordinates ``(u, v, w)``, define
+``D = u*L + v*M + ((1+k)*w-R)*N``. Differentiating the implicit conic gives
+``dt/dx = -u/D``, ``dt/dy = -v/D``, ``dt/dz = -((1+k)*w-R)/D``,
+``dt/dR = w/D``, and ``dt/dk = -w*w/(2*D)``. Direction partials are the
+corresponding position partials multiplied by ``t``. These operations remain
+in the Torch graph for higher derivatives. Forward-mode differentiation and
+batching are supported by the finite-conic kernel; the existing public
+plane/conic wrapper still requires an unbatched radius for its plane check.
+
+CUDA, float32, broadcasting, and tensor subclasses use native backend array
+operations. CUDA inputs never enter the CPU loop. NumPy array subclasses also
+keep the general path. Benchmark after a warmup: the first compiled call has
+a compilation or cache-loading cost. CUDA benchmarks additionally require
+synchronization around the timed operation.
 
 Supported Geometry Types
 ------------------------

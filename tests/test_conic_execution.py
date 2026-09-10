@@ -82,6 +82,16 @@ def test_nonfinite_lanes_are_misses_without_mutating_inputs():
         np.testing.assert_array_equal(getattr(rays, key), value)
 
 
+def test_masked_arrays_keep_the_general_numpy_execution_contract():
+    y = np.ma.array([0.1, 0.2], mask=[False, True])
+    rays = _rays((y * 0, y, y * 0 - 1, y * 0, y * 0, y * 0 + 1))
+    actual = _conic_intersection_distance(rays, np.array(2.0), np.array(0.0))
+    expected = _conic_intersection_distance(
+        rays, np.array([[2.0]]), np.array([[0.0]])
+    )
+    np.testing.assert_array_equal(actual, expected.reshape(-1))
+
+
 @pytest.mark.parametrize("radius", [-12.0, 12.0])
 @pytest.mark.parametrize("conic", [-2.0, -1.0, 0.0, 0.5])
 def test_random_conics_match_independent_polynomial_roots(radius, conic):

@@ -69,8 +69,9 @@ def _conic_intersection_distance(rays, radius, conic, aperture=None):
     *before* dividing / taking the square root: a masked inf or NaN would
     still enter the autograd graph and backpropagate as NaN.
     Positive discriminants and coefficients are not clamped to epsilon.
-    A residual band proportional to the uncancelled implicit surface terms
-    identifies rounded self-hits without imposing a distance floor.
+    A rounded self-hit must have both a residual within the uncancelled
+    implicit surface terms' roundoff band and a displacement below position
+    roundoff. The displacement check preserves resolved near-tangent hits.
     Exact double roots retain their value but contribute zero Torch gradient
     because the intersection derivative is singular there.
 

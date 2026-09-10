@@ -131,6 +131,77 @@ def test_rounded_sag_origin_does_not_create_a_self_hit(
     np.testing.assert_allclose(actual, expected, rtol=5e-7)
 
 
+@pytest.mark.parametrize("scale", [0.125, 1.0, 16.0])
+def test_near_tangent_crossing_is_not_a_rounded_self_hit(conic_precision, scale):
+    from decimal import Decimal, localcontext
+
+    # The origin is one small representable step outside a parabola. A nearly
+    # tangent direction makes the first crossing much farther than roundoff
+    # in position, even though the implicit residual is tiny.
+    delta = 2**-24 if conic_precision == "float32" else 2**-53
+    offset = 0.002 if conic_precision == "float32" else 1e-7
+    direction = np.array([-np.sqrt(0.5), np.sqrt(0.5) - offset])
+    direction /= np.linalg.norm(direction)
+    geometry = StandardGeometry(CoordinateSystem(), -scale, -1.0)
+    rays = _rays(0, scale, (-0.5 + delta) * scale, 0, *direction)
+    with localcontext() as context:
+        context.prec = 60
+        y, z, m, n, radius = (
+            Decimal.from_float(_scalar(value))
+            for value in (rays.y, rays.z, rays.M, rays.N, geometry.radius)
+        )
+        a = m * m
+        b = 2 * (m * y - n * radius)
+        c = y * y - 2 * radius * z
+        expected = float(c / (-Decimal("0.5") * (b - (b * b - 4 * a * c).sqrt())))
+    np.testing.assert_allclose(
+        _scalar(geometry.distance(rays)), expected, rtol=5e-7
+    )
+
+
+@pytest.mark.parametrize("radius", [-12.0, 12.0])
+@pytest.mark.parametrize("conic", [-2.0, -1.0, -0.9999, 0.0, 0.5])
+def test_physical_chords_preserve_forward_aperture_and_virtual_hits(
+    conic_precision, radius, conic
+):
+    from decimal import Decimal, localcontext
+    from optiland.physical_apertures import OffsetRadialAperture
+
+    def point(x, y):
+        with localcontext() as context:
+            context.prec = 60
+            dx, dy, r, k = map(Decimal.from_float, (x, y, radius, conic))
+            r2 = dx * dx + dy * dy
+            z = r2 / (r * (1 + (1 - (1 + k) * r2 / (r * r)).sqrt()))
+        return np.array([x, y, float(z)])
+
+    first = point(0.1 * abs(radius), 0.2 * abs(radius))
+    second = point(0.3 * abs(radius), -0.55 * abs(radius))
+    chord = second - first
+    length = np.linalg.norm(chord)
+    direction = chord / length
+    fractions = np.array([-1.0, -0.25, 0.0, 0.25, 1.25, 2.0])
+    positions = first[:, None] + chord[:, None] * fractions
+    geometry = StandardGeometry(CoordinateSystem(), radius, conic)
+    rays = _rays(*positions, *direction)
+    # Before the first point choose it; between the two choose the second;
+    # past both, retain the signed vertex-nearest (first point) fallback.
+    expected = np.where(
+        (fractions >= 0) & (fractions < 1), 1 - fractions, -fractions
+    ) * length
+    tolerance = 3e-6 if conic_precision == "float32" else 3e-13
+    np.testing.assert_allclose(
+        be.to_numpy(geometry.distance(rays)), expected, rtol=tolerance
+    )
+    aperture = OffsetRadialAperture(
+        abs(radius) * 0.05, offset_x=second[0], offset_y=second[1]
+    )
+    expected = np.where(fractions < 1, 1 - fractions, -fractions) * length
+    np.testing.assert_allclose(
+        be.to_numpy(geometry.distance(rays, aperture)), expected, rtol=tolerance
+    )
+
+
 def test_small_hit_has_correct_coordinate_and_radius_gradients(conic_precision):
     if be.get_backend() != "torch":
         pytest.skip("Torch autograd contract")

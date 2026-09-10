@@ -207,7 +207,7 @@ def test_prefixed_historical_glass_warns(lens_file, monkeypatch):
         optic = load_oslo_file(path)
     assert isinstance(optic.surfaces[1].material_post, AbbeMaterial)
     assert_allclose(optic.surfaces[1].material_post.n(0.5875618), 1.667, atol=1e-6)
-    with pytest.raises(ValueError, match="material bindings: H_BAF13"):
+    with pytest.raises(ValueError, match="selected GLC catalogs: H_BAF13"):
         load_oslo_file(path, strict=True)
 
 

@@ -10,7 +10,8 @@ import warnings
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Iterable, Mapping
+    from os import PathLike
 
     from optiland.materials import BaseMaterial
 
@@ -63,18 +64,24 @@ def load_oslo_file(
     strict: bool = False,
     configuration: int = 1,
     material_overrides: Mapping[str, BaseMaterial] | None = None,
+    glass_catalogs: Iterable[str | PathLike[str]] | None = None,
 ):
     """Load an OSLO .len file and return an Optic object.
 
     Args:
         source: The path to a local .len file.
-        strict: Reject unsupported optical commands and require explicit
-            bindings for every named glass.
+        strict: Reject unsupported optical commands and require selected catalog
+            definitions or explicit bindings for every named glass.
         configuration: One-based OSLO configuration to import as an independent
             snapshot. Defaults to the base configuration (1).
         material_overrides: Explicit case-insensitive bindings from OSLO catalog
             names to verified native materials. These apply only to named catalog
             references, not direct-index records, and do not change global catalogs.
+        glass_catalogs: Explicit GLC paths. Exact names in these catalogs take
+            priority over built-ins. Omitted and empty collections behave alike:
+            strict imports reject missing definitions; non-strict imports warn
+            before database/approximation fallback. No directory is searched.
+
     Returns:
         An Optic object created from the OSLO file data.
     """
@@ -82,6 +89,7 @@ def load_oslo_file(
         strict=strict,
         configuration=configuration,
         material_overrides=material_overrides,
+        glass_catalogs=glass_catalogs,
     ).read(source)
 
 

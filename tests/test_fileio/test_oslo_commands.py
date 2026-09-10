@@ -648,7 +648,7 @@ def test_historical_glass_approximation_is_explicit(tmp_path, monkeypatch):
 
     monkeypatch.setattr(module, "Material", unavailable)
     path = simple_lens(tmp_path, surface="GLA BAF13")
-    with pytest.raises(ValueError, match="material bindings: BAF13"):
+    with pytest.raises(ValueError, match="selected GLC catalogs: BAF13"):
         load_oslo_file(path, strict=True)
     with pytest.warns(UserWarning, match="approximate"):
         load_oslo_file(path)

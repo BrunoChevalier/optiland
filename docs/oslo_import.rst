@@ -8,12 +8,12 @@ result. To reject unsupported commands and known approximations, use::
     from optiland.fileio import load_oslo_file
 
     optic = load_oslo_file(
-        "design.len", strict=True, material_overrides={"GLASS": verified_material}
+        "design.len", strict=True, glass_catalogs=["catalogs/vendor.glc"]
     )
 
 Strict imports require an explicitly supplied definition for every named glass.
-Use ``material_overrides`` to supply verified native materials. Permissive
-imports warn before using the database or an approximation.
+Air, mirrors, saved direct indices and ``material_overrides`` do not require GLC
+files. The loader never discovers catalogs automatically.
 
 Malformed data raises ``ValueError``. Parser errors and unsupported-command
 warnings identify the file, line and surface. ``OsloDataParser(...).parse()``
@@ -93,9 +93,9 @@ UTF-8 (including BOM) and legacy Windows-1252 text are accepted.
        collapse together in the active backend precision cannot be interpolated;
        use higher precision for those samples. Two-parameter model
        glass and historical fallback glasses use approximate Abbe dispersion.
-       Strict import requires an explicit material binding. Explicit
+       Strict import requires an exact name in the supplied GLC catalogs. Explicit
        ``material_overrides`` bind names to verified native material definitions;
-       No global material registry is changed.
+       see catalog handling below.
    * - ``AP``, ``APF``, ``AP CHK/UNC``, ``APCK``, ``AST``
      - Ordinary AP retains drawing bounds; CHK enables clipping. APCK OFF
        disables clipping. Default import uses checked/special apertures for
@@ -203,3 +203,172 @@ Use ``configuration=2`` to select the second snapshot. Each selection starts
 from the original parsed base; failed and repeated conversions do not change it.
 Inactive configurations may be selected. Alternate solves and thickness
 overrides of pickup-controlled values are rejected.
+
+Catalog handling and configuration selection
+--------------------------------------------
+
+OSLO's catalog, direct-index and model glass definitions are different formats.
+``GLA name`` refers to an external catalog entry. OSLO requires unique glass names
+across the installed catalogs, so an unqualified name is normal in a lens file.
+It does not embed the catalog's dispersion, thermal or transmission data. Catalogs
+include manufacturer, Misc, Obsolete, Shared and Private entries; the documented
+Obsolete fallback emits a warning. Names of replacement glasses are distinct
+identities, and a literature reference is not a manufacturer catalog.
+
+The ``.glc`` files contain text glass records: a header includes the record count
+and each subsequent line describes a glass. ``.cdb`` is a separate database used
+for catalog browsing. See the Program Reference, pp. 52-54 and 184-190, and Lambda's
+`glass catalog editing guidance <https://lambdares.com/support-posts/editing-glass-catalogs>`_.
+Supply the text catalogs explicitly, independently of where the lens is stored::
+
+    optic = load_oslo_file(
+        "design.len",
+        strict=True,
+        glass_catalogs=["catalogs/vendor.glc", "catalogs/custom.glc"],
+        configuration=2,
+    )
+
+Resolution order is saved direct indices, ``material_overrides``, exact
+case-insensitive GLC names, then permissive database/fallback lookup. Supplied
+GLC data wins even when the built-in database has the same name. No global aliases
+are registered. Equal duplicate definitions coalesce their provenance; differing
+definitions fail with both locations and require an explicit override for that
+name. Every selected file is validated, including unused or overridden records.
+Malformed or unsupported selected data always fails, regardless of strictness.
+
+With ``strict=True``, missing catalog names are reported together and built-in
+substitution is prohibited. Omitting ``glass_catalogs``, passing ``None`` or
+passing ``[]`` all mean no supplied catalogs. With ``strict=False`` (the default),
+each missing name warns before existing database lookup and fallback behavior;
+fuzzy matches, manufacturer-prefix substitutions and historical Abbe approximations
+retain their warnings. Successful fallback does not establish agreement with the
+original catalog edition.
+
+Explicit per-import definitions can also bind a verified native material::
+
+    from optiland.materials import Material, MatchPolicy
+
+    verified_glass = Material("N-F2", catalog="schott", match_policy=MatchPolicy.STRICT)
+    optic = load_oslo_file(
+        "design.len",
+        strict=True,
+        configuration=2,
+        material_overrides={"GLASS_A": verified_glass},
+    )
+
+The example assumes the caller has verified that GLASS_A denotes that exact entry.
+Bindings are case insensitive and copied per import. Saved direct-index glass
+data takes precedence over a name binding. Bindings must be supplied by the caller.
+Configuration selection defaults to 1 and never modifies another import.
+
+GLC optical data and native persistence
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The reader accepts headers 5.00, 5.11, 5.32, 6.31, 6.4, 6.63, 6.65, 7.02, 24.1
+and 26.1, with variable-length groups checked against the record counts. It reads
+GLC text only; CDB browsing databases are not optical definitions. Selected files
+are limited to 16 MiB, 50,000 records and 64 KiB per record.
+
+Supported dispersion laws are Laurent (1), Sellmeier (2), Conrady (3), Hikari (6)
+and Herzberger (7). They become :class:`~optiland.materials.data.DataMaterial`
+coefficient models, rather than reconstructed Abbe values or sampled dispersion.
+Optional wavelength limits are enforced; reference-data identifiers and descriptive
+summary fields remain metadata. Unknown versions, optical models or trailing groups
+raise source-located errors.
+
+Thermal models are Schott absolute-index (1), constant relative dn/dT (2), and
+Corning relative dn/dT (3), referenced to 20 degrees Celsius. Single-value and
+Corning coefficients are converted from 1e-6/K to native index units/K. An explicit
+no-model flag (0), including its legacy unused coefficient, does not imply a
+thermal law. Missing thermal data returns the catalog index without correction.
+Material evaluation accepts temperature and pressure; importing a catalog does
+not implement an OSLO thermal analysis or expand surface geometry.
+
+Internal-transmission tables retain their original 5 mm samples. Evaluation uses
+a local quadratic through the three nearest wavelengths (ties prefer the shorter
+wavelength), then applies Beer's law for thickness. The extinction coefficient is
+``k = -log(T) * wavelength_um / (4*pi*thickness_mm*1000)``. No table means zero
+extinction. Tables require at least three distinct positive wavelengths and
+transmittance within [0, 1]. Outside-table evaluation and unphysical quadratic
+overshoot raise instead of extrapolating or clipping. A zero-transmission sample
+is retained, but evaluating its extinction raises because it has no finite k.
+These conservative bounds and the chosen quadratic stencil have independent
+analytic tests; numerical parity with a running OSLO installation has not been
+established for its boundary/interpolation behavior.
+
+Native JSON embeds coefficients, thermal and transmission data, and catalog
+label/version/content hashes. It needs no original catalog path, temporary YAML,
+or material registry when reopened, including in a fresh process. The original
+catalog edition remains a provenance consideration. OSLO export of these embedded
+coefficient materials is rejected; save as native JSON to retain their full data.
+
+Polarization and transmission settings
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Jones elements require a deliberate source state, including when the desired
+input is unpolarized::
+
+    from optiland.rays import PolarizationState
+
+    optic.updater.set_polarization(PolarizationState())
+
+The default ``ignore`` mode rejects tracing a system with polarization coatings.
+Native JSON retains the local Jones matrices and an explicitly configured source
+state. Native propagation accounts for a supplied material's extinction coefficient;
+OSLO's polarization internal-transmission setting (PZIT, Program Reference p. 54)
+and the original analysis settings are not inferred from Jones commands.
+
+Clipped or fully attenuated rays retain exactly zero intensity and exit fields
+even if they later miss a surface and acquire nonfinite geometry or polarization
+data. Their missed-ray coordinates remain invalid. Nonfinite results on rays
+with nonzero incident power remain visible to the audit. Evaluating a different
+source polarization can still transmit a ray that was dark only for the previous
+state; scalar clipping and absorption losses are retained.
+
+Limits and deferred commands
+----------------------------
+
+OSLO is a complete optical-design environment. This importer handles a sequential
+snapshot. It does not implement general multi-configuration execution, non-sequential
+NSS/NAC/ELI traversal, GRIN/GRADIUM propagation, user DLL/CCL surfaces, eikonal
+models, spline/ISO/Zernike surfaces, holograms/general diffractive phase polynomials,
+polarization/coating libraries beyond explicit Jones elements, thermal expansion,
+lens arrays, optimization and
+general ray-aiming/field-depth controls. Unknown prescription commands produce
+diagnostics rather than disappearing silently. Analysis/optimization footer blocks
+are ignored except for supported declarative field/configuration tables and their
+diagnostics. Unknown configuration overrides remain visible.
+
+``PFL`` describes an OSLO perfect-imaging surface whose exact off-axis behavior
+differs from a paraxial thin lens. Permissive import retains the existing thin-lens
+approximation and warns; strict mode rejects it. ``PFM`` does not restore exact
+perfect imagery. Do not interpret successful imports of GRIN, non-sequential or
+user-surface examples as faithful optical models.
+Export of native thin-lens interactions is rejected because PFL would change
+their off-axis physics into OSLO's perfect-imaging model.
+
+Import coverage is broader than OSLO export coverage. Native Optiland JSON is the
+preferred way to retain imported general geometry, aperture composition and poses.
+The OSLO writer supports its documented surface subset, direct spectral samples,
+correct even-asphere powers, explicit angular/object-height fields and radial
+aperture checking flags, and object-space telecentricity. Unsupported field
+definitions, transformed surfaces, phase profiles, offset/non-radial apertures,
+custom interaction, material or propagation models, ideal-material absorption,
+coatings and scattering raise before the destination file is opened. Names and
+notes must fit on a single line. Use native JSON for those systems. Finite-object
+and floating-stop apertures export the actual axial beam radius at surface 1.
+The standard and even-asphere handlers also validate the concrete geometry;
+a surface label cannot authorize dropping or changing its actual sag terms.
+The writer derives spacings from the actual axial coordinates, including lenses
+built with absolute positions or edited coordinates. A common axial translation
+is removed by anchoring the first surface at zero. It rejects finite object or
+interior distances that import would interpret as infinite and preserves thickness
+precision to avoid rounding across those boundaries.
+It writes the physical final gap with zero image defocus, so exporting an imported
+focus shift does not apply it twice. Unused native image thickness is not defocus.
+Constant refractive indices retain their saved precision, including small
+differences from unity. Invalid object-NA launches are rejected before writing.
+Field references, object NA, wavelengths and sampled indices preserve floating-point
+precision, avoiding rounded hemisphere boundaries or collapsed spectral samples.
+Explicit surface aperture radii must be finite and positive: zero cannot retain
+a native zero-radius clipping boundary, and infinity is not a finite OSLO radius.

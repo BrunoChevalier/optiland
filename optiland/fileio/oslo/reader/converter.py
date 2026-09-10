@@ -18,6 +18,7 @@ import optiland.backend as be
 from optiland.coatings import CartesianJonesCoating
 from optiland.fields.field_types import ObjectHeightField
 from optiland.fileio.base import BaseOpticReader
+from optiland.fileio.oslo.catalog import load_glc_catalogs
 from optiland.fileio.oslo.constants import (
     DEFAULT_WAVELENGTHS_UM,
     OBJECT_INFINITY_THRESHOLD,
@@ -110,7 +111,8 @@ _OSLO_GLASS_FALLBACK: dict[str, tuple[float, float]] = {
 _MANUFACTURER_PREFIXES = ("H_", "O_", "P_", "J_", "E_", "K_")
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Iterable, Mapping
+    from os import PathLike
 
     from optiland.fileio.oslo.model import OsloDataModel
 
@@ -129,6 +131,7 @@ class OsloToOpticConverter(BaseOpticReader):
         strict: bool = False,
         configuration: int = 1,
         material_overrides: Mapping[str, BaseMaterial] | None = None,
+        glass_catalogs: Iterable[str | PathLike[str]] | None = None,
     ):
         self.data = oslo_data
         self.strict = strict
@@ -146,6 +149,9 @@ class OsloToOpticConverter(BaseOpticReader):
                     "and material objects"
                 )
             self.material_overrides[name.casefold()] = deepcopy(material)
+        self.catalog_materials = load_glc_catalogs(
+            () if glass_catalogs is None else glass_catalogs, self.material_overrides
+        )
         self._warned_missing_catalogs: set[str] = set()
         self.optic: Optic | None = None
 
@@ -504,22 +510,24 @@ class OsloToOpticConverter(BaseOpticReader):
             except ValueError:
                 name = decode_text(parts[1])
             key = name.casefold()
-            if key not in self.material_overrides:
+            if key not in self.material_overrides and key not in self.catalog_materials:
                 missing[key] = name
         if self.strict and missing:
             raise ValueError(
-                "OSLO glasses could not be resolved from material bindings: "
+                "OSLO glasses could not be resolved from selected GLC catalogs: "
                 + ", ".join(sorted(missing.values(), key=str.casefold))
-                + ". Provide material_overrides."
+                + ". Select catalogs or provide material_overrides."
             )
 
     def _resolve_catalog_glass(self, name: str) -> Any:
-        """Prefer caller bindings and material data before permissive fallback."""
+        """Prefer caller bindings and selected GLC data before permissive fallback."""
         if name.casefold() in self.material_overrides:
             return deepcopy(self.material_overrides[name.casefold()])
+        if name.casefold() in self.catalog_materials:
+            return deepcopy(self.catalog_materials[name.casefold()])
         if name.casefold() not in self._warned_missing_catalogs:
             warnings.warn(
-                f"OSLO glass {name!r} has no definition in material bindings; "
+                f"OSLO glass {name!r} has no definition in selected GLC catalogs; "
                 "using database/approximation fallback",
                 UserWarning,
                 stacklevel=3,

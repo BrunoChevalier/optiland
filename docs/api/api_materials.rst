@@ -22,6 +22,28 @@ This approach allows for accurate refractive index prediction across the visible
 
 For a detailed walkthrough of the model derivation and validation, please refer to the :doc:`Abbe Material Model Building <../references/AbbeMaterial_Model_Building>` notebook.
 
+Parameter Ownership
+~~~~~~~~~~~~~~~~~~~
+
+``AbbeMaterial`` selects the d-line polynomial or Buchdahl model;
+``AbbeMaterialE`` selects the e-line Buchdahl model. Importers and glass
+optimization workflows construct these wrappers when index/Abbe data is the
+available description. Tracing, plotting and native persistence use the same
+material interface as other optical materials.
+
+The selected model owns the live ``index`` and ``abbe`` arrays. The wrapper's
+properties expose those exact arrays, so assignment or in-place mutation through
+either object changes the same optical parameters. Serialization reads those
+parameters. A small internal mixin shares this delegation between the two
+wrappers; it implements no dispersion equations and is not a material type.
+
+The prediction models own the fitted equations and reference-line conventions.
+Each fresh prediction recomputes the small derived coefficient vector from the
+current parameters, retaining fresh Torch graphs after backward or a ``no_grad``
+query. The polynomial model loads its fixed fit matrix once on construction.
+The material cache tracks model inputs and fitted constants, rather than treating
+previously computed coefficients as independent optical inputs.
+
 Catalog-Scoped Lookup
 ---------------------
 
@@ -80,7 +102,7 @@ ray transport and attenuation; materials report optical properties.
 
 ``BaseMaterial`` shares one evaluation/cache path between ``n`` and ``k``. Cache
 validity includes the wavelength values, shape and dtype, backend execution
-context, keyword arguments and optical state. Ideal and file/catalog materials
+context, keyword arguments and optical state. Ideal, Abbe and file/catalog materials
 track their live parameter arrays; changing a parameter invalidates old results.
 Their calculations convert parameters for the active backend without replacing
 the original arrays, preserving existing Torch parameter identity and gradients.

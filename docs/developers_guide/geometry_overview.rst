@@ -41,6 +41,41 @@ Geometries provide methods for:
 
    - Normals are derived from the mathematical description of the geometry and are essential for determining the ray's direction after refraction or reflection.
 
+Conic Intersection Numerics and Execution
+----------------------------------------
+
+``StandardGeometry`` and ``StandardGratingGeometry`` share the conic solver,
+which also supplies the initial intersection for Newton-Raphson geometries.
+It solves the factored implicit equation using a cancellation-resistant
+quadratic formula. Each ray selects the nearest strictly positive root on
+the sag sheet, preferring roots inside a supplied physical aperture. If
+neither root is admissible, it returns the finite root nearest the vertex,
+including negative distances needed by virtual propagation. An equation
+with no finite solution returns NaN.
+
+The solver classifies zero coefficients and exact self-crossings directly.
+It does not discard positive roots or clamp positive discriminants using
+machine epsilon: these quantities have different units, and an absolute
+epsilon threshold can change which surface a ray hits when the geometry
+is rescaled. As with other floating-point calculations, roots near tangency
+remain ill-conditioned and large intermediate values can overflow.
+
+Torch execution preserves the input tensors' device and dtype and supports
+autograd through regular selected roots. An exact double root has a singular
+intersection derivative. Its forward value is preserved, but its gradient
+contribution is explicitly zero. Root selection and aperture boundaries are
+also discrete transitions; derivatives describe the selected branch away
+from those boundaries.
+
+For NumPy, matching one-dimensional float64 ray arrays and scalar float64
+geometry parameters use a cached Numba loop when no aperture is supplied.
+This avoids allocating intermediate arrays for each root-selection step.
+The loop and the general array path share their arithmetic and selection
+policy. Other dtypes, broadcasting, and aperture handling use the general
+path. Benchmark after a warmup: the first compiled call has a compilation
+or cache-loading cost. CUDA benchmarks additionally require synchronization
+around the timed operation.
+
 Supported Geometry Types
 ------------------------
 

@@ -69,10 +69,44 @@ User YAML files must follow the `refractiveindex.info <https://refractiveindex.i
 format.  Files placed under ``~/.optiland/catalogs/<catalog_name>/`` are
 auto-discovered on the first registry access.
 
+Evaluation and Caching
+----------------------
+
+All optical material classes implement the
+:class:`~optiland.materials.base.BaseMaterial` property interface. Surface groups,
+interaction models, propagation, thin-film calculations and the nonsequential
+material adapter query ``n`` and ``k``. Those consumers retain responsibility for
+ray transport and attenuation; materials report optical properties.
+
+``BaseMaterial`` shares one evaluation/cache path between ``n`` and ``k``. Cache
+validity includes the wavelength values, shape and dtype, backend execution
+context, keyword arguments and optical state. Ideal and file/catalog materials
+track their live parameter arrays; changing a parameter invalidates old results.
+Their calculations convert parameters for the active backend without replacing
+the original arrays, preserving existing Torch parameter identity and gradients.
+
+Each concrete custom material opts into caching by implementing ``_cache_state``.
+An immutable model may return ``()``. A mutable model can use
+``self._state_key((self.parameter, ...))`` for all numerical state used by its
+calculations. Return ``None`` for untracked state or trainable parameters.
+Subclasses that add behavior must explicitly implement the hook even when their
+parent implements it. Without that hook, material evaluation remains supported
+and executes afresh. Keep the numerical implementation in ``_calculate_n/k``;
+do not duplicate cache handling in the public methods.
+
+Caller-owned wavelength buffers are inspected on every lookup. A NumPy alias can
+modify Torch storage without incrementing its version, and inference tensors can
+also be changed in place. Content checking is therefore O(N), including on cache
+hits. Uniform, non-trainable queries still evaluate one wavelength and return a
+broadcast result; trainable queries retain elementwise evaluation so every
+wavelength receives its own derivative. Cached constants are bypassed before
+lookup when an input or tracked parameter requires a fresh gradient graph.
+
 .. autosummary::
    :toctree: materials/
    :caption: Material Modules
 
+   materials.base
    materials.abbe
    materials.ideal
    materials.material_file

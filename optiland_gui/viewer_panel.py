@@ -732,7 +732,9 @@ class VTKViewer(QWidget):
 
     def set_interaction_state(self, state):
         if self.highlight_controller is not None:
-            self.interaction_state.changed.disconnect(self.highlight_controller.schedule)
+            self.interaction_state.changed.disconnect(
+                self.highlight_controller.schedule
+            )
             self.highlight_controller.clear()
             self.highlight_controller.deleteLater()
         self.interaction_state = state

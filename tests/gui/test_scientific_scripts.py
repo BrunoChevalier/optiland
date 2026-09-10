@@ -197,6 +197,9 @@ def test_main_window_close_waits_for_both_services(qapp, scripts):
         closeEvent = MainWindow.closeEvent
         _calculations_stopped = MainWindow._calculations_stopped
         _files_settled = MainWindow._files_settled
+        _file_close_aborted = MainWindow._file_close_aborted
+        _confirm_discard_changes = MainWindow._confirm_discard_changes
+        _confirm_close_intent = MainWindow._confirm_close_intent
 
     window = Window()
     window.connector = connector

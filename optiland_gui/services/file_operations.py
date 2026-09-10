@@ -27,6 +27,7 @@ class FileOperation:
     staged_path: str | None = None
     digest: str | None = None
     load_options: dict = field(default_factory=dict)
+    save_sequence: int = 0
 
 
 class FileOperations(QObject):
@@ -36,6 +37,7 @@ class FileOperations(QObject):
     candidate_conflict = Signal(str, str)
     completed = Signal()
     settled = Signal()
+    close_aborted = Signal()
 
     def __init__(self, service, connector):
         super().__init__(connector)
@@ -46,12 +48,19 @@ class FileOperations(QObject):
         self._candidate = None
         self._latest_open = None
         self._closing = False
+        self._close_edit_token = None
+        self._save_sequence = 0
+        self._confirmed_save_sequence = {}
         self.jobs.finished.connect(self._finished)
         self.jobs.progress.connect(self._progress)
 
     @property
     def busy(self):
         return bool(self._operations)
+
+    @property
+    def has_pending_writes(self):
+        return any(operation.kind != "open" for operation in self._operations.values())
 
     def request_load(self, path, file_format=None, *, snapshot=None, load_options=None):
         if self._closing:
@@ -78,6 +87,8 @@ class FileOperations(QObject):
         target = "file-output-" + os.path.normcase(path)
         kind = "save" if file_format == "optiland" else "export"
         operation = self._new_operation(kind, path, file_format, target, snapshot)
+        if kind == "save":
+            operation.save_sequence = self.next_save_sequence()
         operation.staged_path = str(
             Path(path).with_name(f".optiland-{operation.identifier}.tmp")
         )
@@ -136,6 +147,8 @@ class FileOperations(QObject):
                 self._changed()
                 return None
             self._operations.pop(operation.identifier, None)
+            if operation.kind != "open" and operation.phase != "cleaning":
+                self._abort_close(f"The file operation for {operation.path} failed")
             self._notify(f"File operation could not start: {exc}", "error")
             self._changed()
             return None
@@ -155,10 +168,39 @@ class FileOperations(QObject):
         self.jobs.cancel_target("file-open")
 
     def begin_close(self):
-        """Drain publications/cleanup before the shared executor is shut down."""
+        """Finish accepted writes before shutdown; cancel unrelated calculations."""
         self._closing = True
+        self._close_edit_token = self.connector.document_state.edit_token
         self._candidate = None
-        self.jobs.cancel_cancellable()
+        writes = {
+            operation.target
+            for operation in self._operations.values()
+            if operation.kind != "open" and operation.phase == "preparing"
+        }
+        self.jobs.cancel_cancellable(exclude_targets=writes)
+        self._changed()
+
+    def _abort_close(self, reason):
+        if self._closing:
+            self._closing = False
+            self._notify(
+                f"Close cancelled: {reason}. The document remains open.", "error"
+            )
+            self.close_aborted.emit()
+
+    def confirm_close_revision(self):
+        """Recheck the document before advancing from file drain to shutdown."""
+        if self.connector.document_state.edit_token != self._close_edit_token:
+            self._abort_close(
+                "The document changed while waiting for file operations"
+            )
+            return False
+        return self._closing
+
+    def cancel_close(self):
+        """Resume normal operation after cancelling the close intent."""
+        self._closing = False
+        self._close_edit_token = None
         self._changed()
 
     @Slot(object, dict)
@@ -190,6 +232,9 @@ class FileOperations(QObject):
             if result.status == "succeeded" and result.data["matches"]:
                 self._published(operation)
             else:
+                self._abort_close(
+                    f"The save to {operation.path} could not be confirmed"
+                )
                 self._notify(
                     "Save outcome could not be confirmed. "
                     f"Check {operation.path} before retrying.",
@@ -198,6 +243,10 @@ class FileOperations(QObject):
                 self._cleanup(operation)
             return
         if result.status != "succeeded":
+            if operation.kind != "open":
+                self._abort_close(
+                    f"The write to {operation.path} was {result.status}"
+                )
             if result.status == "failed":
                 self._notify(f"File operation failed: {result.error}", "error")
             self._cleanup(operation)
@@ -212,8 +261,6 @@ class FileOperations(QObject):
             else:
                 self._accept(operation, result.data, operation.edit_token)
                 self._complete(operation)
-        elif self._closing:
-            self._cleanup(operation)
         else:
             operation.digest = result.data["digest"]
             operation.phase = "publishing"
@@ -260,17 +307,30 @@ class FileOperations(QObject):
             return False
 
     def _published(self, operation):
-        token = self.connector.document_state.edit_token
-        if (
-            operation.kind == "save"
-            and token.document_id == operation.edit_token.document_id
-        ):
-            self.service._current_filepath = operation.path
-            if token == operation.edit_token:
-                self.connector.set_modified(False)
+        if operation.kind == "save":
+            self.confirm_saved_document(
+                operation.path, operation.edit_token, operation.save_sequence
+            )
         verb = "Saved" if operation.kind == "save" else "Exported"
         self._notify(f"{verb} — {Path(operation.path).name}", "success")
         self._cleanup(operation)
+
+    def next_save_sequence(self):
+        """Order native save choices across asynchronous and public sync paths."""
+        self._save_sequence += 1
+        return self._save_sequence
+
+    def confirm_saved_document(self, path, edit_token, sequence):
+        """A late older confirmation cannot change the active file or clean state."""
+        token = self.connector.document_state.edit_token
+        if (
+            token.document_id == edit_token.document_id
+            and sequence > self._confirmed_save_sequence.get(token.document_id, -1)
+        ):
+            self._confirmed_save_sequence[token.document_id] = sequence
+            self.service._current_filepath = path
+            if token == edit_token:
+                self.connector.set_modified(False)
 
     def _cleanup(self, operation):
         if operation.staged_path is not None:
@@ -301,6 +361,8 @@ class FileOperations(QObject):
             label += f" {Path(operation.path).name}"
         else:
             label = "File operations finished."
-        self.state_changed.emit(label, self.busy, cancellable and not self._closing)
-        if self._closing and not self.busy:
+        if self._closing and self.busy:
+            label = "Finishing requested file operations before closing. " + label
+        self.state_changed.emit(label, self.busy, cancellable)
+        if self._closing and not self.busy and self.confirm_close_revision():
             self.settled.emit()

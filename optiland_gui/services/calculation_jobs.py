@@ -307,12 +307,16 @@ class CalculationJobs(QObject):
         if self._active is not None and self._active.target == target:
             self._request_cancel()
 
-    def cancel_cancellable(self) -> None:
+    def cancel_cancellable(self, *, exclude_targets=()) -> None:
         """Revoke computation while leaving the queue open for owned cleanup."""
+        excluded = set(exclude_targets)
         requests = list(self._pending)
         if self._active is not None:
             requests.append(self._active)
-        for target in {request.target for request in requests if request.cancellable}:
+        for target in {
+            request.target for request in requests
+            if request.cancellable and request.target not in excluded
+        }:
             self.cancel_target(target)
 
     @Slot(object)

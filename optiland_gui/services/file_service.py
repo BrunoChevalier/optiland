@@ -182,6 +182,8 @@ class FileService:
                 raise RuntimeError(
                     "An asynchronous save to this path is still running."
                 )
+            sequence = self.operations.next_save_sequence()
+            edit_token = self._connector.document_state.edit_token
             data = self._connector._capture_optic_state()
             destination = os.path.abspath(filepath)
             temporary = None
@@ -201,8 +203,7 @@ class FileService:
             finally:
                 if temporary is not None:
                     os.unlink(temporary)
-            self._current_filepath = filepath
-            self._connector.set_modified(False)
+            self.operations.confirm_saved_document(filepath, edit_token, sequence)
             self._toast(f"Saved \u2014 {os.path.basename(filepath)}", "success")
         except Exception as e:
             self._toast(f"Save failed: {e}", "error", sub=filepath)

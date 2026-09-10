@@ -439,6 +439,16 @@ def test_publication_cannot_be_cancelled_after_acceptance(qapp, jobs):
     assert not receiver.results[0].outcome_unknown
 
 
+def test_close_exclusions_preserve_requested_write_and_cancel_other_work(qapp, jobs):
+    state, service, receiver = jobs
+    write = service.submit("file-output", "unused", None, {"value": "written"})
+    preview = service.submit("preview", "unused", None, {"value": "obsolete"})
+    service.cancel_cancellable(exclude_targets={"file-output"})
+    wait_for(qapp, lambda: len(receiver.results) == 2)
+    outcomes = {result.request.job_id: result.status for result in receiver.results}
+    assert outcomes == {write.job_id: "succeeded", preview.job_id: "cancelled"}
+
+
 def test_shutdown_drains_accepted_publication_asynchronously(qapp, jobs):
     state, service, receiver = jobs
     request = service.submit(

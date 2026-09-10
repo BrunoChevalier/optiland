@@ -691,7 +691,7 @@ class MainWindow(FramelessWindow):
             self._update_project_name_in_title_bar()
             logger.debug("Save System As action triggered: %s", filepath)
 
-    def _confirm_discard_changes(self) -> bool:
+    def _confirm_discard_changes(self, *, closing: bool = False) -> bool:
         """Prompt the user to confirm discarding unsaved changes.
 
         Returns:
@@ -704,7 +704,11 @@ class MainWindow(FramelessWindow):
             self,
             "Unsaved Changes",
             "The current system has unsaved changes. "
-            "Opening another system will replace it. Continue?",
+            + (
+                "Closing will discard them. Continue?"
+                if closing
+                else "Opening another system will replace it. Continue?"
+            ),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
             QMessageBox.StandardButton.Cancel,
         )
@@ -908,21 +912,49 @@ class MainWindow(FramelessWindow):
     def closeEvent(self, event: QEvent) -> None:
         """Revoke calculations and wait asynchronously before destroying Qt owners."""
         operations = getattr(self.connector, "file_operations", None)
+        if (
+            operations is not None
+            and getattr(self, "_file_operations_settled", False)
+            and not getattr(self, "_calculation_shutdown_requested", False)
+            and not operations.confirm_close_revision()
+        ):
+            event.ignore()
+            return
         if operations is not None and not getattr(
             self, "_file_operations_settled", False
         ):
             event.ignore()
             if not getattr(self, "_file_close_requested", False):
+                if (
+                    not operations.has_pending_writes
+                    and not getattr(self, "_close_confirmed", False)
+                ):
+                    if not self._confirm_close_intent():
+                        return
+                    self._close_confirmed = True
                 self._file_close_requested = True
                 self.connector._calculation_shutdown_started = True
                 for service in tuple(self.connector.calculation_services):
-                    service.cancel_cancellable()
-                operations.settled.connect(self._files_settled)
+                    if service is not operations.jobs:
+                        service.cancel_cancellable()
+                if not getattr(self, "_file_close_signals_connected", False):
+                    operations.settled.connect(self._files_settled)
+                    operations.close_aborted.connect(self._file_close_aborted)
+                    self._file_close_signals_connected = True
                 operations.begin_close()
             return
         if not getattr(self, "_calculation_shutdown_complete", False):
             event.ignore()
             if not getattr(self, "_calculation_shutdown_requested", False):
+                if not getattr(self, "_close_confirmed", False):
+                    if not self._confirm_close_intent():
+                        self._file_close_aborted()
+                        return
+                    self._close_confirmed = True
+                if operations is not None and not operations.confirm_close_revision():
+                    return
+                self._enabled_before_calculation_shutdown = self.isEnabled()
+                self.setEnabled(False)
                 self._calculation_shutdown_requested = True
                 self.connector._calculation_shutdown_started = True
                 services = tuple(
@@ -943,6 +975,18 @@ class MainWindow(FramelessWindow):
             self.panel_manager.python_terminal.shutdown_kernel()
         event.accept()
 
+    def _confirm_close_intent(self) -> bool:
+        """A modal discard dialog must not approve an intervening document edit."""
+        expected = self.connector.document_state.edit_token
+        if not self._confirm_discard_changes(closing=True):
+            return False
+        if self.connector.document_state.edit_token != expected:
+            self.connector._file_service._toast(
+                "Close cancelled: the document changed during confirmation.", "warning"
+            )
+            return False
+        return True
+
     @Slot()
     def _calculations_stopped(self) -> None:
         self._stopping_services.discard(self.sender())
@@ -955,6 +999,19 @@ class MainWindow(FramelessWindow):
     def _files_settled(self) -> None:
         self._file_operations_settled = True
         QTimer.singleShot(0, self.close)
+
+    @Slot()
+    def _file_close_aborted(self) -> None:
+        """Keep the document usable when an accepted write did not finish safely."""
+        self._file_close_requested = False
+        self._file_operations_settled = False
+        self._close_confirmed = False
+        self.connector._calculation_shutdown_started = False
+        if hasattr(self, "_enabled_before_calculation_shutdown"):
+            self.setEnabled(self._enabled_before_calculation_shutdown)
+        operations = getattr(self.connector, "file_operations", None)
+        if operations is not None:
+            operations.cancel_close()
 
     @Slot()
     def show_settings_wip(self):

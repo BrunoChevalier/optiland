@@ -82,6 +82,7 @@ class JobRequest:
     handler: str
     snapshot: OpticSnapshot | None
     parameters: dict[str, Any]
+    cancel_on_document_change: bool = True
     context: Any = field(default=None, compare=False, repr=False)
 
     def worker_message(self) -> dict:

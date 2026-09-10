@@ -108,6 +108,7 @@ class CalculationJobs(QObject):
         parameters: dict,
         *,
         replace: bool = True,
+        cancel_on_document_change: bool = True,
         context: Any = None,
     ) -> JobRequest:
         """Queue detached inputs; replace previews while keeping explicit FIFO jobs."""
@@ -129,6 +130,7 @@ class CalculationJobs(QObject):
             handler,
             snapshot,
             pickle.loads(pickle.dumps(parameters, protocol=5)),
+            cancel_on_document_change,
             context,
         )
         self._pending.append(request)
@@ -137,6 +139,11 @@ class CalculationJobs(QObject):
         return request
 
     def is_current(self, request: JobRequest) -> bool:
+        """Recheck immediately before presentation/commit, even after a result signal.
+
+        Detached explicit jobs may finish against an older document; their data
+        can be offered for review but never automatically overwrite current edits.
+        """
         return (
             not self._closed
             and request.document == self.document.token
@@ -171,8 +178,13 @@ class CalculationJobs(QObject):
     def _document_changed(self, token: DocumentToken) -> None:
         pending, self._pending = self._pending, deque()
         for request in pending:
-            self._terminal(request, "cancelled")
-        if self._active is not None:
+            if self._closed or request.cancel_on_document_change:
+                self._terminal(request, "cancelled")
+            else:
+                self._pending.append(request)
+        if self._active is not None and (
+            self._closed or self._active.cancel_on_document_change
+        ):
             self._request_cancel()
 
     def _request_cancel(self) -> None:
@@ -187,7 +199,13 @@ class CalculationJobs(QObject):
     def _dispatch(self) -> None:
         if self._closed or self._active is not None or not self._pending:
             return
-        if not self.is_current(self._pending[0]):
+        request = self._pending[0]
+        eligible = (
+            request.generation == self._generations.get(request.target, 0)
+            and self._visible.get(request.target, True)
+            and (not request.cancel_on_document_change or self.is_current(request))
+        )
+        if not eligible:
             self._terminal(self._pending.popleft(), "cancelled")
             QTimer.singleShot(0, self._dispatch)
             return

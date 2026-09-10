@@ -200,3 +200,26 @@ def test_actual_worker_reports_handler_failure_and_closes(qapp):
     finally:
         service.shutdown()
         wait_for(qapp, lambda: service._process is None)
+
+
+def test_detached_explicit_job_survives_document_edit_as_stale(qapp, jobs):
+    state, service, receiver = jobs
+    request = service.submit("save", "unused", None, {"delay": 0.2},
+                             replace=False, cancel_on_document_change=False)
+    # Still pending: a save/analysis batch may start after edits to its document.
+    state.change()
+    wait_for(qapp, lambda: request.job_id in receiver.progress or receiver.results)
+    state.replace()
+    wait_for(qapp, lambda: receiver.results)
+    assert receiver.results[0].status == "succeeded"
+    assert receiver.results[0].data == 42
+    assert not receiver.results[0].current
+
+
+def test_current_must_be_rechecked_at_commit(qapp, jobs):
+    state, service, receiver = jobs
+    request = service.submit("analysis", "unused", None, {})
+    wait_for(qapp, lambda: receiver.results)
+    assert receiver.results[0].current
+    state.change()
+    assert not service.is_current(request)

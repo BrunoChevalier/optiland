@@ -191,9 +191,7 @@ class FileOperations(QObject):
     def confirm_close_revision(self):
         """Recheck the document before advancing from file drain to shutdown."""
         if self.connector.document_state.edit_token != self._close_edit_token:
-            self._abort_close(
-                "The document changed while waiting for file operations"
-            )
+            self._abort_close("The document changed while waiting for file operations")
             return False
         return self._closing
 
@@ -244,9 +242,7 @@ class FileOperations(QObject):
             return
         if result.status != "succeeded":
             if operation.kind != "open":
-                self._abort_close(
-                    f"The write to {operation.path} was {result.status}"
-                )
+                self._abort_close(f"The write to {operation.path} was {result.status}")
             if result.status == "failed":
                 self._notify(f"File operation failed: {result.error}", "error")
             self._cleanup(operation)

@@ -283,7 +283,8 @@ def test_window_close_keeps_qt_owners_until_worker_is_reaped(qapp):
 
     window = Window()
     window.connector = SimpleNamespace(
-        calculation_jobs=service, is_modified=lambda: False,
+        calculation_jobs=service,
+        is_modified=lambda: False,
         document_state=service.document,
     )
     window.panel_manager = SimpleNamespace(

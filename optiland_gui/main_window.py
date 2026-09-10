@@ -925,9 +925,8 @@ class MainWindow(FramelessWindow):
         ):
             event.ignore()
             if not getattr(self, "_file_close_requested", False):
-                if (
-                    not operations.has_pending_writes
-                    and not getattr(self, "_close_confirmed", False)
+                if not operations.has_pending_writes and not getattr(
+                    self, "_close_confirmed", False
                 ):
                     if not self._confirm_close_intent():
                         return

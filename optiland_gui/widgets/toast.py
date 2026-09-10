@@ -4,7 +4,7 @@ Provides :class:`ToastWidget` (a single notification card) and
 :class:`ToastManager` (the singleton stack manager owned by ``MainWindow``).
 
 Design notes (from SPEC §1):
-- All toasts are passive (information only, no action buttons).
+- All toasts are informational, with a close button and click-to-dismiss.
 - Auto-dismiss after 7 s except Error-level toasts (persist until clicked).
 - Max 3 toasts visible; oldest is evicted immediately when a 4th arrives.
 - Position: bottom-right of the main window with 16 px margin.
@@ -30,6 +30,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QSizePolicy,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -80,7 +81,9 @@ class ToastWidget(QWidget):
         self._dismissed = False
 
         self.setFixedWidth(_TOAST_WIDTH)
-        self.setAttribute(Qt.WA_TranslucentBackground)
+        # This child can become native alongside the docked console/VTK widgets.
+        # WA_TranslucentBackground makes it a layered window on Windows, where
+        # mouse hit testing can pass through to the console underneath.
         self.setWindowFlags(Qt.SubWindow)
 
         self._build_ui(message, severity, sub_message)
@@ -142,6 +145,22 @@ class ToastWidget(QWidget):
 
         outer_layout.addLayout(text_layout, 1)
 
+        close_button = QToolButton(outer)
+        close_button.setObjectName("ToastCloseButton")
+        close_button.setText("\u00d7")
+        close_button.setToolTip("Dismiss notification")
+        close_button.setAccessibleName("Dismiss notification")
+        close_button.setCursor(Qt.PointingHandCursor)
+        close_button.setFocusPolicy(Qt.StrongFocus)
+        close_button.setFixedSize(24, 24)
+        close_button.setStyleSheet(
+            "QToolButton { color: #E0E0E0; background: transparent;"
+            " border: none; border-radius: 4px; padding: 0; font-size: 18px; }"
+            "QToolButton:hover, QToolButton:focus { background: #505050; }"
+        )
+        close_button.clicked.connect(self._dismiss)
+        outer_layout.addWidget(close_button, 0, Qt.AlignTop)
+
         # Root layout
         root_layout = QVBoxLayout(self)
         root_layout.setContentsMargins(0, 0, 0, 0)
@@ -162,11 +181,14 @@ class ToastWidget(QWidget):
 
     def mousePressEvent(self, event) -> None:  # noqa: ANN001
         """Dismiss the toast when the user clicks anywhere on it."""
+        self._dismiss()
+        event.accept()
+
+    def _dismiss(self) -> None:
         if self.parent() and hasattr(self.parent(), "_toast_manager"):
             self.parent()._toast_manager._dismiss(self)
         else:
             self.hide()
-        super().mousePressEvent(event)
 
 
 class ToastManager:

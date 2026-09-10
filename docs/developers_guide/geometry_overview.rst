@@ -53,11 +53,15 @@ neither root is admissible, it returns the finite root nearest the vertex,
 including negative distances needed by virtual propagation. An equation
 with no finite solution returns NaN.
 
-The solver classifies zero coefficients and exact self-crossings directly.
-It does not discard positive roots or clamp positive discriminants using
-machine epsilon: these quantities have different units, and an absolute
-epsilon threshold can change which surface a ray hits when the geometry
-is rescaled. As with other floating-point calculations, roots near tangency
+The solver classifies zero coefficients directly and preserves positive
+discriminants. Exact self-crossings are excluded. Sag evaluation can also
+leave a rounded origin slightly off the surface: when its implicit residual
+is within ``4 * eps * (x*x + y*y + abs(z)*(abs((1+k)*z) + 2*abs(R)))``,
+the smaller-magnitude root is treated as a self-hit for forward selection.
+The signed fallback remains available. This residual band has squared-length
+units and rescales with the equation; there is no absolute distance floor
+that would discard a resolvable nearby crossing. As with other floating-point
+calculations, roots near tangency
 remain ill-conditioned and large intermediate values can overflow.
 
 Torch execution preserves the input tensors' device and dtype and supports

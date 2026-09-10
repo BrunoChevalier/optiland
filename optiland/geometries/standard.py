@@ -52,7 +52,7 @@ def _conic_intersection_distance(rays, radius, conic, aperture=None):
     hyperboloid) as well as crossings behind the ray. A root is therefore
     admissible only when it is
 
-    - in front of the ray: ``t > 0`` (exact self-crossings are excluded), and
+    - in front of the ray: ``t > 0``, excluding exact or rounded self-hits, and
     - on the sheet the sag function describes: on the surface,
       ``sqrt(1 - (1 + k) r^2 / R^2) = 1 - (1 + k) z / R``, so the sag sheet
       is ``1 - (1 + k) z / R >= 0``.
@@ -69,6 +69,8 @@ def _conic_intersection_distance(rays, radius, conic, aperture=None):
     *before* dividing / taking the square root: a masked inf or NaN would
     still enter the autograd graph and backpropagate as NaN.
     Positive discriminants and coefficients are not clamped to epsilon.
+    A residual band proportional to the uncancelled implicit surface terms
+    identifies rounded self-hits without imposing a distance floor.
     Exact double roots retain their value but contribute zero Torch gradient
     because the intersection derivative is singular there.
 

@@ -14,6 +14,9 @@ from numba import njit
 from numba.extending import register_jitable
 
 import optiland.backend as be
+from optiland.utils import machine_eps
+
+_FLOAT64_EPS = np.finfo(np.float64).eps
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -34,23 +37,33 @@ def _conic_candidates(
     conic: Any,
     where: Callable,
     sqrt: Callable,
+    epsilon: Callable,
 ) -> tuple[Any, Any, Any, Any, Any, Any, Any]:
     """Compute roots, validity, fallback choice, and derivative regularity.
 
-    ``where`` and ``sqrt`` are backend operations for arrays,
-    or scalar operations in the compiled loop. Factoring the coefficients
+    ``where``, ``sqrt``, and ``epsilon`` operate on backend arrays,
+    or scalars in the compiled loop. Factoring the coefficients
     avoids cancellation of the quadratic term at and near a parabola. The
     constant term is the implicit surface residual at the ray origin.
 
     A nonzero coefficient must not be discarded solely because it is below
     machine epsilon: ``a``, ``b``, ``c``, and the discriminant have different
     units and scale differently under a geometric rescaling. Zero roots are
-    self-crossings; a strictly positive root remains eligible however close.
+    self-crossings. A roundoff-scale residual at the origin also excludes the
+    smaller root, without imposing a distance floor.
     """
     k1 = 1 + conic
+    kz = k1 * z
+    transverse = x * x + y * y
     a = L * L + M * M + k1 * N * N
-    b = 2 * (L * x + M * y + N * (k1 * z - radius))
-    c = x * x + y * y + z * (k1 * z - 2 * radius)
+    b = 2 * (L * x + M * y + N * (kz - radius))
+    c = transverse + z * (kz - 2 * radius)
+    # Sag evaluation and propagation can leave a rounded point just off the
+    # surface. Bound that residual in squared-length units, using the terms
+    # before cancellation. Unlike a coordinate-based distance floor, this
+    # scales with the equation and retains resolvable nearby intersections.
+    residual_scale = transverse + abs(z) * (abs(kz) + 2 * abs(radius))
+    resolved_c = abs(c) > (4 * epsilon(c)) * residual_scale
     d = b * b - 4 * a * c
     d_ok = d >= 0
 
@@ -70,7 +83,10 @@ def _conic_candidates(
     z1 = z + t1 * N
     z2 = z + t2 * N
     valid1 = solvable1 & (t1 > 0) & (1 - k1 * z1 / radius >= 0)
-    valid2 = solvable2 & (t2 > 0) & (1 - k1 * z2 / radius >= 0)
+    # The stable q formula makes c/q the root with smaller magnitude. Only
+    # that candidate is a possible rounded self-hit; retain the other root
+    # and its full derivatives through the original, unmodified coefficients.
+    valid2 = solvable2 & resolved_c & (t2 > 0) & (1 - k1 * z2 / radius >= 0)
 
     # Choose an index before materializing the selected distance. The XOR
     # form works identically for scalar, NumPy, and Torch booleans.
@@ -86,6 +102,12 @@ def _conic_candidates(
 def _scalar_where(condition: Any, left: Any, right: Any) -> Any:
     """Scalar selection used by the shared arithmetic in the compiled loop."""
     return left if condition else right
+
+
+@register_jitable(inline="always")
+def _float64_eps(value: Any) -> float:
+    """Precision of the explicitly restricted compiled execution path."""
+    return _FLOAT64_EPS
 
 
 @njit(cache=True, error_model="numpy")
@@ -113,6 +135,7 @@ def _numpy_conic_distance(
             conic,
             _scalar_where,
             math.sqrt,
+            _float64_eps,
         )
         distance[i] = (t1 if pick1 else t2) if solvable else math.nan
     return distance
@@ -175,7 +198,7 @@ def conic_distance(
     else:
         where, sqrt = be.where, be.sqrt
     t1, t2, valid1, valid2, pick1, solvable, regular = _conic_candidates(
-        *values, radius, conic, where, sqrt
+        *values, radius, conic, where, sqrt, machine_eps
     )
     if aperture is not None:
         pref1 = valid1 & aperture.contains(rays.x + t1 * rays.L, rays.y + t1 * rays.M)

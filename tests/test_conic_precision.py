@@ -76,7 +76,9 @@ def test_positive_small_discriminant_preserves_microlens_hit(conic_precision, sc
     expected = radius - np.sqrt((radius - x) * (radius + x)) - z
     # The chosen ray is near tangent; float32 coefficient rounding is amplified.
     tolerance = 1e-4 if conic_precision == "float32" else 1e-10
-    np.testing.assert_allclose(_scalar(geometry.distance(rays)), expected, rtol=tolerance)
+    np.testing.assert_allclose(
+        _scalar(geometry.distance(rays)), expected, rtol=tolerance
+    )
 
 
 @pytest.mark.parametrize("radius", [1e-12, 1e-9, 1e-3, 1.0, 1e3])
@@ -111,6 +113,22 @@ def test_exact_self_crossing_retains_other_parabola_root(conic_precision):
     geometry = StandardGeometry(CoordinateSystem(), -25.4, -1.0)
     rays = _rays(0.0, 25.4, -12.7, 0.0, -1.0, 0.0)
     np.testing.assert_allclose(_scalar(geometry.distance(rays)), 50.8, rtol=1e-7)
+
+
+@pytest.mark.parametrize("radius", [-25.4, 25.4])
+@pytest.mark.parametrize("conic", [-2.0, -1.0, 0.0, 0.5])
+@pytest.mark.parametrize("scale", [1e-4, 1.0, 1e4])
+def test_rounded_sag_origin_does_not_create_a_self_hit(
+    conic_precision, radius, conic, scale
+):
+    geometry = StandardGeometry(CoordinateSystem(), radius * scale, conic)
+    rays = _rays(0, np.linspace(2, 20, 101) * scale, 0, 0, -1, 0)
+    rays.z = geometry.sag(rays.x, rays.y)
+    # A horizontal chord starting on the sag must cross at the opposite y.
+    # Rounded sag values can leave a tiny nonzero implicit residual.
+    actual = be.to_numpy(geometry.distance(rays))
+    expected = 2 * be.to_numpy(rays.y)
+    np.testing.assert_allclose(actual, expected, rtol=5e-7)
 
 
 def test_small_hit_has_correct_coordinate_and_radius_gradients(conic_precision):
@@ -191,7 +209,9 @@ def test_first_and_second_derivatives_for_all_ray_and_surface_parameters(
 
     def solve(*inputs):
         geometry.radius, geometry.k = inputs[-2:]
-        rays = SimpleNamespace(**dict(zip(("x", "y", "z", "L", "M", "N"), inputs[:6], strict=True)))
+        rays = SimpleNamespace(
+            **dict(zip(("x", "y", "z", "L", "M", "N"), inputs[:6], strict=True))
+        )
         return geometry.distance(rays, aperture=aperture)
 
     assert torch.autograd.gradcheck(solve, leaves)
@@ -215,17 +235,24 @@ def test_tensor_dtype_is_preserved_when_backend_default_changes(conic_backend):
 
 
 def test_oap_systems_keep_physical_rays_on_each_device(conic_precision):
-    from .test_conic_root_selection import _build_double_oap_relay, _build_oap_collimator
+    from .test_conic_root_selection import (
+        _build_double_oap_relay,
+        _build_oap_collimator,
+    )
 
     collimator = _build_oap_collimator()
-    rays = collimator.trace(Hx=0, Hy=0, wavelength=0.633, num_rays=21, distribution="line_y")
+    rays = collimator.trace(
+        Hx=0, Hy=0, wavelength=0.633, num_rays=21, distribution="line_y"
+    )
     assert np.count_nonzero(be.to_numpy(rays.i) > 0) == 21
     assert (be.to_numpy(rays.M) > 0).all()
     tolerance = 5e-5 if conic_precision == "float32" else 1e-13
     np.testing.assert_allclose(be.to_numpy(rays.y), 40, rtol=tolerance)
 
     relay = _build_double_oap_relay(0.0)
-    rays = relay.trace(Hx=0, Hy=0, wavelength=0.4861, num_rays=41, distribution="line_y")
+    rays = relay.trace(
+        Hx=0, Hy=0, wavelength=0.4861, num_rays=41, distribution="line_y"
+    )
     assert np.count_nonzero(be.to_numpy(rays.i) > 0) == 41
     for component in (rays.L, rays.M, rays.N):
         values = be.to_numpy(component)

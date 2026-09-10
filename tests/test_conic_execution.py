@@ -21,7 +21,9 @@ def numpy_backend():
 
 
 def _rays(values):
-    return SimpleNamespace(**dict(zip(("x", "y", "z", "L", "M", "N"), values, strict=True)))
+    return SimpleNamespace(
+        **dict(zip(("x", "y", "z", "L", "M", "N"), values, strict=True))
+    )
 
 
 @pytest.mark.parametrize("size", [0, 1, 17, 8193])
@@ -34,7 +36,9 @@ def test_numpy_compiled_and_broadcast_paths_agree(size, strided):
     rays.y = y  # Preserve the non-contiguous input.
     actual = _conic_intersection_distance(rays, np.array(12.0), np.array(0.5))
     # A broadcast dimension takes the general array path.
-    expected = _conic_intersection_distance(rays, np.array([[12.0]]), np.array([[0.5]]))
+    expected = _conic_intersection_distance(
+        rays, np.array([[12.0]]), np.array([[0.5]])
+    )
     assert actual.shape == (size,)
     assert actual.dtype == np.float64
     np.testing.assert_array_equal(actual, expected.reshape(-1))
@@ -58,13 +62,17 @@ def test_mixed_parameter_precision_matches_general_array_evaluation():
     radius = np.array(12, dtype=np.float32)
     conic = np.array(0.3, dtype=np.float32)
     actual = _conic_intersection_distance(rays, radius, conic)
-    expected = _conic_intersection_distance(rays, radius.reshape(1, 1), conic.reshape(1, 1))
+    expected = _conic_intersection_distance(
+        rays, radius.reshape(1, 1), conic.reshape(1, 1)
+    )
     np.testing.assert_array_equal(actual, expected.reshape(-1))
 
 
 def test_nonfinite_lanes_are_misses_without_mutating_inputs():
     x = np.array([0.0, np.nan, np.inf])
-    rays = _rays((x, np.zeros(3), np.full(3, -1.0), np.zeros(3), np.zeros(3), np.ones(3)))
+    rays = _rays(
+        (x, np.zeros(3), np.full(3, -1.0), np.zeros(3), np.zeros(3), np.ones(3))
+    )
     copies = {key: value.copy() for key, value in vars(rays).items()}
     with np.errstate(invalid="ignore"):
         actual = _conic_intersection_distance(rays, np.array(1.0), np.array(0.0))
@@ -98,5 +106,7 @@ def test_random_conics_match_independent_polynomial_roots(radius, conic):
             continue
         hit_z = position[2] + roots * direction[2]
         valid = (roots > 0) & (1 - (1 + conic) * hit_z / radius >= 0)
-        expected.append(roots[valid].min() if valid.any() else roots[np.argmin(abs(hit_z))])
+        expected.append(
+            roots[valid].min() if valid.any() else roots[np.argmin(abs(hit_z))]
+        )
     np.testing.assert_allclose(actual, expected, rtol=2e-12, atol=2e-12)

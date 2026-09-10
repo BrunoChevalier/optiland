@@ -159,6 +159,7 @@ def prepare_3d(snapshot, parameters, progress, cancelled):
     from optiland.visualization.system.rays import Rays3D
     from optiland.visualization.system.surface import Surface3D
     from optiland.visualization.system.system import OpticalSystem
+    from optiland_gui.services.planar_layout_mesh import compact_planar_face
 
     progress("Restoring optical snapshot")
     optic = snapshot.restore()
@@ -173,10 +174,16 @@ def prepare_3d(snapshot, parameters, progress, cancelled):
     system = OpticalSystem(optic, rays, projection="3d")
     system._identify_components()
     surface_views = {}
+    surface_faces = {}
     for index, component in enumerate(system.components):
         progress("Preparing 3D components", index, len(system.components))
         collector.actors = []
-        component.plot(collector)
+        if isinstance(component, Surface3D):
+            face = compact_planar_face(component) or component.get_surface()
+            collector.AddActor(face)
+            surface_faces[indices[id(component.surf)]] = face
+        else:
+            component.plot(collector)
         component_surfaces = _surface_indices(component, indices)
         body = isinstance(component, Lens3D)
         for actor in collector.actors:
@@ -207,12 +214,15 @@ def prepare_3d(snapshot, parameters, progress, cancelled):
             if not np.isfinite(extent) or extent <= 0:
                 extent = 0.1
             view = Surface3D(surface, extent)
-        face = view.get_surface()
+        face = surface_faces.get(index)
+        if face is None:
+            face = compact_planar_face(view) or view.get_surface()
         groups.append((face, "face_highlight", (index,)))
         groups.append(
             (_highlight_edges(face, boundary_only=True), "surface_edge", (index,))
         )
     meshes = []
+    geometry_cache = {}
     for index, (actor, role, surfaces) in enumerate(groups):
         progress("Preparing display arrays", index, len(groups))
         mapper = actor.GetMapper()
@@ -220,18 +230,27 @@ def prepare_3d(snapshot, parameters, progress, cancelled):
         data = mapper.GetInput()
         if data is None or data.GetPoints() is None:
             continue
-        cells = {}
-        for name, source in (
-            ("polys", data.GetPolys()),
-            ("lines", data.GetLines()),
-            ("verts", data.GetVerts()),
-            ("strips", data.GetStrips()),
-        ):
-            if source.GetNumberOfCells():
-                cells[name] = (
-                    vtk_to_numpy(source.GetOffsetsArray()).copy(),
-                    vtk_to_numpy(source.GetConnectivityArray()).copy(),
-                )
+        geometry_key = data.GetAddressAsString("")
+        if geometry_key not in geometry_cache:
+            cells = {}
+            for name, source in (
+                ("polys", data.GetPolys()),
+                ("lines", data.GetLines()),
+                ("verts", data.GetVerts()),
+                ("strips", data.GetStrips()),
+            ):
+                if source.GetNumberOfCells():
+                    cells[name] = (
+                        vtk_to_numpy(source.GetOffsetsArray()).copy(),
+                        vtk_to_numpy(source.GetConnectivityArray()).copy(),
+                    )
+            geometry_cache[geometry_key] = {
+                "points": vtk_to_numpy(data.GetPoints().GetData()).copy(),
+                "cells": cells,
+                "normals": vtk_to_numpy(data.GetPointData().GetNormals()).copy()
+                if data.GetPointData().GetNormals() is not None
+                else None,
+            }
         matrix = actor.GetMatrix()
         prop = actor.GetProperty()
         color = tuple(prop.GetColor())
@@ -241,8 +260,7 @@ def prepare_3d(snapshot, parameters, progress, cancelled):
         )
         meshes.append(
             {
-                "points": vtk_to_numpy(data.GetPoints().GetData()).copy(),
-                "cells": cells,
+                **geometry_cache[geometry_key],
                 "matrix": np.array(
                     [[matrix.GetElement(i, j) for j in range(4)] for i in range(4)]
                 ),
@@ -256,9 +274,6 @@ def prepare_3d(snapshot, parameters, progress, cancelled):
                 "linewidth": prop.GetLineWidth(),
                 "role": role,
                 "surfaces": surfaces,
-                "normals": vtk_to_numpy(data.GetPointData().GetNormals()).copy()
-                if data.GetPointData().GetNormals() is not None
-                else None,
             }
         )
     check_cancelled(cancelled)

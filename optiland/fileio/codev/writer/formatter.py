@@ -15,7 +15,12 @@ from typing import TYPE_CHECKING, Any
 import optiland.backend as be
 from optiland.fileio.codev.model import CodeVDataModel
 from optiland.fileio.codev.surfaces import get_handler_for_optiland_type
-from optiland.fileio.common import compute_abbe_number, field_type_string, is_air
+from optiland.fileio.common import (
+    compute_abbe_number,
+    field_type_string,
+    is_air,
+    reject_unsupported_ideal_absorption,
+)
 from optiland.materials.material import Material
 
 if TYPE_CHECKING:
@@ -267,6 +272,7 @@ class OpticToCodeVConverter:
         if is_reflective:
             return {"name": "REFL"}
 
+        reject_unsupported_ideal_absorption(mat)
         if is_air(mat):
             return None
 

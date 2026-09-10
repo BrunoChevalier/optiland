@@ -13,7 +13,7 @@ from __future__ import annotations
 import pickle
 from contextlib import contextmanager
 
-from PySide6.QtCore import QObject, Signal
+from PySide6.QtCore import QObject, QTimer, Signal
 
 from optiland.optic import Optic
 from optiland_gui.services.analysis_runner import AnalysisRunner
@@ -23,6 +23,7 @@ from optiland_gui.services.file_service import (
     SpecialFloatEncoder,  # re-exported for backward compat
     json_inf_nan_hook,  # re-exported for backward compat
 )
+from optiland_gui.services.job_records import BackendConfig
 from optiland_gui.services.optimization_service import OptimizationService
 from optiland_gui.services.surface_service import SurfaceService
 from optiland_gui.services.system_service import SystemService
@@ -87,6 +88,12 @@ class OptilandConnector(QObject):
         self.opticLoaded.connect(self._on_optic_loaded)
         self.opticChanged.connect(self._on_optic_changed)
         self.calculation_jobs = CalculationJobs(self.document_state, self)
+        self.calculation_services = [self.calculation_jobs]
+        self._calculation_backend = BackendConfig.capture()
+        self._backend_timer = QTimer(self)
+        self._backend_timer.setInterval(250)
+        self._backend_timer.timeout.connect(self._check_calculation_backend)
+        self._backend_timer.start()
 
         self._optic = Optic("Default System")
         self._undo_redo_manager = UndoRedoManager(self)
@@ -754,3 +761,19 @@ class OptilandConnector(QObject):
             ``True`` while running, ``False`` otherwise.
         """
         return self._optimization_service.is_running
+
+    def register_calculation_service(self, service):
+        """Include another isolated service in backend invalidation and shutdown."""
+        if service not in self.calculation_services:
+            self.calculation_services.append(service)
+
+    def _check_calculation_backend(self):
+        backend = BackendConfig.capture()
+        if backend == self._calculation_backend:
+            return
+        self._calculation_backend = backend
+        for service in self.calculation_services:
+            service.cancel_cancellable()
+        # Backend configuration is a calculation input, not a persisted edit.
+        # Existing view schedulers also include backend configuration in keys.
+        self.document_state.changed.emit(self.document_state.token)

@@ -914,6 +914,9 @@ class MainWindow(FramelessWindow):
             event.ignore()
             if not getattr(self, "_file_close_requested", False):
                 self._file_close_requested = True
+                self.connector._calculation_shutdown_started = True
+                for service in tuple(self.connector.calculation_services):
+                    service.cancel_cancellable()
                 operations.settled.connect(self._files_settled)
                 operations.begin_close()
             return
@@ -921,9 +924,19 @@ class MainWindow(FramelessWindow):
             event.ignore()
             if not getattr(self, "_calculation_shutdown_requested", False):
                 self._calculation_shutdown_requested = True
-                jobs = self.connector.calculation_jobs
-                jobs.stopped.connect(self._calculations_stopped)
-                jobs.shutdown()
+                self.connector._calculation_shutdown_started = True
+                services = tuple(
+                    getattr(
+                        self.connector,
+                        "calculation_services",
+                        [self.connector.calculation_jobs],
+                    )
+                )
+                self._stopping_services = set(services)
+                for jobs in services:
+                    jobs.stopped.connect(self._calculations_stopped)
+                for jobs in services:
+                    jobs.shutdown()
             return
         logger.debug("Closing application.")
         if hasattr(self, "panel_manager") and self.panel_manager.python_terminal:
@@ -932,6 +945,9 @@ class MainWindow(FramelessWindow):
 
     @Slot()
     def _calculations_stopped(self) -> None:
+        self._stopping_services.discard(self.sender())
+        if self._stopping_services:
+            return
         self._calculation_shutdown_complete = True
         QTimer.singleShot(0, self.close)
 

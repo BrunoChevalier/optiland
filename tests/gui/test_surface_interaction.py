@@ -77,8 +77,14 @@ def make_editor(minimal_optic):
     conn.get_surface_data.return_value = "0"
     editor = LensEditor(conn)
     editor.resize(850, 400)
+    # Native desktop tools can retain foreground focus over a test window.
+    # Keep this fixture unobscured so widgetAt tests the intended target.
+    editor.setWindowFlag(Qt.WindowStaysOnTopHint)
     editor.show()
+    editor.raise_()
+    editor.activateWindow()
     QTest.qWaitForWindowExposed(editor)
+    QTest.qWaitForWindowActive(editor)
     QTest.qWait(100)
     return editor, conn
 
@@ -117,6 +123,19 @@ def test_editor_hover_selection_embedded_header_and_leave(qapp, minimal_optic):
         )
         assert state.hovered_surface is selected
         assert state.hovered_column is None
+        horizontal_header = table.horizontalHeader().viewport()
+        move_pointer(horizontal_header, horizontal_header.rect().center())
+        assert state.hovered_surface is None
+        for column in range(table.columnCount()):
+            table.setColumnWidth(column, 60)
+        QTest.qWait(5)
+        blank_position = QPoint(
+            table.horizontalHeader().length() + 10, table.rowViewportPosition(1) + 10
+        )
+        assert table.viewport().rect().contains(blank_position)
+        assert table.columnAt(blank_position.x()) == -1
+        move_pointer(table.viewport(), blank_position)
+        assert state.hovered_surface is None  # Empty space to the right of columns.
         move_pointer(table.viewport(), QPoint(20, table.viewport().height() - 5))
         assert state.hovered_surface is None
         assert state.selected_surfaces == (selected,)
@@ -165,6 +184,7 @@ def test_overlapping_window_and_pending_pointer_callbacks(qapp, minimal_optic):
     move_to_cell(editor, 1, 2)
     assert editor.interaction_state.hovered_surface is minimal_optic.surfaces[1]
     overlay = QWidget()
+    overlay.setWindowFlag(Qt.WindowStaysOnTopHint)
     overlay.resize(editor.size())
     overlay.move(editor.mapToGlobal(QPoint(0, 0)))
     overlay.show()

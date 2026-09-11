@@ -189,12 +189,13 @@ class Lens2D:
 
         """
         max_extent = self._get_max_extent()
+        common_axis = self._has_common_axis()
         sags = []
         for surf in self.surfaces:
             x, y, z = surf._compute_sag(projection)
 
             # extend surface to max extent
-            if surf.extent < max_extent:
+            if common_axis and surf.extent < max_extent:
                 x, y, z = self._extend_surface(
                     x, y, z, surf.surf, max_extent, projection
                 )
@@ -206,6 +207,28 @@ class Lens2D:
             sags.append((x, y, z))
 
         return sags
+
+    def _has_common_axis(self):
+        """Whether local radii can define a shared coaxial lens rim.
+
+        A diagonal prism face has a longer local extent than its projected
+        height. Borrowing that extent for the other faces invents extra glass.
+        Decentered faces likewise have distinct radial origins.
+        """
+        if len(self.surfaces) < 2:
+            return True
+        origin, rotation = self.surfaces[0].surf.geometry.cs.get_effective_transform()
+        origin = be.to_numpy(origin)
+        axis = be.to_numpy(rotation)[:, 2]
+        for surface in self.surfaces[1:]:
+            position, rotation = surface.surf.geometry.cs.get_effective_transform()
+            normal = be.to_numpy(rotation)[:, 2]
+            displacement = be.to_numpy(position) - origin
+            if not np.allclose(np.cross(axis, normal), 0, atol=1e-9, rtol=0):
+                return False
+            if not np.allclose(np.cross(axis, displacement), 0, atol=1e-9, rtol=0):
+                return False
+        return True
 
     def _get_max_extent(self):
         """Gets the maximum radial extent of all surfaces in the lens in global
@@ -474,6 +497,7 @@ class Lens3D(Lens2D):
 
         """
         max_extent = self._get_max_extent()
+        common_axis = self._has_common_axis()
         for (
             surface_3d_obj
         ) in self.surfaces:  # surface_3d_obj is an instance of e.g. Surface3D
@@ -484,7 +508,7 @@ class Lens3D(Lens2D):
             renderer.AddActor(actor)
 
             # Add annulus if surface extent does not extend to lens edge
-            if surface_3d_obj.extent < max_extent:
+            if common_axis and surface_3d_obj.extent < max_extent:
                 self._plot_annulus(
                     surface_3d_obj, renderer, theme=theme
                 )  # Pass renderer

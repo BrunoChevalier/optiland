@@ -61,10 +61,27 @@ class OpticSnapshot:
     def capture(cls, optic: Optic) -> OpticSnapshot:
         from optiland.optic import Optic
 
-        if type(optic).trace is not Optic.trace or "trace" in vars(optic):
+        if any(
+            getattr(type(optic), name) is not getattr(Optic, name)
+            for name in ("trace", "trace_generic")
+        ):
             raise ValueError(
                 "This custom tracing model needs an owned snapshot adapter."
             )
+        for component, methods in (
+            (optic, ("trace", "trace_generic")),
+            (optic.ray_tracer, ("trace", "trace_generic")),
+            (
+                getattr(optic.ray_tracer, "ray_generator", None),
+                ("generate_rays",),
+            ),
+        ):
+            if component is not None and any(
+                name in vars(component) for name in methods
+            ):
+                raise ValueError(
+                    "This custom tracing model needs an owned snapshot adapter."
+                )
         component_types = _component_types(optic)
         return cls(
             pickle.dumps(optic.to_dict(), protocol=5),
@@ -86,7 +103,13 @@ class OpticSnapshot:
 
 def _component_types(optic: Optic) -> tuple:
     """Reject unsupported runtime extensions rather than silently losing their type."""
-    components = [optic.aperture, optic.apodization, optic.fields.field_definition]
+    components = [
+        optic.aperture,
+        optic.apodization,
+        optic.fields.field_definition,
+        optic.ray_tracer,
+        getattr(optic.ray_tracer, "ray_generator", None),
+    ]
     for surface in optic.surfaces:
         components.extend(
             (

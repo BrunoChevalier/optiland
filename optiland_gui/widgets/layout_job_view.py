@@ -109,7 +109,6 @@ class LayoutJobView(QObject):
                 "parameters": parameters,
                 "key": key,
             }
-            self._requested_key = key
             request = self.jobs.submit(
                 self.target,
                 f"optiland_gui.services.layout_tasks:prepare_{self.kind}",
@@ -118,6 +117,9 @@ class LayoutJobView(QObject):
                 context=context,
             )
             self._job_id = request.job_id
+            # Cancelling a previous queued preview emits its terminal result
+            # synchronously inside submit. Install the new key afterwards.
+            self._requested_key = key
         except Exception as exc:
             self._requested_key = None
             self._set_busy(False)
@@ -139,7 +141,9 @@ class LayoutJobView(QObject):
 
     @Slot(object, str)
     def _state_changed(self, request, state):
-        if request.target != self.target:
+        if request.target != self.target or (
+            self._job_id is not None and request.job_id < self._job_id
+        ):
             return
         if state in ("queued", "running", "cancelling"):
             self._set_busy(True)

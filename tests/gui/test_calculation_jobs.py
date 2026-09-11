@@ -120,6 +120,46 @@ def test_polarized_snapshot_preserves_aperture_and_incident_state(minimal_optic)
     )
 
 
+@pytest.mark.parametrize("component_name", ["ray_tracer", "ray_generator"])
+@pytest.mark.parametrize("override_kind", ["subclass", "instance_method"])
+def test_snapshot_rejects_unserializable_tracing_extensions(
+    minimal_optic, component_name, override_kind
+):
+    component = minimal_optic.ray_tracer
+    method_name = "trace"
+    if component_name == "ray_generator":
+        component = component.ray_generator
+        method_name = "generate_rays"
+    if override_kind == "subclass":
+
+        class CustomTracingComponent(type(component)):
+            pass
+
+        component.__class__ = CustomTracingComponent
+    else:
+        setattr(component, method_name, lambda *args, **kwargs: None)
+
+    with pytest.raises(ValueError, match="snapshot adapter"):
+        OpticSnapshot.capture(minimal_optic)
+
+
+@pytest.mark.parametrize("method_name", ["trace", "trace_generic"])
+@pytest.mark.parametrize("override_kind", ["subclass", "instance_method"])
+def test_snapshot_rejects_custom_optic_trace_methods(
+    minimal_optic, method_name, override_kind
+):
+    if override_kind == "subclass":
+        minimal_optic.__class__ = type(
+            "CustomOptic",
+            (type(minimal_optic),),
+            {method_name: lambda *args, **kwargs: None},
+        )
+    else:
+        setattr(minimal_optic, method_name, lambda *args, **kwargs: None)
+    with pytest.raises(ValueError, match="snapshot adapter"):
+        OpticSnapshot.capture(minimal_optic)
+
+
 def test_worker_keeps_heartbeat_and_delivers_slots_on_gui(qapp, jobs):
     state, service, receiver = jobs
     ticks = []

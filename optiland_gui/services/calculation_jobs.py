@@ -48,8 +48,9 @@ class CalculationJobs(QObject):
 
     Signals are emitted by this GUI-owned QObject. Receivers that access widgets
     must be GUI-owned QObject slots. Every submitted job receives one terminal
-    result, including replaced pending work. Only ``result.current`` grants
-    permission to present or commit; consumers may keep obsolete data separately.
+    result, including replaced pending work. Recheck ``is_current(request)``
+    immediately before presenting or committing; ``result.current`` is only the
+    signal-time hint. Consumers may keep obsolete data separately.
     """
 
     state_changed = Signal(object, str)

@@ -126,8 +126,7 @@ def test_display_preserves_trace_coordinates_intensity_and_optical_path(
     for key, value in zip(attributes, original, strict=True):
         np.testing.assert_array_equal(be.to_numpy(getattr(plotter, key)), value)
     np.testing.assert_array_equal(be.to_numpy(plotter.optic.surfaces.opd), paths)
-    # This branch fixes drawing only: the independent GUI-003 numerical fix is
-    # not inherited merely to make the visual result appear physically correct.
+    # Preparing display paths must never rewrite phase-analysis input.
 
 
 def test_matching_absorbing_ideal_medium_has_no_boundary_event(set_test_backend):
@@ -266,3 +265,26 @@ def test_read_only_input_and_coincident_reference_points():
     points.setflags(write=False)
     result = physical_ray_path(points, np.ones(3), np.array([False, True, False]))
     np.testing.assert_array_equal(result, points[[0, 2]])
+
+
+@pytest.mark.parametrize("mismatch", ["coordinates", "intensity", "surfaces"])
+def test_inconsistent_recorded_path_dimensions_are_rejected(mismatch):
+    points = np.zeros((3, 3))
+    intensity = np.ones(3)
+    neutral = np.zeros(3, dtype=bool)
+    if mismatch == "coordinates":
+        points = np.zeros((3, 2))
+    elif mismatch == "intensity":
+        intensity = np.ones(2)
+    else:
+        neutral = np.zeros(2, dtype=bool)
+    with pytest.raises(ValueError, match="must have equal length"):
+        physical_ray_path(points, intensity, neutral)
+
+
+@pytest.mark.parametrize("scale", [1e-200, 1e200])
+def test_collinearity_keeps_real_bends_at_extreme_coordinate_scales(scale):
+    points = np.array([[0, 0, 0], [scale, 0, 0], [scale, scale, 0]])
+    with np.errstate(over="raise", invalid="raise", divide="raise"):
+        result = physical_ray_path(points, np.ones(3), np.array([False, True, False]))
+    np.testing.assert_array_equal(result, points)

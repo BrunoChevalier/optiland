@@ -65,7 +65,7 @@ def _collinear(first: np.ndarray, middle: np.ndarray, last: np.ndarray) -> bool:
     if not np.isfinite([first, middle, last]).all():
         return False
     incoming, outgoing = middle - first, last - middle
-    lengths = np.linalg.norm(incoming), np.linalg.norm(outgoing)
+    lengths = np.hypot.reduce(incoming), np.hypot.reduce(outgoing)
     if lengths[0] == 0 or lengths[1] == 0:
         return True
     # Unit directions avoid overflowing the cross product of long segments.

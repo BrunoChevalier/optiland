@@ -127,3 +127,30 @@ def test_rectangular_faces_do_not_acquire_an_annulus(set_test_backend):
     renderer = vtk.vtkRenderer()
     lens._plot_surfaces(renderer)
     assert renderer.GetActors().GetNumberOfItems() == 2
+
+
+@pytest.mark.parametrize("offset", [(5, -3), (-5, 3)])
+def test_offset_elliptical_faces_meet_body_walls(set_test_backend, offset):
+    aperture = EllipticalAperture(4, 2, offset_x=offset[0], offset_y=offset[1])
+    optic, lens = _lens([aperture, aperture])
+    before = json.dumps(optic.to_dict(), sort_keys=True)
+    renderer = vtk.vtkRenderer()
+    lens.plot(renderer)
+    actors = list(renderer.GetActors())
+    assert len(actors) == 3
+    expected = np.array([offset[0] - 4, offset[1] - 2, offset[0] + 4, offset[1] + 2])
+    for actor in actors[:2]:
+        mesh = actor.GetMapper().GetInput()
+        # Bounds of unreferenced grid points can hide missing face geometry.
+        used = np.unique(vtk_to_numpy(mesh.GetPolys().GetConnectivityArray()))
+        assert used.size > 0
+        points = _world_points(actor)[used, :2]
+        actual = np.concatenate((points.min(axis=0), points.max(axis=0)))
+        np.testing.assert_allclose(actual, expected, atol=0.07)
+    wall_points = _world_points(actors[2])[:, :2]
+    np.testing.assert_allclose(
+        np.concatenate((wall_points.min(axis=0), wall_points.max(axis=0))),
+        expected,
+        atol=1e-6,
+    )
+    assert json.dumps(optic.to_dict(), sort_keys=True) == before

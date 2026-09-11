@@ -6,7 +6,9 @@ import pickle
 import sys
 import threading
 import time
+from operator import attrgetter
 from pathlib import Path
+from types import MethodType
 
 import numpy as np
 import pytest
@@ -158,6 +160,49 @@ def test_snapshot_rejects_custom_optic_trace_methods(
         setattr(minimal_optic, method_name, lambda *args, **kwargs: None)
     with pytest.raises(ValueError, match="snapshot adapter"):
         OpticSnapshot.capture(minimal_optic)
+
+
+@pytest.mark.parametrize(
+    ("component_path", "method_name"),
+    [
+        ("", "trace"),
+        ("", "trace_generic"),
+        ("ray_tracer", "trace"),
+        ("ray_tracer", "trace_generic"),
+        ("ray_tracer.ray_generator", "generate_rays"),
+    ],
+)
+@pytest.mark.parametrize("binding", ["same_owner", "foreign_owner", "wrapper"])
+def test_snapshot_accepts_only_behaviorally_identical_rebound_trace_methods(
+    minimal_optic, component_path, method_name, binding
+):
+    def component(optic):
+        return attrgetter(component_path)(optic) if component_path else optic
+
+    owner = component(minimal_optic)
+    method = getattr(owner, method_name)
+    if binding == "foreign_owner":
+        other = OpticSnapshot.capture(minimal_optic).restore()
+        method = getattr(component(other), method_name)
+    elif binding == "wrapper":
+        original = method
+
+        def wrapper(self, *args, **kwargs):
+            return original(*args, **kwargs)
+
+        method = MethodType(wrapper, owner)
+    setattr(owner, method_name, method)
+
+    if binding != "same_owner":
+        with pytest.raises(ValueError, match="snapshot adapter"):
+            OpticSnapshot.capture(minimal_optic)
+        return
+
+    restored = OpticSnapshot.capture(minimal_optic).restore()
+    assert method_name not in vars(component(restored))
+    minimal_optic.trace(0, 0, 0.55, 5, "line_y")
+    restored.trace(0, 0, 0.55, 5, "line_y")
+    np.testing.assert_allclose(restored.surfaces.y, minimal_optic.surfaces.y)
 
 
 def test_worker_keeps_heartbeat_and_delivers_slots_on_gui(qapp, jobs):

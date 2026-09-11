@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pickle
 from dataclasses import dataclass, field
+from types import MethodType
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -76,12 +77,23 @@ class OpticSnapshot:
                 ("generate_rays",),
             ),
         ):
-            if component is not None and any(
-                name in vars(component) for name in methods
-            ):
-                raise ValueError(
-                    "This custom tracing model needs an owned snapshot adapter."
-                )
+            if component is None:
+                continue
+            for name in methods:
+                if name not in vars(component):
+                    continue
+                method = vars(component)[name]
+                # Restoring an instrumented method may bind the unchanged class
+                # implementation on the instance. Only that exact same-owner
+                # method is equivalent to what the serializer reconstructs.
+                if not (
+                    isinstance(method, MethodType)
+                    and method.__self__ is component
+                    and method.__func__ is getattr(type(component), name, None)
+                ):
+                    raise ValueError(
+                        "This custom tracing model needs an owned snapshot adapter."
+                    )
         component_types = _component_types(optic)
         return cls(
             pickle.dumps(optic.to_dict(), protocol=5),

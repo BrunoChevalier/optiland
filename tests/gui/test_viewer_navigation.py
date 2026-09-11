@@ -8,6 +8,7 @@ import numpy as np
 import pytest
 from matplotlib.backend_bases import MouseButton, MouseEvent
 from PySide6.QtCore import QEvent, QPoint, Qt
+from PySide6.QtGui import QKeyEvent
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 
@@ -104,7 +105,10 @@ def test_other_widget_lock_prevents_custom_pan(viewer):
         viewer.canvas.widgetlock.release(owner)
 
 
-@pytest.mark.parametrize("interrupt", ["zoom", "lock", "focus_out", "hide"])
+@pytest.mark.parametrize(
+    "interrupt",
+    ["zoom", "lock", "focus_out", "hide", "deactivate", "escape", "rebuild"],
+)
 def test_interrupted_default_drag_cannot_keep_panning(viewer, interrupt):
     start, end = viewer.ax.transData.transform([(3, 3), (7, 7)])
     before = limits(viewer)
@@ -115,8 +119,20 @@ def test_interrupted_default_drag_cannot_keep_panning(viewer, interrupt):
         viewer.toolbar.zoom()
     elif interrupt == "lock":
         viewer.canvas.widgetlock(owner)
+    elif interrupt == "escape":
+        QApplication.sendEvent(
+            viewer.canvas, QKeyEvent(QEvent.KeyPress, Qt.Key_Escape, Qt.NoModifier)
+        )
+    elif interrupt == "rebuild":
+        viewer.plot_optic(preserve_zoom=True)
+        # This fixture has no optic; rebuilding installs the empty-scene axes.
+        before = limits(viewer)
     else:
-        event_type = QEvent.Type.FocusOut if interrupt == "focus_out" else QEvent.Type.Hide
+        event_type = {
+            "focus_out": QEvent.Type.FocusOut,
+            "hide": QEvent.Type.Hide,
+            "deactivate": QEvent.Type.WindowDeactivate,
+        }[interrupt]
         QApplication.sendEvent(viewer.canvas, QEvent(event_type))
     try:
         emit(viewer, "motion_notify_event", end)
@@ -135,7 +151,9 @@ def test_click_without_drag_and_missing_coordinates_do_not_move_view(viewer):
     emit(viewer, "button_press_event", pixel)
     emit(viewer, "button_release_event", pixel)
     np.testing.assert_array_equal(limits(viewer), before)
-    viewer.on_mouse_move_on_plot(SimpleNamespace(inaxes=viewer.ax, xdata=None, ydata=None))
+    viewer.on_mouse_move_on_plot(
+        SimpleNamespace(inaxes=viewer.ax, xdata=None, ydata=None)
+    )
     assert not viewer.cursor_coord_label.isVisible()
 
 
@@ -151,6 +169,37 @@ def test_navigation_does_not_replot_optic(viewer, monkeypatch):
     emit(viewer, "button_release_event", end)
     viewer.toolbar.back()
     viewer.toolbar.forward()
+
+
+def test_default_pan_is_anchored_through_multiple_motion_events(viewer):
+    before = limits(viewer)
+    start, middle, end = viewer.ax.transData.transform([(3, 3), (4, 4), (5, 5)])
+    emit(viewer, "button_press_event", start)
+    emit(viewer, "motion_notify_event", middle)
+    emit(viewer, "motion_notify_event", end)
+    emit(viewer, "button_release_event", end)
+    np.testing.assert_allclose(limits(viewer), before - 2)
+    viewer.toolbar.back()
+    np.testing.assert_allclose(limits(viewer), before)
+    viewer.toolbar.forward()
+    np.testing.assert_allclose(limits(viewer), before - 2)
+    viewer.toolbar.home()
+    np.testing.assert_allclose(limits(viewer), before)
+
+
+def test_scroll_zoom_and_coordinate_readout_keep_working(viewer):
+    pixel = viewer.ax.transData.transform((3, 3))
+    emit(viewer, "motion_notify_event", pixel)
+    assert "3.000" in viewer.cursor_coord_label.text()
+    before = limits(viewer)
+    viewer.canvas.callbacks.process(
+        "scroll_event", MouseEvent("scroll_event", viewer.canvas, *pixel, step=1)
+    )
+    np.testing.assert_allclose(np.diff(limits(viewer)), np.diff(before) / 1.1)
+    viewer.canvas.callbacks.process(
+        "scroll_event", MouseEvent("scroll_event", viewer.canvas, *pixel, step=-1)
+    )
+    np.testing.assert_allclose(limits(viewer), before, atol=1e-12)
 
 
 def test_native_qt_rectangle_drag(viewer, qapp):

@@ -235,3 +235,47 @@ def test_custom_surface_renderer_keeps_existing_positional_data(
         assert calls[-1]["kwargs"] == {"is_image_plane": True}
     finally:
         plt.close(fig)
+
+
+@pytest.mark.parametrize("projection", ["YZ", "XZ"])
+def test_first_blocking_hit_cannot_override_physical_aperture_fit(
+    set_test_backend, projection
+):
+    rays = _recorded_rays()
+    for surface in rays.optic.surfaces:
+        surface.aperture = RadialAperture(1)
+    rays.y = be.array([[0, 1, 1], [0, 1e6, 1], [0, 1e9, 1], [0, 1e9, 1]])
+    rays._update_surface_extents()
+    assert float(be.to_numpy(rays.r_extent[1])) == 1e6
+    viewer = OpticViewer(rays.optic)
+    viewer.rays = rays
+    viewer.system = OpticalSystem(rays.optic, rays)
+    viewer.system._identify_components()
+    _, limits = viewer._default_axis_limits(projection)
+    np.testing.assert_allclose(limits, [-1.15, 1.15])
+
+
+@pytest.mark.parametrize("projection,tilt", [("YZ", "rx"), ("XZ", "ry")])
+def test_tilted_image_marker_is_not_cropped_at_vertex_z_limits(
+    set_test_backend, projection, tilt
+):
+    optic = _optic()
+    optic.surfaces[-2].aperture = RadialAperture(8)
+    setattr(optic.surfaces[-1].geometry.cs, tilt, np.pi / 3)
+    viewer = OpticViewer(optic)
+    fig, ax, _ = viewer.view(num_rays=3, projection=projection, show=False)
+    try:
+        line = next(
+            line for line in ax.lines if "schematic image plane" in line.get_label()
+        )
+        assert np.ptp(line.get_xdata()) > 10
+        assert ax.get_xlim()[0] < np.min(line.get_xdata())
+        assert ax.get_xlim()[1] > np.max(line.get_xdata())
+    finally:
+        plt.close(fig)
+
+
+def test_nonimage_invalid_sample_extent_is_zero(set_test_backend):
+    component = Surface2D(_optic().surfaces[1], be.nan)
+    assert component.extent == 0
+    assert component.extent_source == "ray_samples"

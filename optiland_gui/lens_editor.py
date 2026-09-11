@@ -478,6 +478,7 @@ class LensEditor(QWidget):
         # Prevent excessive column resizing
         self.tableWidget.horizontalHeader().setMinimumSectionSize(60)
         self.tableWidget.horizontalHeader().setMaximumSectionSize(200)
+        self.tableWidget.setColumnWidth(self.connector.COL_TYPE, 160)
         self.tableWidget.horizontalHeader().setSectionResizeMode(
             QHeaderView.ResizeMode.Interactive
         )
@@ -734,6 +735,7 @@ class LensEditor(QWidget):
     @Slot()
     def load_data(self):
         self._load_timer.stop()
+        self._edit_error.hide()
         self._pending_table_state = self._capture_table_state()
         self.tableWidget.verticalHeader().setMaximumSectionSize(70)
         if not self._table_loading:

@@ -94,3 +94,15 @@ def test_3d_coaxial_rim_still_extends(set_test_backend):
     component._plot_annulus = Mock()
     component._plot_surfaces(vtk.vtkRenderer())
     component._plot_annulus.assert_called_once()
+
+
+def test_single_face_keeps_its_own_extent(set_test_backend):
+    optic = Optic()
+    optic.surfaces.add(index=0, z=-10)
+    optic.surfaces.add(index=1, z=5, aperture=RadialAperture(3))
+    face = Surface2D(optic.surfaces[1], 1)
+    component = Lens2D([face])
+    x, y, z = component._compute_sag()[0]
+    np.testing.assert_allclose(be.to_numpy(x), 0)
+    np.testing.assert_allclose(be.to_numpy(y)[[0, -1]], [-3, 3])
+    np.testing.assert_allclose(be.to_numpy(z), 5)

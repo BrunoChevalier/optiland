@@ -16,6 +16,12 @@ import vtk
 from matplotlib.patches import Polygon
 
 import optiland.backend as be
+from optiland.physical_apertures import (
+    EllipticalAperture,
+    OffsetRadialAperture,
+    RadialAperture,
+    RectangularAperture,
+)
 from optiland.visualization.system.utils import revolve_contour, transform, transform_3d
 
 
@@ -404,6 +410,8 @@ class Lens3D(Lens2D):
             bool: True if all surfaces are symmetric, False otherwise.
 
         """
+        if not self._has_circular_apertures():
+            return False
         for surf in self.surfaces:
             geometry = surf.surf.geometry
             if not geometry.is_symmetric:
@@ -416,6 +424,20 @@ class Lens3D(Lens2D):
             ):
                 return False
         return True
+
+    def _has_circular_apertures(self):
+        """Whether a centered, uninterrupted circular rim describes every face."""
+        return all(
+            surface.surf.aperture is None
+            or (
+                type(surface.surf.aperture) is RadialAperture
+                and surface.surf.aperture.r_min == 0
+            )
+            for surface in self.surfaces
+        )
+
+    def _has_shared_circular_rim(self):
+        return self._has_circular_apertures() and self._has_common_axis()
 
     def plot(self, renderer, theme=None, *args, **kwargs):
         """Plots the lens or surfaces using the provided renderer.
@@ -497,7 +519,7 @@ class Lens3D(Lens2D):
 
         """
         max_extent = self._get_max_extent()
-        common_axis = self._has_common_axis()
+        common_axis = self._has_shared_circular_rim()
         for (
             surface_3d_obj
         ) in self.surfaces:  # surface_3d_obj is an instance of e.g. Surface3D
@@ -664,9 +686,8 @@ class Lens3D(Lens2D):
     def _plot_surface_edges(self, renderer, theme=None):
         """Plots the edges of surfaces in a 3D renderer.
 
-        This method generates circular edges for each surface. It then
-        transforms these edges into the appropriate coordinate system and adds
-        them to the renderer.
+        Face perimeters are transformed to global coordinates before joining.
+        Rectangular corners are retained, including for folded components.
 
         Args:
             renderer: The 3D renderer object where the surface edges will be
@@ -685,8 +706,29 @@ class Lens3D(Lens2D):
         for k in range(len(circles) - 1):
             circle1 = circles[k]
             circle2 = circles[k + 1]
+            rectangular = any(
+                type(surface.surf.aperture) is RectangularAperture
+                for surface in self.surfaces[k : k + 2]
+            )
+            circle2 = self._align_perimeters(circle1, circle2, rectangular)
             actor = self._get_edge_surface(circle1, circle2, theme=theme)
             renderer.AddActor(actor)
+
+    @staticmethod
+    def _align_perimeters(first, second, rectangular):
+        """Match winding/start points without twisting reversed surface frames.
+
+        Rectangular loops have four equally sampled sides. Shift only by whole
+        sides so a rectangle's corner cannot be joined to an edge interior.
+        """
+        step = len(second) // 4 if rectangular else 1
+        reversed_loop = np.roll(second[::-1], 1, axis=0)
+        candidates = (
+            np.roll(loop, shift, axis=0)
+            for loop in (second, reversed_loop)
+            for shift in range(0, len(second), step)
+        )
+        return min(candidates, key=lambda loop: np.sum((first - loop) ** 2))
 
     def _get_edge_points(self, surface_obj):
         """Computes the (x, y, z) local coordinates of the edges of the lens.
@@ -698,11 +740,41 @@ class Lens3D(Lens2D):
             tuple: A tuple containing arrays of x, y, and z
                 coordinates in the local coordinate system of surface_obj.
         """
-        max_extent_lens = self._get_max_extent()
-        theta = be.linspace(0, 2 * be.pi, 256)  # 256 points for smooth edge
-
-        x_local = max_extent_lens * be.cos(theta)
-        y_local = max_extent_lens * be.sin(theta)
+        aperture = surface_obj.surf.aperture
+        # Equal samples per side retain exact rectangle corners and support
+        # curved sags. Do not duplicate the first vertex at the closing seam.
+        if type(aperture) is RectangularAperture:
+            left, right, bottom, top = aperture.extent
+            corners = np.array(
+                [(right, top), (left, top), (left, bottom), (right, bottom)]
+            )
+            fractions = np.arange(64)[:, None] / 64
+            points = np.concatenate(
+                [
+                    start + fractions * (end - start)
+                    for start, end in zip(
+                        corners, np.roll(corners, -1, axis=0), strict=True
+                    )
+                ]
+            )
+            x_local, y_local = be.array(points[:, 0]), be.array(points[:, 1])
+        else:
+            theta = be.array(np.arange(256) * (2 * np.pi / 256) + np.pi / 4)
+            offset_x = offset_y = 0
+            if type(aperture) is EllipticalAperture:
+                a, b = aperture.a, aperture.b
+                offset_x, offset_y = aperture.offset_x, aperture.offset_y
+            elif type(aperture) is OffsetRadialAperture:
+                a = b = aperture.r_max
+                offset_x, offset_y = aperture.offset_x, aperture.offset_y
+            else:
+                a = b = (
+                    self._get_max_extent()
+                    if self._has_shared_circular_rim()
+                    else surface_obj.extent
+                )
+            x_local = offset_x + a * be.cos(theta)
+            y_local = offset_y + b * be.sin(theta)
         z_local = surface_obj.surf.geometry.sag(x_local, y_local)
 
         return x_local, y_local, z_local

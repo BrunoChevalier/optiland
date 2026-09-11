@@ -34,6 +34,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QStyle,
     QStyledItemDelegate,
+    QStyleOptionTabWidgetFrame,
     QStyleOptionViewItem,
     QTableWidget,
     QTableWidgetItem,
@@ -48,6 +49,31 @@ from .surface_interaction import EditorHoverTracker, SurfaceInteractionState
 
 if TYPE_CHECKING:
     from .optiland_connector import OptilandConnector
+
+
+class _SurfacePropertiesTabs(QTabWidget):
+    """Align the close control with the tab tops and outer pane border."""
+
+    def event(self, event):
+        handled = super().event(event)
+        if event.type() in (
+            QEvent.Resize,
+            QEvent.Show,
+            QEvent.LayoutRequest,
+            QEvent.StyleChange,
+            QEvent.FontChange,
+        ):
+            button = self.cornerWidget(Qt.TopRightCorner)
+            if button is not None:
+                option = QStyleOptionTabWidgetFrame()
+                self.initStyleOption(option)
+                pane = self.style().subElementRect(
+                    QStyle.SE_TabWidgetTabPane, option, self
+                )
+                button.move(
+                    pane.right() + 1 - button.width(), self.tabBar().geometry().top()
+                )
+        return handled
 
 
 class SurfacePropertiesWidget(QWidget):
@@ -85,7 +111,7 @@ class SurfacePropertiesWidget(QWidget):
         """Creates and populates the form layout with surface parameter widgets."""
         outer_layout = QVBoxLayout(self)
         outer_layout.setContentsMargins(6, 3, 6, 3)
-        self.tabs = QTabWidget()
+        self.tabs = _SurfacePropertiesTabs()
         outer_layout.addWidget(self.tabs)
         self.close_button = QToolButton(self.tabs)
         self.close_button.setObjectName("CloseSurfacePropertiesButton")

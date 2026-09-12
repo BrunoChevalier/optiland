@@ -304,7 +304,6 @@ class ViewerPanel(QWidget):
 
     def _set_preserve_zoom(self, checked):
         self.viewer2D.preserve_zoom = checked
-        self.viewer2D._preserve_next = checked
 
     @Slot()
     def update_viewers(self):
@@ -469,7 +468,9 @@ class MatplotlibViewer(QWidget):
         self._user_initiated_view_change = False
         self._preserve_next = False
         if self.layout_job.data is not None:
-            self._present_layout(self.layout_job.data, self.layout_job.context)
+            self._present_layout(
+                self.layout_job.data, self.layout_job.context, reset=True
+            )
         else:
             self.layout_job.request()
 
@@ -587,12 +588,12 @@ class MatplotlibViewer(QWidget):
             "distribution": self.dist_combo.currentText(),
         }
 
-    def _present_layout(self, data, context, restyle=False):
-        present_2d(self, data, context, restyle)
+    def _present_layout(self, data, context, restyle=False, *, reset=False):
+        present_2d(self, data, context, restyle, reset=reset)
 
     def plot_optic(self, preserve_zoom=False):
         """Request the latest visible layout; calculation belongs to its worker."""
-        self._preserve_next = self.preserve_zoom or bool(preserve_zoom)
+        self._preserve_next = bool(preserve_zoom)
         self.layout_job.request()
 
 

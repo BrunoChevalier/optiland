@@ -308,10 +308,10 @@ class LensEditor(QWidget):
         self.tableWidget.itemChanged.connect(self.on_item_changed_handler)
         self.tableWidget.customContextMenuRequested.connect(self.show_context_menu)
         self.tableWidget.itemSelectionChanged.connect(self.update_headers_on_selection)
-        self.connector.document_state.committed.connect(self._on_document_change)
         self.connector.optimizationVariablesChanged.connect(
             self.full_refresh_from_optic
         )
+        self.connector.document_state.committed.connect(self._on_document_change)
 
     def setup_table(self):
         self.tableWidget.blockSignals(True)
@@ -546,8 +546,8 @@ class LensEditor(QWidget):
 
     @Slot()
     def load_data(self):
-        self._displayed_surfaces = tuple(self.connector.get_optic().surfaces)
         self.tableWidget.blockSignals(True)
+        self._displayed_surfaces = tuple(self.connector.get_optic().surfaces)
         self.tableWidget.setRowCount(0)
         num_surfaces = self.connector.get_surface_count()
         self.tableWidget.setRowCount(num_surfaces)

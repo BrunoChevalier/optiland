@@ -70,6 +70,14 @@ def test_every_registry_family_prepares_owned_numeric_plots(
     )
     assert_plain(result)
     assert result["plot"]["axes"]
+    if name in (
+        "Spot Diagram",
+        "Ray Fan",
+        "Best-Fit Ray Fan",
+        "Pupil Aberration",
+        "Through-Focus Spot",
+    ):
+        assert result["plot"]["legends"], "The wavelength legend must survive transfer"
     assert pickle.dumps(minimal_optic.to_dict(), protocol=5) == original
     # Present the result twice, including a theme change, without an analysis object.
     before = pickle.dumps(result, protocol=5)
@@ -79,6 +87,7 @@ def test_every_registry_family_prepares_owned_numeric_plots(
         draw_analysis_plot(figure, result["plot"], theme)
         figure.canvas.draw()
         assert len(figure.axes) == len(result["plot"]["axes"])
+        assert len(figure.legends) == len(result["plot"]["legends"])
         for actual, expected in zip(figure.axes, result["plot"]["axes"], strict=True):
             np.testing.assert_allclose(actual.get_xlim(), expected["xlim"])
             np.testing.assert_allclose(actual.get_ylim(), expected["ylim"])
@@ -130,6 +139,68 @@ def test_dimension_aware_workload_rejected_before_allocating():
         )
     with pytest.raises(ValueError, match="512 MiB"):
         validate_workload("OPD", {"num_rays": 12}, {"num_points": 100000}, 10, 1, 1)
+
+
+@pytest.mark.parametrize(
+    ("name", "params", "view", "fields", "message"),
+    [
+        ("Ray Fan", {}, {"projection": "3d"}, 1, "2D projections"),
+        ("Spot Diagram", {}, {}, 33, "32 fields"),
+        ("OPD", {}, {"num_points": 0}, 1, "positive integer"),
+    ],
+)
+def test_invalid_display_dimensions_fail_before_calculation(
+    name, params, view, fields, message
+):
+    with pytest.raises(ValueError, match=message):
+        validate_workload(name, params, view, 4, fields, 1)
+
+
+def test_unknown_registry_entry_is_rejected():
+    with pytest.raises(ValueError, match="Unknown analysis"):
+        normalized_parameters("Unregistered analysis", {})
+
+
+@pytest.mark.parametrize("failure", ["unknown_view", "no_embedding", "axes", "size"])
+def test_worker_presentation_limits_report_errors_and_release_figure(
+    minimal_optic, monkeypatch, failure
+):
+    import matplotlib.pyplot as plt
+
+    from optiland_gui.services import analysis_worker
+
+    class TestAnalysis:
+        def __init__(self, optic):
+            pass
+
+        def view(self, fig_to_plot_on, show=False):
+            for _ in range(65 if failure == "axes" else 1):
+                fig_to_plot_on.add_axes((0.1, 0.1, 0.8, 0.8))
+
+    expected = {
+        "unknown_view": "Unsupported plot settings",
+        "no_embedding": "prepared embedded plots",
+        "axes": "64-axis page limit",
+        "size": "64 MiB page limit",
+    }
+    if failure == "no_embedding":
+        monkeypatch.setattr(TestAnalysis, "view", lambda self: None)
+    if failure == "size":
+        monkeypatch.setattr(analysis_worker, "MAX_RESULT_BYTES", 1)
+    monkeypatch.setattr(analysis_worker, "resolve_analysis", lambda name: TestAnalysis)
+    before = plt.get_fignums()
+    with pytest.raises(ValueError, match=expected[failure]):
+        prepare_analysis(
+            OpticSnapshot.capture(minimal_optic),
+            {
+                "name": "Ray Fan",
+                "constructor_args": {},
+                "view_args": {"unsupported": True} if failure == "unknown_view" else {},
+            },
+            lambda *a, **k: None,
+            threading.Event(),
+        )
+    assert plt.get_fignums() == before
 
 
 def test_worker_cancels_before_calculation(minimal_optic):

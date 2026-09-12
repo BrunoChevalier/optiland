@@ -126,7 +126,61 @@ def test_unrecoverable_worker_exit_stops_remaining_batch(connector, qapp):
     runner, jobs = connector._analysis_runner, connector.calculation_jobs
     runner.run_batch(entries(), connector.get_optic())
     qapp.processEvents()
-    jobs.complete("a", status="failed", error="Calculation worker exited unexpectedly.")
+    jobs.complete(
+        "a", status="failed", error="Native library aborted", infrastructure_error=True
+    )
     qapp.processEvents()
     assert [r.target for r in jobs.submissions] == ["a"]
     assert not runner.busy
+
+
+def test_numerical_failure_with_transport_words_does_not_stop_batch(connector, qapp):
+    runner, jobs = connector._analysis_runner, connector.calculation_jobs
+    runner.run_batch(entries(), connector.get_optic())
+    qapp.processEvents()
+    jobs.complete("a", status="failed", error="Calculation worker exited unexpectedly.")
+    qapp.processEvents()
+    assert [r.target for r in jobs.submissions] == ["a", "b"]
+    runner.stop()
+
+
+def test_batch_waiting_for_queue_can_be_stopped_without_later_submission(
+    connector, qapp, monkeypatch
+):
+    runner, jobs = connector._analysis_runner, connector.calculation_jobs
+    submit = jobs.submit
+    monkeypatch.setattr(
+        jobs,
+        "submit",
+        lambda *a, **k: (_ for _ in ()).throw(
+            RuntimeError("Calculation queue is full")
+        ),
+    )
+    runner.run_batch(entries(), connector.get_optic())
+    qapp.processEvents()
+    assert runner.busy and not jobs.submissions
+    runner.stop()
+    monkeypatch.setattr(jobs, "submit", submit)
+    runner._dispatch_batch()
+    assert not runner.busy and not jobs.submissions
+
+
+def test_batch_closed_service_reports_first_failure_and_cancels_rest(
+    connector, qapp, monkeypatch
+):
+    runner, jobs = connector._analysis_runner, connector.calculation_jobs
+    finished, states = [], []
+    runner.finished.connect(lambda target, result: finished.append((target, result)))
+    runner.state_changed.connect(lambda target, state: states.append((target, state)))
+    monkeypatch.setattr(
+        jobs,
+        "submit",
+        lambda *a, **k: (_ for _ in ()).throw(
+            RuntimeError("Calculation service is closed.")
+        ),
+    )
+    runner.run_batch(entries(), connector.get_optic())
+    qapp.processEvents()
+    assert finished[0][0] == "a" and finished[0][1].status == "failed"
+    assert ("b", "cancelled") in states and ("c", "cancelled") in states
+    assert not runner.busy and runner._batch_snapshot is None

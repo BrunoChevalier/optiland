@@ -46,11 +46,23 @@ class ManualJobs(QObject):
         if request:
             self.finished.emit(JobResult(request, "cancelled"))
 
-    def complete(self, target, data=None, status="succeeded", error=""):
+    def complete(
+        self,
+        target,
+        data=None,
+        status="succeeded",
+        error="",
+        infrastructure_error=False,
+    ):
         request = self.requests.pop(target)
         self.finished.emit(
             JobResult(
-                request, status, data, error, request.document == self.document.token
+                request,
+                status,
+                data,
+                error,
+                request.document == self.document.token,
+                infrastructure_error,
             )
         )
 
@@ -71,7 +83,7 @@ def connector_for(optic):
 
 def result_data():
     return {
-        "plot": {"figsize": (7, 5), "axes": [], "texts": []},
+        "plot": {"figsize": (7, 5), "axes": [], "texts": [], "legends": []},
         "size_bytes": 100,
         "summary": "Completed data",
     }

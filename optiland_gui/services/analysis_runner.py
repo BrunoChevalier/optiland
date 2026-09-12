@@ -258,14 +258,7 @@ class AnalysisRunner(QObject):
         del self._requests[target]
         self._last_result = result
         self.finished.emit(target, result)
-        if result.status == "failed" and any(
-            text in result.error
-            for text in (
-                "worker exited unexpectedly",
-                "Could not start the calculation worker",
-                "Invalid calculation-worker message size",
-            )
-        ):
+        if result.status == "failed" and result.infrastructure_error:
             self.stop()
         if self._batch_target == target:
             self._batch_target = None

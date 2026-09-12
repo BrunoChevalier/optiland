@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from unittest.mock import patch
 
 import pytest
@@ -37,6 +38,21 @@ def test_pending_page_immediate_and_late_result_does_not_steal_focus(panel):
     assert panel.current_plot_page_index == 1
     assert first["prepared"]
     assert second["prepared"] is None
+
+
+def test_completion_preserves_keyboard_focus_in_settings(panel, qapp):
+    page = run_page(panel)
+    panel.show()
+    panel.settings_area_widget.show()
+    panel.activateWindow()
+    qapp.processEvents()
+    setting = panel.current_settings_widgets["num_points"]
+    setting.setFocus()
+    qapp.processEvents()
+    assert setting.hasFocus()
+    panel.connector.calculation_jobs.complete(page["page_id"], result_data())
+    qapp.processEvents()
+    assert setting.hasFocus()
 
 
 def test_retains_result_during_rerun_cancel_and_error(panel):
@@ -238,3 +254,82 @@ def test_incomplete_text_and_control_drafts_survive_navigation(panel):
     assert panel.current_settings_widgets["field"].text() == "0,"
     assert page["settings_dirty"]
     assert len(panel.connector.calculation_jobs.submissions) == 2
+
+
+def test_numeric_wavelength_survives_page_restoration(panel):
+    panel.connector.get_wavelength_options = lambda: [
+        ("all", "'all'"),
+        ("primary", "'primary'"),
+        ("0.4500 µm", "[0.45]"),
+    ]
+    page = panel._execute_analysis(
+        None, "FFT PSF", {"wavelength": 0.45, "num_rays": 32}, {}
+    )
+    panel.switch_plot_page(0)
+    assert panel._collect_current_settings()[0]["wavelength"] == 0.45
+    panel._apply_settings_and_rerun_analysis_slot()
+    assert page["constructor_args_used"]["wavelength"] == 0.45
+
+
+def test_selected_field_survives_json_settings_round_trip(panel):
+    panel.connector.get_field_options = lambda: [
+        ("all", "'all'"),
+        ("Field 2", "[(0.0, 0.5)]"),
+    ]
+    page = run_page(panel)
+    panel.current_settings_widgets["fields"].setCurrentIndex(1)
+    args, view = panel._collect_current_settings()
+    saved = json.loads(
+        json.dumps(
+            {"analysis_name": "Ray Fan", "constructor_args": args, "view_args": view}
+        )
+    )
+    panel.current_settings_widgets["fields"].setCurrentIndex(0)
+    panel._apply_loaded_settings_to_ui(saved)
+    assert panel._collect_current_settings()[0]["fields"] == [(0.0, 0.5)]
+    panel._apply_settings_and_rerun_analysis_slot()
+    assert page["constructor_args_used"]["fields"] == [(0.0, 0.5)]
+
+
+def test_loaded_json_settings_restore_coordinates_choices_and_pending_draft(
+    panel, tmp_path, monkeypatch
+):
+    from PySide6.QtWidgets import QFileDialog
+
+    page = panel._execute_analysis(None, "FFT PSF", {"num_rays": 32}, {})
+    panel.switch_plot_page(0)
+    path = tmp_path / "settings.json"
+    path.write_text(
+        json.dumps(
+            {
+                "analysis_name": "FFT PSF",
+                "constructor_args": {
+                    "field": [0.2, 0.3],
+                    "strategy": "centroid",
+                    "grid_size": None,
+                    "remove_tilt": True,
+                    "num_rays": 48,
+                },
+                "view_args": {},
+            }
+        )
+    )
+    monkeypatch.setattr(QFileDialog, "getOpenFileName", lambda *a, **k: (str(path), ""))
+    panel._load_analysis_settings_slot()
+    assert panel._validate_all_inputs() == (True, "")
+    args, _ = panel._collect_current_settings()
+    assert args["field"] == (0.2, 0.3)
+    assert args["strategy"] == "centroid" and args["remove_tilt"]
+    assert args["num_rays"] == 48
+    assert "grid_size" not in args
+    assert page["settings_dirty"]
+    panel.switch_plot_page(0)
+    assert panel.current_settings_widgets["field"].text() == "0.2, 0.3"
+    assert len(panel.connector.calculation_jobs.submissions) == 1
+
+
+def test_loading_unknown_analysis_keeps_current_settings(panel):
+    run_page(panel)
+    with pytest.raises(ValueError, match="supported analysis"):
+        panel._apply_loaded_settings_to_ui({"analysis_name": "Unknown analysis"})
+    assert panel.current_settings_widgets["num_points"].value() == 16

@@ -18,9 +18,9 @@ from matplotlib.path import Path
 
 if TYPE_CHECKING:
     from matplotlib.artist import Artist
-    from matplotlib.axes import Axes
     from matplotlib.colorizer import ColorizingArtist
     from matplotlib.figure import Figure
+    from matplotlib.legend import Legend
     from matplotlib.text import Text
     from matplotlib.transforms import Transform
 
@@ -65,8 +65,7 @@ def _normalization(artist: ColorizingArtist) -> dict:
     }
 
 
-def _legend(ax: Axes) -> dict | None:
-    legend = ax.get_legend()
+def _legend(legend: Legend | None, transform: Transform) -> dict | None:
     if legend is None:
         return None
     handles = []
@@ -85,8 +84,14 @@ def _legend(ax: Axes) -> dict | None:
         else:
             raise ValueError(f"Unsupported analysis legend: {type(handle).__name__}")
         handles.append(style)
-    anchor = legend.get_bbox_to_anchor().transformed(ax.transAxes.inverted())
-    return {"handles": handles, "location": legend._loc, "anchor": tuple(anchor.bounds)}
+    anchor = legend.get_bbox_to_anchor().transformed(transform.inverted())
+    return {
+        "handles": handles,
+        "location": legend._loc,
+        "anchor": tuple(anchor.bounds),
+        "ncols": legend._ncols,
+        "title": legend.get_title().get_text(),
+    }
 
 
 def capture_analysis_plot(figure: Figure) -> dict:
@@ -96,6 +101,7 @@ def capture_analysis_plot(figure: Figure) -> dict:
         "figsize": tuple(figure.get_size_inches()),
         "axes": [],
         "texts": [_text(t, figure.transFigure) for t in figure.texts],
+        "legends": [_legend(legend, figure.transFigure) for legend in figure.legends],
     }
     for ax in figure.axes:
         if ax.name != "rectilinear":
@@ -117,7 +123,7 @@ def capture_analysis_plot(figure: Figure) -> dict:
             "collections": [],
             "images": [],
             "texts": [_text(t, ax.transAxes) for t in ax.texts],
-            "legend": _legend(ax),
+            "legend": _legend(ax.get_legend(), ax.transAxes),
             "colorbar": hasattr(ax, "_colorbar"),
         }
         for line in ax.lines:
@@ -182,6 +188,9 @@ def capture_analysis_plot(figure: Figure) -> dict:
                 item.update(
                     kind="segments",
                     segments=[_array(s) for s in collection.get_segments()],
+                    # get_linestyles() has already scaled dashes by linewidth;
+                    # constructors require the original patterns to avoid scaling twice.
+                    linestyles=collection._us_linestyles,
                 )
             else:
                 raise ValueError(
@@ -189,6 +198,8 @@ def capture_analysis_plot(figure: Figure) -> dict:
                 )
             axis["collections"].append(item)
         for im in ax.images:
+            if not im.get_visible():
+                continue
             axis["images"].append(
                 {
                     "values": _array(im.get_array()),
@@ -253,7 +264,11 @@ def draw_analysis_plot(figure: Figure, prepared: dict, theme: str = "dark") -> N
                 collection.set_transform(IdentityTransform())
                 ax.add_collection(collection)
             elif item["kind"] == "segments":
-                ax.add_collection(LineCollection(item["segments"], **style))
+                ax.add_collection(
+                    LineCollection(
+                        item["segments"], linestyles=item["linestyles"], **style
+                    )
+                )
             else:
                 coords = item["coordinates"]
                 ax.pcolormesh(
@@ -263,6 +278,9 @@ def draw_analysis_plot(figure: Figure, prepared: dict, theme: str = "dark") -> N
                     cmap=item["cmap"],
                     norm=_norm(item),
                     shading="flat",
+                    alpha=item["alpha"],
+                    zorder=item["zorder"],
+                    label=item["label"],
                 )
         for item in data["images"]:
             ax.imshow(
@@ -272,6 +290,9 @@ def draw_analysis_plot(figure: Figure, prepared: dict, theme: str = "dark") -> N
                 interpolation=item["interpolation"],
                 cmap=item["cmap"],
                 norm=_norm(item),
+                alpha=item["alpha"],
+                zorder=item["zorder"],
+                label=item["label"],
             )
         for item in data["texts"]:
             style = {k: v for k, v in item.items() if k not in ("position", "text")}
@@ -305,6 +326,8 @@ def draw_analysis_plot(figure: Figure, prepared: dict, theme: str = "dark") -> N
                 handles=[Line2D([], [], **style) for style in legend["handles"]],
                 loc=legend["location"],
                 bbox_to_anchor=legend["anchor"],
+                ncols=legend["ncols"],
+                title=legend["title"],
             )
         if data["colorbar"]:
             ax.yaxis.set_ticks_position("right")
@@ -313,3 +336,11 @@ def draw_analysis_plot(figure: Figure, prepared: dict, theme: str = "dark") -> N
     for item in prepared["texts"]:
         style = {k: v for k, v in item.items() if k not in ("position", "text")}
         figure.text(*item["position"], item["text"], color=foreground, **style)
+    for legend in prepared["legends"]:
+        figure.legend(
+            handles=[Line2D([], [], **style) for style in legend["handles"]],
+            loc=legend["location"],
+            bbox_to_anchor=legend["anchor"],
+            ncols=legend["ncols"],
+            title=legend["title"],
+        )

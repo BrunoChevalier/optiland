@@ -845,13 +845,17 @@ class AnalysisPanel(QWidget):
 
     def _set_line_edit_value(self, widget, value):
         """Sets the text of a QLineEdit, handling tuples."""
-        text = ", ".join(map(str, value)) if isinstance(value, tuple) else str(value)
+        text = (
+            ", ".join(map(str, value))
+            if isinstance(value, (tuple, list))
+            else str(value)
+        )
         widget.setText(text)
 
     def _set_combobox_value(self, widget, value, param_name):
         """Sets the value of a QComboBox, dispatching to a special handler if needed."""
         if param_name in ["fields", "wavelengths", "wavelength"]:
-            self._set_special_combobox_value(widget, value)
+            self._set_special_combobox_value(widget, value, param_name)
         elif param_name == "axis":
             widget.setCurrentIndex(0 if value == 1 else 1)
         else:
@@ -859,16 +863,29 @@ class AnalysisPanel(QWidget):
             if index != -1:
                 widget.setCurrentIndex(index)
 
-    def _set_special_combobox_value(self, widget, value):
+    def _set_special_combobox_value(self, widget, value, param_name):
         """Sets the value for a QComboBox that uses itemData."""
+        if (
+            param_name == "fields"
+            and isinstance(value, list)
+            and all(isinstance(field, (list, tuple)) for field in value)
+        ):
+            # JSON arrays preserve the selected field coordinates but not tuple types.
+            value = [tuple(field) for field in value]
         for i in range(widget.count()):
             try:
                 item_data = ast.literal_eval(widget.itemData(i) or "None")
-                if item_data == value:
-                    widget.setCurrentIndex(i)
-                    return
             except (ValueError, SyntaxError):
-                continue
+                item_data = widget.itemData(i)
+            if (
+                param_name == "wavelength"
+                and isinstance(item_data, list)
+                and len(item_data) == 1
+            ):
+                item_data = item_data[0]
+            if item_data == value:
+                widget.setCurrentIndex(i)
+                return
 
     def _set_widget_value(self, widget, value, param_name: str):
         """
@@ -896,17 +913,6 @@ class AnalysisPanel(QWidget):
         # If a handler is found, call it with the required arguments
         if handler:
             handler(widget, value, param_name)
-
-    def _set_combobox_value(self, widget, value, param_name):
-        """Sets the value for a QComboBox based on parameter type."""
-        if param_name in ["fields", "wavelengths", "wavelength"]:
-            self._set_special_combobox_value(widget, value)
-        elif param_name == "axis":
-            widget.setCurrentIndex(0 if value == 1 else 1)
-        else:
-            index = widget.findText(str(value))
-            if index != -1:
-                widget.setCurrentIndex(index)
 
     @Slot(str)
     def on_analysis_type_changed(self, analysis_name: str):
@@ -1156,8 +1162,8 @@ class AnalysisPanel(QWidget):
     def _apply_loaded_settings_to_ui(self, loaded_settings):
         """Applies settings loaded from a file to the current UI widgets."""
         analysis_name = loaded_settings.get("analysis_name")
-        if not analysis_name:
-            raise ValueError("Settings file does not contain an 'analysis_name'.")
+        if analysis_name not in self._analysis_class_map:
+            raise ValueError("Settings file must name a supported analysis.")
 
         self.analysisTypeCombo.setCurrentText(analysis_name)
         self.on_analysis_type_changed(
@@ -1172,36 +1178,14 @@ class AnalysisPanel(QWidget):
         for param_name, value in all_args.items():
             if param_name in self.current_settings_widgets:
                 widget = self.current_settings_widgets[param_name]
-                self._set_widget_value(widget, value)
-
-    @Slot()
-    def _load_analysis_settings_slot(self):
-        """Loads and applies settings for an analysis from a JSON file."""
-        filepath, _ = QFileDialog.getOpenFileName(
-            self, "Load Analysis Settings", "", self.JSON_FILE_FILTER
-        )
-        if not filepath:
-            return
-
-        try:
-            with open(filepath, encoding="utf-8") as f:
-                loaded_settings = json.load(f)
-            self._apply_loaded_settings_to_ui(loaded_settings)
-            self.logArea.append(
-                f"Settings loaded from {filepath}. Click 'Apply' or 'Run' "
-                "to see results."
-            )
-        except Exception as e:
-            QMessageBox.critical(
-                self, "Load Error", f"Could not load or apply settings:\n{e}"
-            )
+                self._set_widget_value(widget, value, param_name)
+        self._settings_edited()
 
     def _create_new_plot_canvas(self, page_data):
         """Creates a new FigureCanvas and connects mouse interaction events."""
         fig = Figure(figsize=page_data.get("figsize", (7, 5)), dpi=100)
         canvas = FigureCanvas(fig)
         canvas.setFocusPolicy(Qt.FocusPolicy.ClickFocus | Qt.FocusPolicy.StrongFocus)
-        canvas.setFocus()
 
         # Connect events and store their IDs for later disconnection
         cids = [
@@ -1755,35 +1739,12 @@ class AnalysisPanel(QWidget):
                 with open(filepath, encoding="utf-8") as f:
                     loaded_settings = json.load(f)
 
-                analysis_name = loaded_settings.get("analysis_name")
-                self.analysisTypeCombo.setCurrentText(analysis_name)
-
-                # Apply the loaded settings to the UI widgets
-                self.on_analysis_type_changed(analysis_name)
-
-                all_args = {
-                    **loaded_settings.get("constructor_args", {}),
-                    **loaded_settings.get("view_args", {}),
-                }
-                for param_name, value in all_args.items():
-                    if param_name in self.current_settings_widgets:
-                        widget = self.current_settings_widgets[param_name]
-                        if isinstance(widget, QComboBox):
-                            index = widget.findData(str(value))
-                            if index != -1:
-                                widget.setCurrentIndex(index)
-                        elif isinstance(widget, QSpinBox | QDoubleSpinBox):
-                            widget.setValue(value)
-                        elif isinstance(widget, QCheckBox):
-                            widget.setChecked(value)
-                        elif isinstance(widget, QLineEdit):
-                            widget.setText(str(value))
+                self._apply_loaded_settings_to_ui(loaded_settings)
 
                 self.logArea.append(
                     f"Settings loaded from {filepath}. "
                     "Click 'Apply' or 'Run' to see results."
                 )
-                self._settings_edited()
 
             except Exception as e:
                 msg = f"Could not load or apply settings:\n{e}"

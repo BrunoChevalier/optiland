@@ -121,12 +121,15 @@ class SystemService:
                 raise ValueError(
                     "All polarization fields are required when mode is 'polarized'."
                 )
-            phase_x = math.radians(phase_x_deg)
-            phase_y = math.radians(phase_y_deg)
-            if not all(math.isfinite(value) for value in (Ex, Ey, phase_x, phase_y)):
+            if not all(
+                math.isfinite(value) for value in (Ex, Ey, phase_x_deg, phase_y_deg)
+            ):
                 raise ValueError("Polarization values must be finite.")
             if Ex == 0 and Ey == 0:
                 raise ValueError("Polarized light requires a nonzero field amplitude.")
+            # Reduce GUI degree inputs before casting to the backend precision.
+            phase_x = math.radians(phase_x_deg % 360)
+            phase_y = math.radians(phase_y_deg % 360)
             state = PolarizationState(
                 is_polarized=True,
                 Ex=Ex,
@@ -147,26 +150,34 @@ class SystemService:
         self._connector.notify_change("polarization")
 
     @staticmethod
-    def _same_polarization(first, second):
+    def _same_polarization(first, second) -> bool:
         if isinstance(first, str) or isinstance(second, str):
             return (
                 isinstance(first, str) and isinstance(second, str) and first == second
             )
+        if not isinstance(first, PolarizationState) or not isinstance(
+            second, PolarizationState
+        ):
+            return False
         if first.is_polarized != second.is_polarized:
             return False
         if not first.is_polarized:
             return True
         values = []
+        tolerance = 1e-12
         for state in (first, second):
-            values.append(
-                [
-                    float(be.to_numpy(state.Ex)),
-                    float(be.to_numpy(state.Ey)),
-                    float(be.to_numpy(state.phase_x)) % math.tau,
-                    float(be.to_numpy(state.phase_y)) % math.tau,
-                ]
+            components = [
+                np.asarray(be.to_numpy(value))
+                for value in (state.Ex, state.Ey, state.phase_x, state.phase_y)
+            ]
+            tolerance = max(
+                tolerance, *(4 * np.finfo(value.dtype).eps for value in components)
             )
-        return bool(np.allclose(values[0], values[1], rtol=0, atol=1e-12))
+            values.append([float(value) for value in components])
+        difference = np.subtract(values[0], values[1])
+        # A float32 full turn can lie just to either side of the 0/2π boundary.
+        difference[2:] = [math.remainder(value, math.tau) for value in difference[2:]]
+        return bool(np.all(np.abs(difference) <= tolerance))
 
     def get_field_types(self) -> list[tuple[str, str]]:
         """Return all four supported field types.

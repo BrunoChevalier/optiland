@@ -42,7 +42,7 @@ Geometries provide methods for:
    - Normals are derived from the mathematical description of the geometry and are essential for determining the ray's direction after refraction or reflection.
 
 Conic Intersection Numerics and Execution
-----------------------------------------
+-----------------------------------------
 
 Geometry modules remain backend agnostic. They pass coordinate/direction arrays,
 radius, conic constant, and an optional aperture-membership callable to

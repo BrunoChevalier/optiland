@@ -39,6 +39,10 @@ class IdealMaterial(BaseMaterial):
         self.index = be.array([n])
         self.absorp = be.array([k])
 
+    def _cache_state(self) -> tuple | None:
+        """Track live index/extinction values, including in-place writes."""
+        return self._state_key((self.index, self.absorp))
+
     def _calculate_n(self, wavelength, **kwargs):
         """Returns the refractive index of the material.
 
@@ -55,8 +59,8 @@ class IdealMaterial(BaseMaterial):
         if be.is_array_like(wavelength) and be.size(wavelength) > 1:
             # ``be.full_like(w, value)`` reads the value out as a scalar and
             # detaches it; broadcasting keeps a trainable index attached.
-            return be.ones_like(wavelength) * self.index[0]
-        return self.index[0]
+            return be.ones_like(wavelength) * self._as_backend_array(self.index)[0]
+        return self._as_backend_array(self.index)[0]
 
     def _calculate_k(self, wavelength, **kwargs):
         """Returns the extinction coefficient of the material.
@@ -74,8 +78,8 @@ class IdealMaterial(BaseMaterial):
         if be.is_array_like(wavelength) and be.size(wavelength) > 1:
             # Broadcast (rather than full_like) to keep a trainable extinction
             # coefficient attached to the autograd graph.
-            return be.ones_like(wavelength) * self.absorp[0]
-        return self.absorp[0]
+            return be.ones_like(wavelength) * self._as_backend_array(self.absorp)[0]
+        return self._as_backend_array(self.absorp)[0]
 
     def to_dict(self):
         """Returns a dictionary representation of the material.

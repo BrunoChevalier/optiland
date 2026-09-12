@@ -104,7 +104,7 @@ class Optic:
         solves (SolveManager): Manages solves, which automatically adjust
             surface properties to meet certain constraints.
         obj_space_telecentric (bool): If True, the system is object-space
-            telecentric. Defaults to False.
+            telecentric. Alias for ``fields.telecentric``. Defaults to False.
 
 
     """
@@ -137,9 +137,22 @@ class Optic:
         self.apodization: BaseApodization | None = None
         self.pickups: PickupManager = PickupManager(self)
         self.solves: SolveManager = SolveManager(self)
-        self.obj_space_telecentric: bool = False
         self.updater: OpticUpdater = OpticUpdater(self)
         self.sequences: dict[str, SequencedOptic] = {}
+
+    @property
+    def obj_space_telecentric(self) -> bool:
+        """Whether object space is telecentric, as stored in the current field group."""
+        return self.fields.telecentric
+
+    @obj_space_telecentric.setter
+    def obj_space_telecentric(self, is_telecentric: bool) -> None:
+        """Set object-space telecentricity on the current field group.
+
+        Args:
+            is_telecentric: Whether the system is telecentric in object space.
+        """
+        self.fields.set_telecentric(is_telecentric)
 
     @property
     def surface_group(self) -> SurfaceGroup:

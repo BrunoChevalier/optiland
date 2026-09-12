@@ -1,7 +1,7 @@
-"""CPU tensor execution of the shared conic kernel, with implicit derivatives.
+"""Torch conic execution, CPU acceleration, and implicit derivatives.
 
-Imported only for the Torch backend. CPU float64 tensors expose NumPy views of
-their existing storage; CUDA tensors never enter this path.
+Part of the optional Torch backend. CPU float64 tensors expose NumPy views of
+their existing storage; CUDA tensors retain native Torch operations.
 """
 
 from __future__ import annotations
@@ -11,15 +11,14 @@ from typing import TYPE_CHECKING, Any
 import torch
 from torch import Tensor
 
-from optiland.geometries._conic import (
-    _Candidates,
+from optiland.backend._conic import _Candidates, _conic_candidates, _select_distance
+from optiland.backend.numpy_backend.conic import (
     _numpy_conic_candidates,
     _numpy_conic_distance,
-    _select_distance,
 )
 
 if TYPE_CHECKING:
-    from optiland.physical_apertures.base import BaseAperture
+    from collections.abc import Callable
 
 
 def can_fuse_cpu(values: tuple, radius: Any, conic: Any) -> bool:
@@ -68,11 +67,9 @@ class _ConicCPU(torch.autograd.Function):
     """Use compiled forward values and the conic's exact implicit derivative."""
 
     @staticmethod
-    def forward(
-        aperture: BaseAperture | None, *inputs: Tensor
-    ) -> tuple[Tensor, Tensor]:
+    def forward(contains: Callable | None, *inputs: Tensor) -> tuple[Tensor, Tensor]:
         values = tuple(value.detach().numpy() for value in inputs[:6])
-        if aperture is not None:
+        if contains is not None:
             roots = _Candidates(
                 *(
                     torch.from_numpy(value)
@@ -82,7 +79,7 @@ class _ConicCPU(torch.autograd.Function):
                 )
             )
             return _select_distance(
-                roots, inputs[:6], aperture, torch.where
+                roots, inputs[:6], contains, torch.where
             ), roots.regular
         distance, regular = _numpy_conic_distance(
             *values, inputs[6].item(), inputs[7].item()
@@ -112,7 +109,7 @@ class _ConicCPU(torch.autograd.Function):
 
     @staticmethod
     def jvp(
-        ctx: Any, aperture_tangent: None, *tangents: Tensor | None
+        ctx: Any, contains_tangent: None, *tangents: Tensor | None
     ) -> tuple[Tensor, None]:
         *inputs, distance, regular = ctx.saved_tensors
         result = torch.zeros_like(distance)
@@ -125,7 +122,7 @@ class _ConicCPU(torch.autograd.Function):
 
     @staticmethod
     def vmap(
-        info: Any, in_dims: tuple, aperture: BaseAperture | None, *inputs: Tensor
+        info: Any, in_dims: tuple, contains: Callable | None, *inputs: Tensor
     ) -> tuple:
         # Explicit batching preserves NumPy's storage access contract even
         # under torch.func transforms. Ordinary ray bundles use one fused call.
@@ -141,7 +138,7 @@ class _ConicCPU(torch.autograd.Function):
             )
         outputs = [
             _ConicCPU.apply(
-                aperture,
+                contains,
                 *(
                     value if dim is None else value.select(dim, i)
                     for value, dim in zip(inputs, in_dims, strict=True)
@@ -155,6 +152,41 @@ class _ConicCPU(torch.autograd.Function):
         )
 
 
-def conic_distance_cpu(*inputs: Tensor, aperture: BaseAperture | None = None) -> Tensor:
-    """Evaluate eligible CPU tensors without copying their coordinate storage."""
-    return _ConicCPU.apply(aperture, *inputs)[0]
+def _epsilon(value: Tensor) -> float:
+    """Use the native arithmetic result's floating dtype."""
+    return torch.finfo(value.dtype).eps
+
+
+class ConicMixin:
+    """Finite-conic execution and differentiation for the Torch backend."""
+
+    def conic_intersection(
+        self,
+        x: Tensor,
+        y: Tensor,
+        z: Tensor,
+        L: Tensor,
+        M: Tensor,
+        N: Tensor,
+        radius: Tensor,
+        conic: Tensor,
+        contains: Callable | None = None,
+    ) -> Tensor:
+        """Select a finite-conic intersection without changing dtype or device.
+
+        See ``AbstractBackend.conic_intersection`` for the numerical contract.
+        CPU float64 tensors may use shared compiled loops with implicit
+        derivatives; other inputs retain native Torch operations and autograd.
+        """
+        values = (x, y, z, L, M, N)
+        if can_fuse_cpu(values, radius, conic):
+            return _ConicCPU.apply(contains, *values, radius, conic)[0]
+        # Native where pairs scalar constants with existing tensors. No host
+        # scalar tensor construction or device copy is needed for each guard.
+        roots = _conic_candidates(
+            *values, radius, conic, torch.where, torch.sqrt, torch.copysign, _epsilon
+        )
+        distance = _select_distance(roots, values, contains, torch.where)
+        if distance.requires_grad:
+            distance = torch.where(roots.regular, distance, distance.detach())
+        return distance

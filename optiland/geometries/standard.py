@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import optiland.backend as be
 from optiland.coordinate_system import CoordinateSystem
-from optiland.geometries._conic import conic_distance
 from optiland.geometries.base import BaseGeometry
 
 
@@ -91,7 +90,17 @@ def _conic_intersection_distance(rays, radius, conic, aperture=None):
         N_safe = be.where(be.abs(rays.N) > 1e-14, rays.N, 1e-14)
         return -rays.z / N_safe
 
-    return conic_distance(rays, radius, conic, aperture)
+    return be.conic_intersection(
+        rays.x,
+        rays.y,
+        rays.z,
+        rays.L,
+        rays.M,
+        rays.N,
+        radius,
+        conic,
+        contains=aperture.contains if aperture is not None else None,
+    )
 
 
 class StandardGeometry(BaseGeometry):

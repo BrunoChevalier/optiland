@@ -2,16 +2,13 @@
 
 from __future__ import annotations
 
-from types import SimpleNamespace
-
 import numpy as np
 import pytest
 
 import optiland.backend as be
-from optiland.geometries._conic import (
+from optiland.backend._conic import (
     _conic_candidates,
     _select_distance,
-    conic_distance,
 )
 from optiland.utils import machine_eps
 
@@ -39,18 +36,15 @@ def _inputs(size=3):
 
 
 def _solve(*values, native=False, aperture=None):
-    rays = SimpleNamespace(
-        **dict(zip(("x", "y", "z", "L", "M", "N"), values[:6], strict=True))
-    )
     if native:
         roots = _conic_candidates(
             *values, torch.where, torch.sqrt, torch.copysign, machine_eps
         )
-        distance = _select_distance(roots, values[:6], aperture, torch.where)
+        distance = _select_distance(roots, values[:6], aperture.contains if aperture else None, torch.where)
         return torch.where(roots.regular, distance, distance.detach())
     # Test the finite kernel directly. The existing plane/conic wrapper uses
     # scalar control flow and does not support vmap over the radius itself.
-    return conic_distance(rays, *values[6:], aperture)
+    return be.conic_intersection(*values, contains=aperture.contains if aperture else None)
 
 
 @pytest.mark.parametrize("size", [0, 1, 17])
@@ -97,7 +91,7 @@ def test_forward_mode_and_jacobians_match_native_path(with_aperture):
 def test_single_input_jvp_matches_analytic_sphere_derivative(
     materialize, dual_input
 ):
-    from optiland.geometries._conic_torch import _ConicCPU
+    from optiland.backend.torch_backend.conic import _ConicCPU
 
     received_tangents = []
 
@@ -215,7 +209,7 @@ def test_cpu_invalid_leaf_lanes_do_not_pollute_parameter_gradients():
 def test_strided_cpu_inputs_reuse_storage_and_remain_unchanged(
     monkeypatch, with_aperture
 ):
-    import optiland.geometries._conic_torch as cpu
+    import optiland.backend.torch_backend.conic as cpu
     from optiland.physical_apertures import RadialAperture
 
     aperture = RadialAperture(0.3) if with_aperture else None

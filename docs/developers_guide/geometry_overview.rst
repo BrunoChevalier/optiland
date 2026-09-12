@@ -44,6 +44,21 @@ Geometries provide methods for:
 Conic Intersection Numerics and Execution
 ----------------------------------------
 
+Geometry modules remain backend agnostic. They pass coordinate/direction arrays,
+radius, conic constant, and an optional aperture-membership callable to
+``be.conic_intersection``. The operation is part of ``AbstractBackend`` and the
+normal NumPy/Torch backend implementations. Backend code does not import ray,
+geometry, or aperture classes; the callable returns a boolean mask and only
+selects a discrete branch, without gradients through the aperture's state.
+
+``optiland.backend._conic`` holds the single shared mathematical root/selection
+policy. NumPy compilation belongs to ``backend.numpy_backend.conic``; tensor
+dispatch and custom autograd belong to ``backend.torch_backend.conic``. Keep
+framework imports, device/dtype dispatch, and storage adapters in the backend
+package rather than adding a parallel Torch implementation for each geometry.
+Torch remains optional: importing geometry and tracing with NumPy must work
+when Torch is unavailable.
+
 ``StandardGeometry`` and ``StandardGratingGeometry`` share the conic solver,
 which also supplies the initial intersection for Newton-Raphson geometries.
 It solves the factored implicit equation using a cancellation-resistant

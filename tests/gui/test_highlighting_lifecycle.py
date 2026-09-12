@@ -81,10 +81,10 @@ def test_reject_mismatched_scene_identity_and_nonfinite_reference(
 
 
 def test_panel_manager_connects_actual_editor_and_2d_viewer_to_one_state(
-    qapp, minimal_optic, monkeypatch
+    qapp, highlighting_connector, monkeypatch
 ):
     from optiland_gui import panel_manager
-    from optiland_gui.optiland_connector import OptilandConnector
+    from tests.gui.test_calculation_jobs import wait_for
 
     # Unrelated panels must not start VTK windows or an IPython kernel here.
     class PassivePanel(QWidget):
@@ -106,12 +106,15 @@ def test_panel_manager_connects_actual_editor_and_2d_viewer_to_one_state(
     ):
         monkeypatch.setattr(panel_manager, name, PassivePanel)
     monkeypatch.setattr(panel_manager, "ViewerPanel", TwoDimensionalPanel)
-    connector = OptilandConnector()
-    connector.load_optic_from_object(minimal_optic)
+    connector = highlighting_connector
     window = QMainWindow()
     window.iface = SimpleNamespace()
     manager = panel_manager.PanelManager(window, connector)
     manager.create_all_panels(window)
+    viewer = manager.viewer_panel.viewer2D
+    window.show()
+    manager.viewer_panel.show()
+    wait_for(qapp, lambda: viewer.layout_job.data is not None)
     state = manager.surface_interaction
     assert manager.lens_editor.interaction_state is state
     assert manager.viewer_panel.viewer2D.interaction_state is state
@@ -126,5 +129,7 @@ def test_panel_manager_connects_actual_editor_and_2d_viewer_to_one_state(
     ]
     assert bodies and all(binding.artist.get_linewidth() == 1.5 for binding in bodies)
     changed.assert_not_called()
+    manager.viewer_panel.close()
+    manager.viewer_panel.deleteLater()
     window.close()
     window.deleteLater()

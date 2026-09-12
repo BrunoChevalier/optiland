@@ -191,17 +191,22 @@ def test_prepared_bindings_install_and_clear_without_reconstructing_optic(
 
 @pytest.mark.parametrize("theme", ["light", "dark"])
 def test_viewer_reuses_current_artists_on_hover_and_restores_after_rebuild(
-    qapp, minimal_optic, monkeypatch, theme
+    qapp, highlighting_connector, monkeypatch, theme
 ):
     from optiland_gui.viewer_panel import MatplotlibViewer
+    from tests.gui.test_calculation_jobs import wait_for
 
-    connector = MagicMock()
-    connector.get_optic.return_value = minimal_optic
+    connector = highlighting_connector
+    optic = connector.get_optic()
     viewer = MatplotlibViewer(connector)
     state = SurfaceInteractionState(viewer)
-    state.sync_document(minimal_optic)
+    state.sync_document(optic)
     viewer.set_interaction_state(state)
+    viewer.show()
+    wait_for(qapp, lambda: viewer.layout_job.data is not None)
     viewer.update_theme(theme)
+    changed = MagicMock()
+    connector.opticChanged.connect(changed)
     limits = viewer.ax.get_xlim(), viewer.ax.get_ylim()
     original_artist = viewer.highlight_controller.bindings[0].artist
     original_plot = viewer.plot_optic
@@ -211,10 +216,17 @@ def test_viewer_reuses_current_artists_on_hover_and_restores_after_rebuild(
     state.set_hover(2, 4)
     assert viewer.highlight_controller.bindings[0].artist is original_artist
     assert (viewer.ax.get_xlim(), viewer.ax.get_ylim()) == limits
+    old_data = viewer.layout_job.data
+    viewer.num_rays_spinbox.setValue(7)
     original_plot(preserve_zoom=True)
-    assert state.selected_surfaces == (minimal_optic.surfaces[1],)
+    wait_for(qapp, lambda: viewer.layout_job.data is not old_data)
+    assert state.selected_surfaces == (optic.surfaces[1],)
+    assert viewer.highlight_controller.bindings[0].artist is not original_artist
+    assert original_artist.axes is None
+    np.testing.assert_allclose((viewer.ax.get_xlim(), viewer.ax.get_ylim()), limits)
     body = next(b for b in viewer.highlight_controller.bindings if b.body)
     assert body.artist.get_linewidth() == 1.5
     spy.assert_not_called()
-    connector.opticChanged.emit.assert_not_called()
+    changed.assert_not_called()
     viewer.close()
+    viewer.deleteLater()

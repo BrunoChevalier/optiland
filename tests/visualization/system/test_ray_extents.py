@@ -83,8 +83,9 @@ def test_display_mask_does_not_modify_trace_arrays(
 
     monkeypatch.setattr(rays, "_plot_single_line", capture_line)
     rays._plot_lines(None, 0, (0, 0))
-    assert np.isnan(plotted[1][1][2:]).all()
-    assert np.isfinite(plotted[1][1][1])
+    # The shared physical-path renderer truncates at the first blocking hit.
+    # Assert the exact retained segment rather than an empty downstream slice.
+    np.testing.assert_array_equal(np.column_stack(plotted[1]), [[0, 1, 0], [0, 2, 1]])
     for original, current in zip(originals, (rays.x, rays.y, rays.z), strict=True):
         np.testing.assert_array_equal(be.to_numpy(current), original)
 

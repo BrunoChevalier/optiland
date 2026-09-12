@@ -7,24 +7,45 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 from matplotlib.backend_bases import MouseButton, MouseEvent
-from PySide6.QtCore import QEvent, QPoint, Qt
+from PySide6.QtCore import QCoreApplication, QEvent, QPoint, Qt
 from PySide6.QtGui import QKeyEvent
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 
+from optiland_gui.optiland_connector import OptilandConnector
 from optiland_gui.viewer_panel import MatplotlibViewer
+from tests.gui.test_calculation_jobs import wait_for
+
+
+@pytest.fixture(scope="module")
+def navigation_connector(qapp):
+    connector = OptilandConnector()
+    yield connector
+    connector.calculation_jobs.shutdown()
+    wait_for(qapp, lambda: connector.calculation_jobs._process is None)
+    connector.deleteLater()
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
 
 
 @pytest.fixture
-def viewer(qapp):
-    widget = MatplotlibViewer(SimpleNamespace(get_optic=lambda: None))
-    widget.ax.clear()
-    widget.ax.plot([0, 10], [0, 10])
+def viewer(qapp, minimal_optic, navigation_connector):
+    navigation_connector.load_optic_from_object(minimal_optic)
+    widget = MatplotlibViewer(navigation_connector)
+    widget.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
+    widget.resize(800, 600)
+    widget.show()
+    wait_for(qapp, lambda: widget.layout_job.data is not None)
+    assert widget.layout_job.label.text() == "Layout is up to date."
+    widget.ax.set_aspect("auto")
     widget.ax.set_xlim(0, 10)
     widget.ax.set_ylim(0, 10)
     widget.canvas.draw()
     yield widget
+    widget.layout_job.cancel()
     widget.close()
+    wait_for(qapp, lambda: not navigation_connector.calculation_jobs.running)
+    widget.deleteLater()
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
 
 
 def limits(viewer):
@@ -107,7 +128,7 @@ def test_other_widget_lock_prevents_custom_pan(viewer):
 
 @pytest.mark.parametrize(
     "interrupt",
-    ["zoom", "lock", "focus_out", "hide", "deactivate", "escape", "rebuild"],
+    ["zoom", "lock", "focus_out", "hide", "deactivate", "escape", "request", "theme"],
 )
 def test_interrupted_default_drag_cannot_keep_panning(viewer, interrupt):
     start, end = viewer.ax.transData.transform([(3, 3), (7, 7)])
@@ -123,10 +144,12 @@ def test_interrupted_default_drag_cannot_keep_panning(viewer, interrupt):
         QApplication.sendEvent(
             viewer.canvas, QKeyEvent(QEvent.KeyPress, Qt.Key_Escape, Qt.NoModifier)
         )
-    elif interrupt == "rebuild":
+    elif interrupt == "request":
         viewer.plot_optic(preserve_zoom=True)
-        # This fixture has no optic; rebuilding installs the empty-scene axes.
-        before = limits(viewer)
+    elif interrupt == "theme":
+        serial = viewer.connector.calculation_jobs._serial
+        viewer.update_theme("light")
+        assert viewer.connector.calculation_jobs._serial == serial
     else:
         event_type = {
             "focus_out": QEvent.Type.FocusOut,
@@ -162,6 +185,7 @@ def test_navigation_does_not_replot_optic(viewer, monkeypatch):
         pytest.fail("Navigation must not recalculate the optical plot")
 
     monkeypatch.setattr(viewer, "plot_optic", unexpected)
+    serial = viewer.connector.calculation_jobs._serial
     start, end = viewer.ax.transData.transform([(3, 3), (7, 7)])
     viewer.toolbar.zoom()
     emit(viewer, "button_press_event", start)
@@ -169,6 +193,36 @@ def test_navigation_does_not_replot_optic(viewer, monkeypatch):
     emit(viewer, "button_release_event", end)
     viewer.toolbar.back()
     viewer.toolbar.forward()
+    assert viewer.connector.calculation_jobs._serial == serial
+
+
+def test_async_scene_presentation_finishes_drag_started_while_calculating(viewer, qapp):
+    previous_data = viewer.layout_job.data
+    serial = viewer.connector.calculation_jobs._serial
+    viewer.num_rays_spinbox.setValue(5)
+    viewer.plot_optic(preserve_zoom=True)
+    assert viewer.connector.calculation_jobs._serial == serial + 1
+    assert viewer.layout_job.data is previous_data  # Last good scene stays visible.
+    before = limits(viewer)
+    start, end = viewer.ax.transData.transform([(3, 3), (4, 4)])
+    emit(viewer, "button_press_event", start)
+    emit(viewer, "motion_notify_event", end)
+    assert viewer._is_panning
+    dragged = limits(viewer)
+    assert not np.array_equal(dragged, before)
+
+    wait_for(qapp, lambda: viewer.layout_job.data is not previous_data)
+    assert not viewer._is_panning
+    assert viewer._pan_start_x is None and viewer._pan_start_y is None
+    np.testing.assert_allclose(limits(viewer), dragged)
+    emit(viewer, "motion_notify_event", start)
+    np.testing.assert_allclose(limits(viewer), dragged)
+    emit(viewer, "button_release_event", start)
+    viewer.toolbar.back()
+    np.testing.assert_allclose(limits(viewer), before)
+    viewer.toolbar.forward()
+    np.testing.assert_allclose(limits(viewer), dragged)
+    assert viewer.connector.calculation_jobs._serial == serial + 1
 
 
 def test_default_pan_is_anchored_through_multiple_motion_events(viewer):

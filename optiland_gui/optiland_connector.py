@@ -116,17 +116,21 @@ class OptilandConnector(QObject):
     # ------------------------------------------------------------------
 
     def _on_optic_loaded(self):
-        if not self._publishing_change:
-            self._document_optic = self._optic
-            self.document_state.replace()
+        if self._publishing_change:
+            self._publishing_change = False
+            return
+        self._document_optic = self._optic
+        self.document_state.replace()
 
     def _on_optic_changed(self):
-        if not self._publishing_change:
-            if getattr(self, "_document_optic", None) is not self._optic:
-                self._document_optic = self._optic
-                self.document_state.replace()
-            else:
-                self.document_state.change()
+        if self._publishing_change:
+            self._publishing_change = False
+            return
+        if getattr(self, "_document_optic", None) is not self._optic:
+            self._document_optic = self._optic
+            self.document_state.replace()
+        else:
+            self.document_state.change()
 
     def notify_change(self, category="optical", *, surface_indices=(), columns=()):
         """Publish classified internal changes and preserve the public signal."""
@@ -141,15 +145,19 @@ class OptilandConnector(QObject):
         self.document_state.record(
             category, surface_indices=surface_indices, columns=columns
         )
-        self._publishing_change = True
-        try:
-            if category == "replacement":
-                self.opticLoaded.emit()
-                self.opticChanged.emit()
-            else:
-                self.opticChanged.emit()
-        finally:
-            self._publishing_change = False
+        signals = (
+            (self.opticLoaded, self.opticChanged)
+            if category == "replacement"
+            else (self.opticChanged,)
+        )
+        for signal in signals:
+            # The first-connected bridge consumes this flag before public
+            # listeners run. A listener's reentrant external emit is a new edit.
+            self._publishing_change = True
+            try:
+                signal.emit()
+            finally:
+                self._publishing_change = False
 
     @contextmanager
     def change_transaction(self, *, replacement=False):

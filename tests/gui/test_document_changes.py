@@ -142,3 +142,50 @@ def test_polarization_noop_compares_normalized_values(qapp, monkeypatch):
     assert connector.document_state.token.revision == initial.revision + 1
     with pytest.raises(ValueError, match="nonzero"):
         service.set_polarization_state("polarized", 0, 0, 0, 0)
+
+
+@pytest.mark.parametrize(
+    "category, signal_name",
+    [("metadata", "opticChanged"), ("replacement", "opticLoaded")],
+)
+def test_external_change_during_public_notification_still_revokes_results(
+    qapp, category, signal_name
+):
+    connector = OptilandConnector()
+    initial = connector.document_state.token
+    request = JobRequest(1, initial, "layout", 0, "unused", None, {})
+    adjusted = []
+
+    def adjust_once():
+        if not adjusted:
+            adjusted.append(connector.document_state.token)
+            connector.get_optic().surfaces[1].geometry.radius = 75.0
+            connector.opticChanged.emit()
+
+    getattr(connector, signal_name).connect(adjust_once)
+    connector.notify_change(category, surface_indices=(1,), columns=(1,))
+    assert adjusted
+    assert connector.document_state.token.revision == adjusted[0].revision + 1
+    assert not connector.calculation_jobs.is_current(request)
+
+
+def test_invalid_transaction_declarations_leave_no_success_notifications(qapp):
+    state = DocumentState()
+    commits = []
+    state.committed.connect(commits.append)
+    initial = state.token, state.edit_token
+    with pytest.raises(ValueError, match="Unknown"):
+        state.record("unsupported")
+    assert (state.token, state.edit_token) == initial
+    with (
+        pytest.raises(ValueError, match="outer"),
+        state.transaction(),
+        state.transaction(replacement=True),
+    ):
+        pass
+    with pytest.raises(ValueError, match="Declare"), state.transaction():
+        state.record("metadata")
+        state.replace()
+    assert not commits
+    state.change()
+    assert len(commits) == 1

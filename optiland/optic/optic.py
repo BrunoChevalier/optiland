@@ -104,7 +104,7 @@ class Optic:
         solves (SolveManager): Manages solves, which automatically adjust
             surface properties to meet certain constraints.
         obj_space_telecentric (bool): If True, the system is object-space
-            telecentric. Defaults to False.
+            telecentric. Alias for ``fields.telecentric``. Defaults to False.
 
 
     """
@@ -137,9 +137,22 @@ class Optic:
         self.apodization: BaseApodization | None = None
         self.pickups: PickupManager = PickupManager(self)
         self.solves: SolveManager = SolveManager(self)
-        self.obj_space_telecentric: bool = False
         self.updater: OpticUpdater = OpticUpdater(self)
         self.sequences: dict[str, SequencedOptic] = {}
+
+    @property
+    def obj_space_telecentric(self) -> bool:
+        """Whether object space is telecentric, as stored in the current field group."""
+        return self.fields.telecentric
+
+    @obj_space_telecentric.setter
+    def obj_space_telecentric(self, is_telecentric: bool) -> None:
+        """Set object-space telecentricity on the current field group.
+
+        Args:
+            is_telecentric: Whether the system is telecentric in object space.
+        """
+        self.fields.set_telecentric(is_telecentric)
 
     @property
     def surface_group(self) -> SurfaceGroup:
@@ -779,8 +792,9 @@ class Optic:
             Hx: The normalized x field coordinate(s).
             Hy: The normalized y field coordinate(s).
             wavelength (float): The wavelength of the rays in microns.
-            num_rays: The number of rays to trace.
-                Defaults to 100.
+            num_rays (int, optional): The sampling parameter that determines the
+                number of rays in the pupil. Its meaning depends on the value of
+                `distribution`. Defaults to 100.
             distribution:
                 The distribution of rays. Can be a string identifier (e.g.,
                 'hexapolar', 'uniform') or a `BaseDistribution` object.
@@ -793,6 +807,12 @@ class Optic:
 
         Returns:
             RealRays: A `RealRays` object containing the traced rays.
+
+        Notes:
+            The interpretation of the `num_rays` argument depends on the value of
+            `distribution`. For example, if `distribution` is `hexapolar`, `num_rays`
+            specifies the number of rings, whereas when `distribution` is `uniform`, it
+            specifies the total number of rays per axis.
 
         """
         return self.ray_tracer.trace(

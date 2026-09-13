@@ -73,7 +73,11 @@ def test_local_update_keeps_type_widget_selection_and_scroll(
     connector, editor = make_editor(minimal_optic)
     try:
         table = editor.tableWidget
+        token = connector.document_state.token
         table.setCurrentCell(1, connector.COL_RADIUS)
+        selected = connector.get_optic().surfaces[1]
+        assert editor.interaction_state.selected_surfaces == (selected,)
+        assert connector.document_state.token == token
         original_widget = table.cellWidget(1, connector.COL_TYPE)
         rebuild = MagicMock(
             side_effect=AssertionError("Local cell edit rebuilt the table")
@@ -84,6 +88,8 @@ def test_local_update_keeps_type_widget_selection_and_scroll(
         assert table.currentRow() == 1
         assert table.selectionModel().selectedRows()[0].row() == 1
         assert float(table.item(1, connector.COL_RADIUS).text()) == 75
+        assert editor.interaction_state.selected_surfaces == (selected,)
+        assert connector.document_state.token.revision == token.revision + 1
         rebuild.assert_not_called()
     finally:
         editor.close()
@@ -104,6 +110,8 @@ def test_structural_update_preserves_selected_surface_and_expanded_owner(
         assert editor.open_prop_source_row == 2
         assert editor.tableWidget.currentRow() == 4
         assert editor.tableWidget.selectionModel().selectedRows()[0].row() == 4
+        assert editor.interaction_state.selected_surfaces == (surfaces[2],)
+        assert editor.interaction_state.index_of(surfaces[2]) == 3
     finally:
         editor.close()
         editor.deleteLater()
@@ -196,6 +204,8 @@ def test_removing_expanded_surface_retains_the_selected_surviving_surface(
         assert connector.get_optic().surfaces[1] is surviving
         assert editor.tableWidget.currentRow() == 1
         assert editor.tableWidget.selectionModel().selectedRows()[0].row() == 1
+        assert editor.interaction_state.selected_surfaces == (surviving,)
+        assert editor.interaction_state.index_of(surviving) == 1
     finally:
         editor.close()
         editor.deleteLater()

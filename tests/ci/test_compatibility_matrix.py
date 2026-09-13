@@ -130,6 +130,27 @@ class MatrixTests(unittest.TestCase):
             self.assertIn("numpy==", (report / "constraints.txt").read_text())
             self.assertEqual((self.root / "uv.lock").read_text(), "unchanged")
 
+    def test_unicode_resolver_output_preserves_exit_status(self):
+        output = io.BytesIO()
+        console = io.TextIOWrapper(output, encoding="ascii")
+        with (
+            redirect_stdout(console),
+            self.assertRaises(subprocess.CalledProcessError) as error,
+        ):
+            cm.run_logged(
+                [
+                    sys.executable,
+                    "-c",
+                    "import sys; sys.stdout.buffer.write(bytes.fromhex('e29c97')); raise SystemExit(7)",
+                ],
+                self.root,
+                "unicode.log",
+            )
+        console.flush()
+        self.assertEqual(error.exception.returncode, 7)
+        self.assertIn(b"\\u2717", output.getvalue())
+        self.assertIn("\u2717", (self.root / "unicode.log").read_text(encoding="utf-8"))
+
     def test_resolver_rejects_wrong_python(self):
         with patch.object(
             cm.platform, "python_version_tuple", return_value=("9", "9", "0")
@@ -264,6 +285,9 @@ class MatrixTests(unittest.TestCase):
                         cm.verify(row, report, root=self.root)
 
     def test_cli_errors_and_actual_entrypoint(self):
+        with patch.dict(os.environ, {}, clear=True), redirect_stdout(io.StringIO()):
+            self.assertEqual(cm.main(["matrix"]), 0)
+            self.assertEqual(cm.main(["summary", "--reports", str(self.root)]), 1)
         for arguments in (
             ["record"],
             ["record", "--row", ",".join(r["id"] for r in self.config["rows"][:2])],

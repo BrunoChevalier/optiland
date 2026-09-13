@@ -136,7 +136,10 @@ def run_logged(command, report, log_name, root=ROOT):
     }
     write_json(report / (log_name + ".json"), record)
     if result.returncode:
-        print(log_path.read_text(encoding="utf-8", errors="replace")[-6000:])
+        message = log_path.read_text(encoding="utf-8", errors="replace")[-6000:]
+        # Preserve the resolver failure on Windows consoles with narrow encodings.
+        encoding = getattr(sys.stdout, "encoding", None) or "utf-8"
+        print(message.encode(encoding, errors="backslashreplace").decode(encoding))
         raise subprocess.CalledProcessError(result.returncode, command)
 
 

@@ -1,6 +1,8 @@
 name: Weekly dependency compatibility
 
 on:
+  push:
+    branches: ['codex/weekly-ci-qualification']
   schedule:
     # Friday morning: leave contributors the weekend to investigate failures.
     - cron: '23 3 * * 5'

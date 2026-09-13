@@ -343,6 +343,19 @@ QTableWidget {
     border-radius: 3px;
 }
 
+/* Embedded lens-editor controls reveal the delegate's row/cell hover tint. */
+QTableWidget#LensDataTable::item:hover:!selected {
+    background-color: transparent;
+}
+QTableWidget#LensDataTable::item:hover:selected {
+    background-color: #007ACC;
+}
+QTableWidget#LensDataTable QWidget[ldeHoverBackground="true"],
+QTableWidget#LensDataTable QLineEdit[ldeHoverBackground="true"],
+QTableWidget#LensDataTable QToolButton[ldeHoverBackground="true"] {
+    background-color: transparent;
+}
+
 QHeaderView::section {
     background-color: #252525; /* Darker shade for header */
     color: #E0E0E0; /* var(--text-color) */
@@ -726,17 +739,4 @@ QWidget#CommandPaletteOverlay {
    with the control's font metrics. Keep arrow painting with the native style. */
 QSpinBox, QDoubleSpinBox {
     padding-right: 2em;
-}
-
-/* Embedded lens-editor controls reveal the delegate's row/cell hover tint. */
-QTableWidget#LensDataTable::item:hover:!selected {
-    background-color: transparent;
-}
-QTableWidget#LensDataTable::item:hover:selected {
-    background-color: #007ACC;
-}
-QTableWidget#LensDataTable QWidget[ldeHoverBackground="true"],
-QTableWidget#LensDataTable QLineEdit[ldeHoverBackground="true"],
-QTableWidget#LensDataTable QToolButton[ldeHoverBackground="true"] {
-    background-color: transparent;
 }

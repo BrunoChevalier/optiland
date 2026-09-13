@@ -2,28 +2,33 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import QObject, QPersistentModelIndex, QRect
+from typing import TYPE_CHECKING
+
+from PySide6.QtCore import QModelIndex, QObject, QPersistentModelIndex, QRect
 from PySide6.QtGui import QColor, QPalette
-from PySide6.QtWidgets import QLineEdit, QToolButton
+from PySide6.QtWidgets import QLineEdit, QToolButton, QWidget
+
+if TYPE_CHECKING:
+    from .lens_editor import LensEditor
 
 
 class EditorHoverPresentation(QObject):
-    """Consume the shared surface state; pointer tracking remains in GUI-002."""
+    """Consume the shared surface state without duplicating pointer tracking."""
 
-    def __init__(self, editor):
+    def __init__(self, editor: LensEditor) -> None:
         super().__init__(editor)
         self.editor = editor
         self.table = editor.tableWidget
         self.state = editor.interaction_state
         self._previous_row = -1
-        self._editors = {}
+        self._editors: dict[int, tuple[QWidget, QPersistentModelIndex]] = {}
         self.state.changed.connect(self.refresh)
 
-    def hovered_row(self):
+    def hovered_row(self) -> int:
         index = self.state.index_of(self.state.hovered_surface)
         return self.editor.map_surface_index_to_ui_row(index) if index >= 0 else -1
 
-    def tint(self, row, column):
+    def tint(self, row: int, column: int) -> QColor | None:
         if row != self.hovered_row():
             return None
         pointed = column == self.state.hovered_column
@@ -36,7 +41,7 @@ class EditorHoverPresentation(QObject):
         return QColor(0, 0, 0, 5 if pointed else 10)
 
     @staticmethod
-    def _transparent(widget, enabled):
+    def _transparent(widget: QWidget, enabled: bool) -> None:
         if widget.property("ldeHoverBackground") == enabled:
             return
         widget.setProperty("ldeHoverBackground", enabled)
@@ -44,14 +49,24 @@ class EditorHoverPresentation(QObject):
         widget.style().polish(widget)
         widget.update()
 
-    def register_editor(self, widget, index):
+    def register_editor(self, widget: QWidget, index: QModelIndex) -> None:
         """Keep an active cell editor intact as the pointer crosses the table."""
         key = id(widget)
         self._editors[key] = (widget, QPersistentModelIndex(index))
         widget.destroyed.connect(lambda: self._editors.pop(key, None))
         self._transparent(widget, index.row() == self.hovered_row())
 
-    def refresh(self):
+    def is_editing(self, index: QModelIndex) -> bool:
+        """Identify cells whose text is being drawn by an editor widget."""
+        return any(candidate == index for _, candidate in self._editors.values())
+
+    def unregister_editor(self, widget: QWidget) -> None:
+        """Restore display text when editing ends, before deferred destruction."""
+        entry = self._editors.pop(id(widget), None)
+        if entry is not None:
+            self.table.viewport().update(self.table.visualRect(entry[1]))
+
+    def refresh(self) -> None:
         row = self.hovered_row()
         for affected in {self._previous_row, row}:
             if not 0 <= affected < self.table.rowCount():

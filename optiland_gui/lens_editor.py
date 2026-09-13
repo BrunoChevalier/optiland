@@ -11,7 +11,16 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import QEvent, QItemSelectionModel, QSize, Qt, QTimer, Signal, Slot
+from PySide6.QtCore import (
+    QEvent,
+    QItemSelectionModel,
+    QModelIndex,
+    QSize,
+    Qt,
+    QTimer,
+    Signal,
+    Slot,
+)
 from PySide6.QtGui import QBrush, QColor, QIcon, QPainter, QPen
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -223,21 +232,34 @@ class _AccentFocusDelegate(QStyledItemDelegate):
 
     _ACCENT = QColor("#007ACC")
 
-    def __init__(self, editor):
+    def __init__(self, editor: LensEditor) -> None:
         super().__init__(editor.tableWidget)
         self.editor = editor
 
-    def createEditor(self, parent, option, index):
+    def createEditor(
+        self, parent: QWidget, option: QStyleOptionViewItem, index: QModelIndex
+    ) -> QWidget | None:
         widget = super().createEditor(parent, option, index)
         if widget is not None:
             self.editor.hover_presentation.register_editor(widget, index)
         return widget
 
+    def destroyEditor(self, editor: QWidget, index: QModelIndex) -> None:
+        self.editor.hover_presentation.unregister_editor(editor)
+        super().destroyEditor(editor, index)
+
+    def initStyleOption(self, option: QStyleOptionViewItem, index: QModelIndex) -> None:
+        super().initStyleOption(option, index)
+        if self.editor.hover_presentation.is_editing(index):
+            # The editor is transparent over the row tint. Drawing the stored
+            # display text here would show it behind the user's current draft.
+            option.text = ""
+
     def paint(
         self,
         painter: QPainter,
         option: QStyleOptionViewItem,
-        index,
+        index: QModelIndex,
     ) -> None:
         base = QStyleOptionViewItem(option)
         # The table-wide QSS hover rule must not compete with shared row state.

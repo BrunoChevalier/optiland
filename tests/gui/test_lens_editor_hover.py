@@ -5,10 +5,12 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from PySide6.QtCore import QPoint
+from PySide6.QtCore import QCoreApplication, QEvent, QPoint, Qt
 from PySide6.QtGui import QBrush, QColor
+from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QLineEdit
 
+from optiland_gui.lens_editor import LensEditor
 from tests.gui.test_surface_interaction import make_editor, move_pointer, move_to_cell
 
 
@@ -16,11 +18,16 @@ from tests.gui.test_surface_interaction import make_editor, move_pointer, move_t
 def themed_editor(qapp, minimal_optic, request):
     previous = qapp.styleSheet()
     path = Path(__file__).parents[2] / "optiland_gui/resources/styles"
-    qapp.setStyleSheet((path / f"{request.param}_theme.qss").read_text())
+    qapp.setStyleSheet(
+        (path / f"{request.param}_theme.qss").read_text(encoding="utf-8")
+    )
     editor, connector = make_editor(minimal_optic)
     yield editor, connector, request.param
+    for widget, _ in tuple(editor.hover_presentation._editors.values()):
+        QTest.keyClick(widget, Qt.Key_Escape)
     editor.close()
     editor.deleteLater()
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
     qapp.setStyleSheet(previous)
 
 
@@ -56,7 +63,7 @@ def test_embedded_type_and_header_use_same_row_state(themed_editor):
     move_pointer(embedded.type_edit, embedded.type_edit.rect().center())
     assert embedded.type_edit.property("ldeHoverBackground") is True
     assert editor.interaction_state.hovered_column == 0
-    assert editor.hover_presentation.tint(1, 0).lightnessF() >= 0
+    assert editor.hover_presentation.tint(1, 0) != editor.hover_presentation.tint(1, 1)
     header = table.verticalHeader()
     move_pointer(header.viewport(), QPoint(5, header.sectionViewportPosition(1) + 10))
     assert editor.interaction_state.hovered_column is None
@@ -116,3 +123,92 @@ def test_expanded_panel_hover_paints_source_row_only(themed_editor, qapp):
     assert editor.hover_presentation.tint(1, 3) is not None
     assert editor.hover_presentation.tint(2, 3) is None
     assert panel.property("ldeHoverBackground") is None
+
+
+def test_empty_active_editor_does_not_reveal_old_display_text(themed_editor, qapp):
+    editor, connector, _ = themed_editor
+    table = editor.tableWidget
+    item = table.item(1, 1)
+    table.blockSignals(True)
+    item.setText("Old visible comment")
+    table.blockSignals(False)
+    table.setCurrentCell(1, 1)
+    table.edit(table.model().index(1, 1))
+    qapp.processEvents()
+    active = next(iter(editor.hover_presentation._editors.values()))[0]
+    active.clear()
+    move_pointer(active, QPoint(20, 8))
+    assert active.text() == ""
+    assert item.text() == "Old visible comment"
+    # Exclude the caret and native focus border. A blank draft must show only
+    # the hovered cell background, not the old elided display text behind it.
+    region = active.geometry().adjusted(12, 6, -12, -6)
+    image = table.viewport().grab().toImage()
+    ratio = image.devicePixelRatio()
+    colors = {
+        image.pixelColor(round(x * ratio), round(y * ratio)).rgba()
+        for x in range(region.left(), region.right())
+        for y in range(region.top(), region.bottom())
+    }
+    assert len(colors) == 1
+    QTest.keyClick(active, Qt.Key_Escape)
+    qapp.processEvents()
+    assert not editor.hover_presentation.is_editing(table.model().index(1, 1))
+    assert item.text() == "Old visible comment"
+    image = table.viewport().grab().toImage()
+    restored_colors = {
+        image.pixelColor(round(x * ratio), round(y * ratio)).rgba()
+        for x in range(region.left(), region.right())
+        for y in range(region.top(), region.bottom())
+    }
+    assert len(restored_colors) > 1  # Stored text is visible again after Cancel.
+    connector.set_surface_data.assert_not_called()
+
+
+def test_hover_preserves_real_document_revision_selection_and_job_count(
+    qapp, highlighting_connector
+):
+    connector = highlighting_connector
+    editor = LensEditor(connector)
+    editor.resize(850, 400)
+    editor.show()
+    QTest.qWaitForWindowExposed(editor)
+    table = editor.tableWidget
+    try:
+        table.selectRow(1)
+        selected = editor.interaction_state.selected_surfaces
+        token = connector.document_state.token
+        serial = connector.calculation_jobs._serial
+        modified = connector.is_modified()
+        for row, column in ((1, 2), (2, 3), (2, 0), (1, 1)):
+            move_to_cell(editor, row, column)
+            assert editor.interaction_state.selected_surfaces == selected
+            assert connector.document_state.token == token
+            assert connector.calculation_jobs._serial == serial
+            assert connector.is_modified() == modified
+        move_pointer(editor.btnAddSurface, QPoint(5, 5))
+        assert editor.hover_presentation.hovered_row() == -1
+    finally:
+        editor.close()
+        editor.deleteLater()
+
+
+def test_theme_change_with_open_editor_preserves_the_draft(themed_editor, qapp):
+    editor, connector, theme = themed_editor
+    table = editor.tableWidget
+    table.setCurrentCell(1, 1)
+    table.edit(table.model().index(1, 1))
+    qapp.processEvents()
+    active = next(iter(editor.hover_presentation._editors.values()))[0]
+    active.setText("Uncommitted draft")
+    move_pointer(active, QPoint(20, 8))
+    tint = editor.hover_presentation.tint(1, 2)
+    path = Path(__file__).parents[2] / "optiland_gui/resources/styles"
+    other = "light" if theme == "dark" else "dark"
+    qapp.setStyleSheet((path / f"{other}_theme.qss").read_text(encoding="utf-8"))
+    qapp.processEvents()
+    assert active.text() == "Uncommitted draft"
+    assert active.hasFocus()
+    assert editor.hover_presentation.tint(1, 2) != tint
+    assert active.property("ldeHoverBackground") is True
+    connector.set_surface_data.assert_not_called()

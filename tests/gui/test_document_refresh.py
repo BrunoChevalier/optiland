@@ -11,6 +11,7 @@ from PySide6.QtWidgets import QApplication, QLineEdit
 from optiland_gui.lens_editor import LensEditor
 from optiland_gui.optiland_connector import OptilandConnector
 from optiland_gui.system_properties_panel import SystemPropertiesPanel
+from optiland_gui.viewer_panel import SagViewer
 
 
 def make_editor(minimal_optic):
@@ -231,3 +232,35 @@ def test_stop_change_updates_both_type_labels_and_same_stop_is_noop(
     finally:
         editor.close()
         editor.deleteLater()
+
+
+def test_presentation_keeps_editor_state_and_structure_updates_hidden_sag_range(
+    qapp, highlighting_connector, monkeypatch
+):
+    connector = highlighting_connector
+    editor = LensEditor(connector)
+    sag = SagViewer(connector)
+    try:
+        table = editor.tableWidget
+        table.selectRow(1)
+        selected = connector.get_optic().surfaces[1]
+        widget = table.cellWidget(1, connector.COL_TYPE)
+        token = connector.document_state.token
+        repaint = MagicMock(wraps=table.viewport().update)
+        monkeypatch.setattr(table.viewport(), "update", repaint)
+        connector.notify_change("presentation")
+        repaint.assert_called_once()
+        assert table.cellWidget(1, connector.COL_TYPE) is widget
+        assert editor.interaction_state.selected_surfaces == (selected,)
+        assert connector.document_state.token == token
+
+        previous_maximum = sag.surface_selector.maximum()
+        connector.add_surface(index=1)
+        assert sag.surface_selector.maximum() == previous_maximum + 1
+        assert editor.interaction_state.selected_surfaces == (selected,)
+        assert connector.calculation_jobs._serial == 0
+    finally:
+        editor.close()
+        editor.deleteLater()
+        sag.close()
+        sag.deleteLater()

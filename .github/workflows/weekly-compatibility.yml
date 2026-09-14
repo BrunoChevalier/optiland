@@ -87,7 +87,7 @@ jobs:
         with:
           version: ${{ env.UV_VERSION }}
           enable-cache: true
-          cache-suffix: ${{ matrix.python }}
+          cache-suffix: ${{ matrix.id }}
           cache-dependency-glob: |
             .github/compatibility-matrix.toml
             pyproject.toml

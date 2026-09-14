@@ -8,6 +8,7 @@ import io
 import json
 import os
 from pathlib import Path
+import runpy
 import subprocess
 import sys
 import tempfile
@@ -28,6 +29,23 @@ class MatrixTests(unittest.TestCase):
     def load(self, config):
         with patch.object(cm.tomllib, "load", return_value=config):
             return cm.load_matrix()
+
+    def test_script_entrypoint_and_exit_status(self):
+        script = str(Path(cm.__file__))
+        for arguments, status, message in (
+            (["validate"], 0, "Validated"),
+            (["summary", "--reports", str(self.root)], 1, "missing"),
+        ):
+            with (
+                self.subTest(arguments=arguments),
+                patch.object(sys, "argv", [script, *arguments]),
+                patch.dict(os.environ, {"GITHUB_STEP_SUMMARY": ""}),
+                redirect_stdout(io.StringIO()) as output,
+                self.assertRaises(SystemExit) as exited,
+            ):
+                runpy.run_path(script, run_name="__main__")
+            self.assertEqual(exited.exception.code, status)
+            self.assertIn(message, output.getvalue())
 
     def test_manifest_and_single_file_updates(self):
         self.assertTrue(self.config["rows"])

@@ -37,8 +37,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
         with:
           python-version: '3.11'
       - run: python scripts/ci/compatibility_matrix.py validate
@@ -58,8 +58,8 @@ jobs:
       timeout_minutes: ${{ steps.matrix.outputs.timeout_minutes }}
       artifact_retention_days: ${{ steps.matrix.outputs.artifact_retention_days }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
         with:
           python-version: '3.11'
       - id: matrix
@@ -79,11 +79,11 @@ jobs:
     env:
       ROW_ID: ${{ matrix.id }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python }}
-      - uses: astral-sh/setup-uv@v6
+      - uses: astral-sh/setup-uv@v7
         with:
           version: ${{ env.UV_VERSION }}
           enable-cache: true
@@ -150,7 +150,7 @@ jobs:
         run: python scripts/ci/compatibility_matrix.py record --row "$ROW_ID"
       - name: Upload diagnostics (including failed rows)
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: compatibility-${{ matrix.id }}
           path: compatibility-reports/${{ matrix.id }}/
@@ -163,11 +163,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
         with:
           python-version: '3.11'
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           pattern: compatibility-*
           path: downloaded-reports

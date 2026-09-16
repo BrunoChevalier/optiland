@@ -8,12 +8,35 @@ import pytest
 from PySide6.QtCore import QPoint, Qt
 from PySide6.QtGui import QFont
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QStyle, QStyleOptionTabWidgetFrame
+from PySide6.QtWidgets import QApplication, QStyle, QStyleOptionTabWidgetFrame
 
 from optiland_gui import lens_editor
 from optiland_gui.lens_editor import SurfacePropertiesWidget
+from tests.gui.test_properties_expansion_position import make_large_connector
 from tests.gui.test_surface_properties_panels import editor as editor
 from tests.gui.test_surface_properties_panels import panel
+
+
+def test_panel_toggles_do_not_change_the_model_on_each_backend(qapp, set_test_backend):
+    connector = make_large_connector(6)
+    connector.set_surface_type(1, "biconic")
+    widget = lens_editor.LensEditor(connector)
+    token = connector.document_state.edit_token
+    optic = connector.get_optic()
+    try:
+        widget.toggle_properties_widget(1)
+        widget.toggle_properties_widget(2)
+        assert panel(widget, 1).input_widgets
+        widget.close_properties_widget(1)
+        assert widget.open_prop_source_rows == {2}
+        assert connector.get_optic() is optic
+        assert connector.document_state.edit_token == token
+    finally:
+        widget.close()
+        widget.deleteLater()
+        connector.calculation_jobs.shutdown()
+        connector.deleteLater()
+        qapp.processEvents()
 
 
 def test_invalid_toggles_and_repeated_close_leave_other_panels_alone(editor):
@@ -29,6 +52,8 @@ def test_invalid_toggles_and_repeated_close_leave_other_panels_alone(editor):
 
 
 def test_shape_edit_after_row_shift_targets_the_correct_surface(editor, qapp):
+    editor.connector.set_surface_type(1, "biconic")
+    editor.connector.set_surface_type(2, "biconic")
     editor.toggle_properties_widget(2)
     opened = panel(editor, 2)
     editor.toggle_properties_widget(0)
@@ -44,15 +69,30 @@ def test_shape_edit_after_row_shift_targets_the_correct_surface(editor, qapp):
 
 
 def test_hover_in_properties_has_owner_but_no_cell_tint(editor, qapp):
+    editor.move(40, 40)
+    editor.resize(850, 650)
+    editor.raise_()
+    editor.activateWindow()
+    assert QTest.qWaitForWindowExposed(editor)
+    QTest.qWait(100)
     editor.toggle_properties_widget(0)
     editor.toggle_properties_widget(2)
     opened = panel(editor, 2)
     editor.tableWidget.scrollToItem(
         editor.tableWidget.item(editor.map_surface_index_to_ui_row(2), 1)
     )
-    QTest.mouseMove(opened.close_button, opened.close_button.rect().center())
     qapp.processEvents()
-    editor.hover_tracker.refresh()
+    position = opened.close_button.mapToGlobal(opened.close_button.rect().center())
+    local = editor.tableWidget.viewport().mapFromGlobal(position)
+    assert QApplication.widgetAt(position) is opened.close_button, (
+        position,
+        local,
+        editor.geometry(),
+        opened.geometry(),
+        QApplication.widgetAt(position),
+        editor.tableWidget.viewport().rect(),
+    )
+    editor.hover_tracker.update_at(position)
     state = editor.interaction_state
     assert state.hovered_surface is editor.connector.get_optic().surfaces[2]
     assert state.hovered_column is None

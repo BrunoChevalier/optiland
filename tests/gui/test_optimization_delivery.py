@@ -10,8 +10,10 @@ from optiland_gui.optimization_panel import OptimizationPanel
 from optiland_gui.optimization_preview import OptimizationPreview
 from optiland_gui.services.job_records import OpticSnapshot
 from optiland_gui.services.layout_tasks import prepare_2d
+from optiland_gui.services.optimization_jobs import build_problem, optimize
+from optiland_gui.services.optimization_service import OptimizationService
 from tests.gui import test_optimization_jobs
-from tests.gui.optimization_fixture import DelayedOptimizer
+from tests.gui.optimization_fixture import DelayedOptimizer, NonFiniteOptimizer
 from tests.gui.test_calculation_jobs import wait_for
 
 owned_service = test_optimization_jobs.owned_service
@@ -117,3 +119,216 @@ def test_completion_listener_can_start_next_run(qapp, owned_service):
     assert not errors
     assert not service.is_running
     assert len(connector._undo_redo_manager._undo_stack) == 2
+
+
+@pytest.mark.parametrize(
+    "group,index",
+    [
+        ("Local", 0),
+        ("Local", 1),
+        ("Local", 2),
+        ("Global", 0),
+        ("Global", 1),
+        ("Global", 2),
+        ("Global", 3),
+    ],
+)
+def test_exposed_algorithms_return_finite_detached_candidates(
+    minimal_optic, group, index
+):
+    algorithm = OptimizationService.get_optimizer_groups()[group][index][1]
+    kwargs = (
+        {"max_iter": 3}
+        if algorithm.__name__ == "OrthogonalDescent"
+        else {"maxiter": 3, "disp": False}
+    )
+    if algorithm.__name__ == "LeastSquares":
+        kwargs["method_choice"] = "trf"
+    options = test_optimization_jobs.parameters(algorithm, kwargs)
+    if algorithm.__name__ == "BasinHopping":
+        options["variables"][0].update(min_val=None, max_val=None)
+    snapshot = OpticSnapshot.capture(minimal_optic)
+    result = optimize(snapshot, options, lambda *args, **kw: None, threading.Event())
+    assert result["final_merit"] <= result["initial_merit"]
+    assert result["evaluations"] > 0
+    assert OpticSnapshot.capture(minimal_optic).data == snapshot.data
+    if algorithm.__name__ == "OrthogonalDescent":
+        assert not result["converged"] and result["iterations"] is None
+
+
+@pytest.mark.parametrize("fail_preview", [False, True])
+def test_preview_is_bounded_and_drawing_failure_does_not_lose_candidate(
+    minimal_optic, monkeypatch, fail_preview
+):
+    import itertools
+
+    from optiland_gui.services import layout_tasks
+
+    clock = itertools.count()
+    monkeypatch.setattr(
+        "optiland_gui.services.optimization_jobs.time.monotonic",
+        lambda: next(clock) * 0.3,
+    )
+    if fail_preview:
+
+        def fail(*args, **kwargs):
+            raise ValueError("drawing unavailable")
+
+        monkeypatch.setattr(layout_tasks, "prepare_2d", fail)
+    options = test_optimization_jobs.parameters(DelayedOptimizer, {"delay": 0})
+    options["preview"] = {"enabled": True, "frequency": 1}
+    progress = []
+    result = optimize(
+        OpticSnapshot.capture(minimal_optic),
+        options,
+        lambda *args, **kw: progress.append(kw.get("details", {})),
+        threading.Event(),
+    )
+    assert result["converged"]
+    key = "preview_error" if fail_preview else "preview"
+    assert sum(key in entry for entry in progress) == 1
+    assert result["candidate"].restore().surfaces[1].thickness == 8
+
+
+@pytest.mark.parametrize(
+    "variable,message",
+    [("thickness", "non-finite final value"), ("radius", "non-finite final value")],
+)
+def test_nonfinite_candidate_is_rejected_even_when_solver_reports_success(
+    minimal_optic, variable, message
+):
+    options = test_optimization_jobs.parameters(NonFiniteOptimizer, {})
+    options["variables"][0]["type"] = variable
+    with pytest.raises(ValueError, match=message):
+        optimize(
+            OpticSnapshot.capture(minimal_optic),
+            options,
+            lambda *args, **kw: None,
+            threading.Event(),
+        )
+
+
+def test_nonfinite_merit_cannot_be_applied(minimal_optic):
+    options = test_optimization_jobs.parameters(DelayedOptimizer, {"delay": 0})
+    options["operands"][0]["weight"] = float("inf")
+    with pytest.raises(ValueError, match="non-finite final merit"):
+        optimize(
+            OpticSnapshot.capture(minimal_optic),
+            options,
+            lambda *args, **kw: None,
+            threading.Event(),
+        )
+
+
+@pytest.mark.parametrize("missing", ["variables", "operands"])
+def test_incomplete_problem_is_rejected(minimal_optic, missing):
+    variables, operands = test_optimization_jobs.definitions()
+    if missing == "variables":
+        variables = []
+    else:
+        operands = []
+    with pytest.raises(ValueError, match="at least one variable and one operand"):
+        build_problem(minimal_optic, variables, operands, {})
+
+
+def test_setup_error_and_late_notifications_do_not_poison_next_run(qapp, owned_service):
+    from optiland_gui.services.job_records import JobResult
+
+    connector, service = owned_service
+    errors, completed, progress = [], [], []
+    service.progressChanged.connect(progress.append)
+
+    class LocalOptimizer:
+        pass
+
+    service.run(LocalOptimizer, {}, on_error=errors.append)
+    assert len(errors) == 1 and "importable" in errors[0]
+    service.run(
+        DelayedOptimizer, {}, on_finished=completed.append, on_error=errors.append
+    )
+    old = service._request
+    wait_for(qapp, lambda: completed or len(errors) > 1, timeout=25)
+    assert len(errors) == 1
+    count = len(progress)
+    service._on_progress(old, {"stage": "late"})
+    service._on_finished(JobResult(old, "failed", error="late failure"))
+    service.stop()
+    assert len(progress) == count and len(errors) == 1 and len(completed) == 1
+
+
+def test_restore_failure_leaves_document_and_undo_unchanged(
+    qapp, owned_service, monkeypatch
+):
+    connector, service = owned_service
+    original = connector.get_optic()
+    errors = []
+
+    def fail(_):
+        raise ValueError("restore unavailable")
+
+    monkeypatch.setattr(OpticSnapshot, "restore", fail)
+    service.run(DelayedOptimizer, {}, on_error=errors.append)
+    wait_for(qapp, lambda: errors, timeout=25)
+    assert "Could not restore" in errors[0]
+    assert connector.get_optic() is original
+    assert not connector._undo_redo_manager.can_undo()
+
+
+def test_algorithm_without_convergence_status_is_retained_from_panel(
+    qapp, owned_service
+):
+    from optiland.optimization.optimizer.scipy import OrthogonalDescent
+
+    connector, service = owned_service
+    panel = OptimizationPanel(connector)
+    panel.cmbAlgorithm.setCurrentIndex(panel.cmbAlgorithm.findData(OrthogonalDescent))
+    completed, errors = [], []
+    service.completed.connect(completed.append)
+    service.failed.connect(errors.append)
+    original = connector.get_optic()
+    panel._on_run()
+    panel._on_optimization_finished("Earlier run notification")
+    assert not panel.btnRun.isEnabled()
+    wait_for(qapp, lambda: completed or errors, timeout=25)
+    assert not errors
+    assert "without convergence" in completed[0] and "not reported" in completed[0]
+    assert panel.btnCandidate.isEnabled()
+    assert connector.get_optic() is original
+    panel.close()
+
+
+def test_candidate_open_errors_retain_candidate_and_preview_error_is_visible(
+    qapp, owned_service, monkeypatch
+):
+    from dataclasses import replace
+
+    from optiland_gui.services.job_records import BackendConfig
+
+    connector, service = owned_service
+    panel = OptimizationPanel(connector)
+    panel.update_theme("light")
+    panel._open_candidate()  # There is no retained result yet.
+    snapshot = OpticSnapshot.capture(connector.get_optic())
+    service._candidate = {
+        "candidate": replace(snapshot, backend=BackendConfig("unavailable"))
+    }
+    panel._open_candidate()
+    assert "Switch back" in panel.txtLog.toPlainText()
+    service._candidate = {"candidate": snapshot}
+
+    def fail(_):
+        raise ValueError("restore unavailable")
+
+    monkeypatch.setattr(OpticSnapshot, "restore", fail)
+    panel._open_candidate()
+    assert "Could not open candidate" in panel.txtLog.toPlainText()
+    assert service._candidate is not None
+    panel._on_optimization_progress(
+        {
+            "stage": "Optimizing",
+            "preview_error": "No layout",
+            "definitions_current": False,
+        }
+    )
+    assert "Candidate preview unavailable: No layout" in panel.txtLog.toPlainText()
+    panel.close()

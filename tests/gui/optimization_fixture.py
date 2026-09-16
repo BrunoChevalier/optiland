@@ -18,3 +18,11 @@ class DelayedOptimizer(OptimizerGeneric):
 class FailedOptimizer(OptimizerGeneric):
     def optimize(self, **kwargs):
         raise RuntimeError("intentional optimization failure")
+
+
+class NonFiniteOptimizer(OptimizerGeneric):
+    """An importable optimizer returning a malformed candidate despite success."""
+
+    def optimize(self, **kwargs):
+        self.problem.variables[0].update(float("nan"))
+        return SimpleNamespace(success=True, message="incorrect success")

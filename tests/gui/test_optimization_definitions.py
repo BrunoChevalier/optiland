@@ -28,6 +28,7 @@ def current_value(optic, definition):
         (0.4861, 0.4861),
         ([0.4861], 0.4861),
         ((0.4861,), 0.4861),
+        (["primary"], 0.55),
     ],
 )
 def test_index_variable_uses_dialog_wavelength_in_setup_and_display(

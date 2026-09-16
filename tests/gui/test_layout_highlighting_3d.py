@@ -250,7 +250,7 @@ def test_native_retained_scene_camera_and_zero_calculation_on_interaction(
     viewer.current_theme = theme
     state = SurfaceInteractionState(viewer)
     state.sync_document(optic)
-    viewer.set_interaction_state(state)
+    viewer.clear_3d_highlights()
     viewer.resize(920, 700)
     viewer.show()
     QTest.qWaitForWindowExposed(viewer)
@@ -261,6 +261,11 @@ def test_native_retained_scene_camera_and_zero_calculation_on_interaction(
             "document_id": connector.document_state.token.document_id,
         }
         viewer._present_layout(data, context)
+        previous = SurfaceInteractionState(viewer)
+        previous.sync_document(optic)
+        viewer.set_interaction_state(previous)
+        viewer.set_interaction_state(state)
+        previous.set_selected_indices([4])
         viewer.layout_job.data, viewer.layout_job.context = data, context
         camera = viewer.renderer.GetActiveCamera()
         camera.Azimuth(25)

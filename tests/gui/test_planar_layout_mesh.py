@@ -86,6 +86,24 @@ def test_curved_custom_and_composite_surfaces_keep_existing_mesh(minimal_optic):
     assert compact_planar_face(Surface3D(planar, 5)) is None
 
 
+@pytest.mark.parametrize(
+    "aperture",
+    [
+        EllipticalAperture(5, 3, offset_x=1),
+        RadialAperture(float("nan")),
+        RadialAperture(0),
+        RadialAperture(3, 4),
+        RectangularAperture(float("nan"), 5, -4, 4),
+    ],
+)
+def test_invalid_or_offset_aperture_does_not_create_a_misleading_compact_face(
+    minimal_optic, aperture
+):
+    surface = minimal_optic.surfaces[-1]
+    surface.aperture = aperture
+    assert compact_planar_face(Surface3D(surface, 5)) is None
+
+
 def plane_sequence(count, *, mirror=False):
     optic = Optic()
     optic.set_aperture("EPD", 2)
@@ -118,7 +136,8 @@ def test_94_planar_surfaces_fit_transport_without_dense_overlay_grids():
     assert len(encode_message({"event": "result", "data": data})) < 1_000_000
 
 
-def test_standalone_surface_reuses_payload_and_retained_polydata(qapp):
+@pytest.mark.parametrize("with_normals", [False, True])
+def test_standalone_surface_reuses_payload_and_retained_polydata(qapp, with_normals):
     from optiland_gui.layout_presenter import present_3d
 
     optic = plane_sequence(4, mirror=True)
@@ -136,6 +155,9 @@ def test_standalone_surface_reuses_payload_and_retained_polydata(qapp):
     )
     assert base["points"] is overlay["points"]
     assert base["cells"] is overlay["cells"]
+    if with_normals:
+        normals = np.tile([0.0, 0.0, 1.0], (len(base["points"]), 1))
+        base["normals"] = overlay["normals"] = normals
     viewer = SimpleNamespace(
         current_theme="dark",
         _initialized=True,
@@ -155,3 +177,10 @@ def test_standalone_surface_reuses_payload_and_retained_polydata(qapp):
     assert matching[0] is not matching[1]
     assert matching[0].GetProperty() is not matching[1].GetProperty()
     assert matching[0].GetMapper().GetInput() is matching[1].GetMapper().GetInput()
+    if with_normals:
+        np.testing.assert_allclose(
+            vtk_to_numpy(
+                matching[0].GetMapper().GetInput().GetPointData().GetNormals()
+            ),
+            normals,
+        )

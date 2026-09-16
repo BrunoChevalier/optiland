@@ -8,14 +8,21 @@ import json
 import math
 import time
 from numbers import Real
+from typing import TYPE_CHECKING, Any
 
 import optiland.backend as be
 from optiland.optimization import OptimizationProblem
 
 from .job_records import OpticSnapshot, check_cancelled
 
+if TYPE_CHECKING:
+    from collections.abc import Callable
+    from threading import Event
 
-def resolve_wavelength(optic, value):
+    from optiland.optic import Optic
+
+
+def resolve_wavelength(optic: Optic, value: Any) -> float:
     """Resolve a dialog selector to one positive wavelength, without execution.
 
     The shared wavelength menu also serves analyses that accept multiple values;
@@ -45,7 +52,7 @@ def resolve_wavelength(optic, value):
     return value
 
 
-def variable_arguments(optic, definition):
+def variable_arguments(optic: Optic, definition: dict) -> dict:
     """Share all configured variable inputs between display and computation."""
     values = {
         key: value
@@ -57,7 +64,9 @@ def variable_arguments(optic, definition):
     return values
 
 
-def build_problem(optic, variables, operands, operand_metadata):
+def build_problem(
+    optic: Optic, variables: list[dict], operands: list[dict], operand_metadata: dict
+) -> OptimizationProblem:
     """Fail setup explicitly instead of silently optimizing an incomplete problem."""
     problem = OptimizationProblem()
     for definition in variables:
@@ -91,7 +100,12 @@ def build_problem(optic, variables, operands, operand_metadata):
     return problem
 
 
-def optimize(snapshot, parameters, progress, cancelled):
+def optimize(
+    snapshot: OpticSnapshot,
+    parameters: dict,
+    progress: Callable[..., None],
+    cancelled: Event,
+) -> dict:
     """Build, run and validate one candidate; never access the live document."""
     started = time.monotonic()
     check_cancelled(cancelled)

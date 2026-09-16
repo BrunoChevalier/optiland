@@ -54,6 +54,7 @@ def owned_service(qapp, minimal_optic):
 
 
 def test_least_squares_candidate_matches_reference_without_mutating_input(
+    set_test_backend,
     minimal_optic,
 ):
     from optiland.optimization.optimizer.scipy import LeastSquares

@@ -1174,6 +1174,11 @@ class OptimizationPanel(QWidget):
     def _on_run(self) -> None:
         if self.connector.is_optimization_running():
             return
+        if self.connector.get_optic() is None:
+            self._on_optimization_error(
+                "Open an optical system before running optimization."
+            )
+            return
 
         self.txtLog.clear()
         self._iteration_count = 0
@@ -1226,7 +1231,7 @@ class OptimizationPanel(QWidget):
         self.connector.run_optimization(cls, optimizer_kwargs)
 
     @Slot(dict)
-    def _on_optimization_progress(self, details):
+    def _on_optimization_progress(self, details: dict) -> None:
         self._iteration_count = details.get("evaluations", 0)
         text = details["stage"]
         if "merit" in details:
@@ -1257,8 +1262,10 @@ class OptimizationPanel(QWidget):
             )
 
     @Slot(str)
-    def _on_optimization_finished(self, summary):
+    def _on_optimization_finished(self, summary: str) -> None:
         self.txtLog.append(summary)
+        if self.connector.is_optimization_running():
+            return
         self.btnRun.setEnabled(True)
         self.btnStop.setEnabled(False)
         self.btnStop.setText("■  Stop")
@@ -1266,17 +1273,17 @@ class OptimizationPanel(QWidget):
         self._refresh_variables_table()
 
     @Slot(str)
-    def _on_optimization_error(self, message):
+    def _on_optimization_error(self, message: str) -> None:
         self._on_optimization_finished(f"Optimization failed: {message}")
 
     @Slot(str)
-    def _on_optimization_state(self, state):
+    def _on_optimization_state(self, state: str) -> None:
         if state == "cancelling":
             self.btnStop.setText("Cancelling…")
             self.btnStop.setEnabled(False)
 
     @Slot()
-    def _open_candidate(self):
+    def _open_candidate(self) -> None:
         from .main_window import MainWindow
         from .services.job_records import BackendConfig
 
@@ -1305,7 +1312,7 @@ class OptimizationPanel(QWidget):
         self._candidate_windows.append(window)
         window.show()
 
-    def _forget_candidate_window(self, identity):
+    def _forget_candidate_window(self, identity: int) -> None:
         self._candidate_windows = [
             window for window in self._candidate_windows if id(window) != identity
         ]

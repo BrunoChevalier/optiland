@@ -9,10 +9,14 @@ from __future__ import annotations
 import json
 import logging
 import pickle
+from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QObject, Signal, Slot
 
-from .job_records import OpticSnapshot
+from .job_records import JobRequest, JobResult, OpticSnapshot
+
+if TYPE_CHECKING:
+    from optiland.optic import Optic
 
 logger = logging.getLogger(__name__)
 
@@ -779,12 +783,12 @@ class OptimizationService(QObject):
         if self.is_running:
             return
 
+        self._callbacks = (on_progress, on_finished, on_error)
         optic = self._connector._optic
         if optic is None:
             self._emit_error("Open an optical system before running optimization.")
             return
 
-        self._callbacks = (on_progress, on_finished, on_error)
         self._stopping = False
         self._candidate = None
         self.candidateAvailable.emit(False)
@@ -823,12 +827,12 @@ class OptimizationService(QObject):
             self._connector.calculation_jobs.cancel_target("optimization")
 
     @Slot(object, str)
-    def _on_state_changed(self, request, state):
+    def _on_state_changed(self, request: JobRequest, state: str) -> None:
         if self._request is not None and request.job_id == self._request.job_id:
             self.stateChanged.emit(state)
 
     @Slot(object, dict)
-    def _on_progress(self, request, message):
+    def _on_progress(self, request: JobRequest, message: dict) -> None:
         if (
             self._stopping
             or self._request is None
@@ -847,7 +851,7 @@ class OptimizationService(QObject):
         if callback is not None and "callbacks" in details:
             callback(details["callbacks"])
 
-    def _emit_error(self, message):
+    def _emit_error(self, message: str) -> None:
         callback = self._callbacks[2]
         self._callbacks = (None, None, None)
         self._request = None
@@ -856,10 +860,12 @@ class OptimizationService(QObject):
             callback(message)
 
     @Slot(object)
-    def _on_finished(self, result):
+    def _on_finished(self, result: JobResult) -> None:
         if self._request is None or result.request.job_id != self._request.job_id:
             return
-        request, self._request = self._request, None
+        # Keep ownership through document/candidate notifications. A listener
+        # must not start another run before this run's callbacks are detached.
+        request = self._request
         if result.status == "failed" and not self._stopping:
             self._emit_error(result.error)
             return
@@ -904,23 +910,24 @@ class OptimizationService(QObject):
             )
         callback = self._callbacks[1]
         self._callbacks = (None, None, None)
+        self._request = None
         self.completed.emit(summary)
         if callback is not None:
             callback(summary)
 
-    def _commit(self, candidate, previous):
+    def _commit(self, candidate: Optic, previous: dict) -> None:
         self._connector._optic = candidate
         self._connector._undo_redo_manager.add_state(previous)
         self._connector.set_modified(True)
-        self._connector.opticLoaded.emit()
+        self._connector.notify_change("replacement")
 
-    def _definitions_match(self, request):
+    def _definitions_match(self, request: JobRequest) -> bool:
         return (
             self._variables == request.parameters["variables"]
             and self._operands == request.parameters["operands"]
         )
 
-    def take_candidate(self):
+    def take_candidate(self) -> dict | None:
         """Detach the retained candidate for an explicit separate-document review."""
         candidate, self._candidate = self._candidate, None
         self.candidateAvailable.emit(False)

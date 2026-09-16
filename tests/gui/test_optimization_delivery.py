@@ -45,6 +45,7 @@ def test_repeated_preview_keeps_navigation_without_changing_document(
         threading.Event(),
     )
     preview = OptimizationPreview(None)
+    preview.update_theme("light")
     context = {
         "document_id": "candidate",
         "surface_identities": tuple(minimal_optic.surfaces),
@@ -332,3 +333,59 @@ def test_candidate_open_errors_retain_candidate_and_preview_error_is_visible(
     )
     assert "Candidate preview unavailable: No layout" in panel.txtLog.toPlainText()
     panel.close()
+
+
+def test_panel_progress_reuses_preview_and_tolerates_pending_table_refresh(
+    qapp, owned_service
+):
+    connector, service = owned_service
+    optic = connector.get_optic()
+    scene = prepare_2d(
+        OpticSnapshot.capture(optic),
+        {"num_rays": 3, "distribution": "line_y"},
+        lambda *args: None,
+        threading.Event(),
+    )
+    panel = OptimizationPanel(connector)
+    panel._preview_context = {
+        "document_id": "candidate",
+        "surface_identities": tuple(optic.surfaces),
+    }
+    panel.chkLiveVars.setChecked(True)
+    panel.tblVariables.setRowCount(0)
+    payload = {"stage": "Optimizing", "variables": [8.0], "preview": scene}
+    panel._on_optimization_progress(payload)
+    preview = panel._preview
+    preview.ax.set_xlim(-12, 17)
+    panel._on_optimization_progress(payload)
+    assert panel._preview is preview
+    assert preview.ax.get_xlim() == (-12, 17)
+    assert panel.tblVariables.rowCount() == 0
+    assert connector.get_optic() is optic
+    panel.close()
+
+
+def test_shgo_defaults_without_iteration_override(minimal_optic):
+    from optiland.optimization.optimizer.scipy import SHGO
+
+    result = optimize(
+        OpticSnapshot.capture(minimal_optic),
+        test_optimization_jobs.parameters(SHGO, {"disp": False}),
+        lambda *args, **kw: None,
+        threading.Event(),
+    )
+    assert result["converged"]
+    assert result["final_merit"] < 1e-5
+
+
+def test_setup_error_without_callback_is_delivered_by_signal(qapp, owned_service):
+    _, service = owned_service
+    errors = []
+    service.failed.connect(errors.append)
+
+    class LocalOptimizer:
+        pass
+
+    service.run(LocalOptimizer, {})
+    assert len(errors) == 1 and "importable" in errors[0]
+    assert not service.is_running

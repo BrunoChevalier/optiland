@@ -58,7 +58,9 @@ def doublet(*, tilted=False, annular=False):
 
 
 @pytest.mark.parametrize("tilted", [False, True])
-def test_cemented_body_meshes_and_exact_faces_have_explicit_ownership(tilted):
+def test_cemented_body_meshes_and_exact_faces_have_explicit_ownership(
+    set_test_backend, tilted
+):
     data = prepared(doublet(tilted=tilted))
     owned = {mesh["surfaces"] for mesh in data["meshes"] if mesh["role"] == "lens"}
     assert (1, 2) in owned and (2, 3) in owned

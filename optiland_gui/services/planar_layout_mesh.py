@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import numpy as np
 import vtk
 from vtk.util.numpy_support import numpy_to_vtk, numpy_to_vtkIdTypeArray
@@ -17,8 +19,11 @@ from optiland.physical_apertures import (
 )
 from optiland.visualization.system.utils import transform_3d
 
+if TYPE_CHECKING:
+    from optiland.visualization.system.surface import Surface3D
 
-def compact_planar_face(view):
+
+def compact_planar_face(view: Surface3D) -> vtk.vtkActor | None:
     """Return a planar actor, or None when the existing mesh must be retained.
 
     A plane needs its boundary and planar cells, not a 256-by-256 sag grid.

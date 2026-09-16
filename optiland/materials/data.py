@@ -15,7 +15,12 @@ from optiland.materials.definition import (
     definition_to_dict,
 )
 from optiland.materials.dispersion import evaluate_formula
-from optiland.materials.spectral import checked_wavelengths, interpolate_linear
+from optiland.materials.spectral import (
+    BoundsPolicy,
+    checked_wavelengths,
+    interpolate_linear,
+    validate_bounds,
+)
 
 if TYPE_CHECKING:
     from optiland.propagation.base import BasePropagationModel
@@ -34,6 +39,9 @@ class DataMaterial(BaseMaterial):
         name: Descriptive label, never a catalog-lookup instruction.
         metadata: JSON-compatible descriptive provenance, copied on input/output.
         propagation_model: Optional registered propagation model.
+        bounds: Tabulated n/k queries outside their respective sample intervals
+            raise by default. ``"clamp"`` holds the nearest endpoint value.
+            Analytic formula validity limits remain enforced independently.
     """
 
     def __init__(
@@ -43,8 +51,10 @@ class DataMaterial(BaseMaterial):
         name: str = "",
         metadata: dict[str, Any] | None = None,
         propagation_model: BasePropagationModel | None = None,
+        bounds: BoundsPolicy = "raise",
     ) -> None:
         super().__init__(propagation_model)
+        self._bounds = validate_bounds(bounds)
         if not isinstance(name, str):
             raise ValueError("Material name must be a string")
         if metadata is not None and not isinstance(metadata, dict):
@@ -68,8 +78,9 @@ class DataMaterial(BaseMaterial):
         extinction: dict[str, Any] | None = None,
         metadata: dict[str, Any] | None = None,
         propagation_model: BasePropagationModel | None = None,
+        bounds: BoundsPolicy = "raise",
     ) -> DataMaterial:
-        """Preserve paired samples with bounded linear interpolation of n and k."""
+        """Interpolate n/k samples; optionally clamp outside each table's interval."""
         return cls(
             {
                 "dispersion": {
@@ -82,6 +93,7 @@ class DataMaterial(BaseMaterial):
             name=name,
             metadata=metadata,
             propagation_model=propagation_model,
+            bounds=bounds,
         )
 
     @classmethod
@@ -95,8 +107,12 @@ class DataMaterial(BaseMaterial):
         extinction: dict[str, Any] | None = None,
         metadata: dict[str, Any] | None = None,
         propagation_model: BasePropagationModel | None = None,
+        bounds: BoundsPolicy = "raise",
     ) -> DataMaterial:
-        """Preserve an analytic equation; optionally bound its wavelengths in µm."""
+        """Preserve an analytic equation; ``bounds`` controls tabulated k only.
+
+        A supplied formula wavelength range (in µm) is always enforced.
+        """
         return cls(
             {
                 "dispersion": {
@@ -110,7 +126,13 @@ class DataMaterial(BaseMaterial):
             name=name,
             metadata=metadata,
             propagation_model=propagation_model,
+            bounds=bounds,
         )
+
+    @property
+    def bounds(self) -> BoundsPolicy:
+        """The read-only out-of-range policy for tabulated n and k."""
+        return self._bounds
 
     @property
     def definition(self) -> MaterialDefinition:
@@ -142,14 +164,16 @@ class DataMaterial(BaseMaterial):
         return data.wavelength_range_um
 
     def _cache_state(self) -> tuple:
-        """The owned immutable definition is the complete optical state."""
-        return (self._definition,)
+        """Track the owned definition and its table evaluation policy."""
+        return (self._definition, self.bounds)
 
     def _calculate_n(self, wavelength: Any, **kwargs: Any) -> Any:
         index = self.definition.dispersion
         if isinstance(index, IndexTable):
             wave = checked_wavelengths(wavelength)
-            return interpolate_linear(wave, index.wavelengths_um, index.indices)
+            return interpolate_linear(
+                wave, index.wavelengths_um, index.indices, bounds=self.bounds
+            )
         wave = checked_wavelengths(wavelength, index.wavelength_range_um)
         result = evaluate_formula(index.formula, be.asarray(index.coefficients), wave)
         result = result + wave * 0  # Constant formulas retain the full query shape.
@@ -164,7 +188,9 @@ class DataMaterial(BaseMaterial):
         table = self.definition.extinction
         if table is None:
             return wave * 0
-        return interpolate_linear(wave, table.wavelengths_um, table.values)
+        return interpolate_linear(
+            wave, table.wavelengths_um, table.values, bounds=self.bounds
+        )
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize the complete definition inline with independent containers."""
@@ -172,6 +198,7 @@ class DataMaterial(BaseMaterial):
             **super().to_dict(),
             "name": self.name,
             "definition": definition_to_dict(self.definition),
+            "bounds": self.bounds,
             "metadata": self.metadata,
         }
 
@@ -179,5 +206,8 @@ class DataMaterial(BaseMaterial):
     def from_dict(cls, data: dict[str, Any]) -> DataMaterial:
         """Restore owned optical data; BaseMaterial restores propagation dispatch."""
         return cls(
-            data["definition"], name=data.get("name", ""), metadata=data.get("metadata")
+            data["definition"],
+            name=data.get("name", ""),
+            metadata=data.get("metadata"),
+            bounds=data["bounds"],
         )

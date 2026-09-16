@@ -7,6 +7,15 @@ from typing import Any, Literal
 
 import optiland.backend as be
 
+BoundsPolicy = Literal["raise", "clamp"]
+
+
+def validate_bounds(bounds: BoundsPolicy) -> BoundsPolicy:
+    """Validate the policy used outside a tabulated spectral interval."""
+    if not isinstance(bounds, str) or bounds not in ("raise", "clamp"):
+        raise ValueError(f"Unknown spectral bounds policy: {bounds!r}")
+    return bounds
+
 
 def finite_values(values: Any, label: str) -> tuple[float, ...]:
     """Copy a finite numerical sequence to owned, backend-independent values."""
@@ -63,19 +72,18 @@ def interpolate_linear(
     sample_wavelengths: Any,
     values: Any,
     *,
-    bounds: Literal["raise", "clamp"] = "raise",
+    bounds: BoundsPolicy = "raise",
 ) -> Any:
     """Interpolate spectral samples with an explicit adapter-selected bounds policy.
 
-    Owned data rejects extrapolation; existing file materials retain endpoint
-    clamping. Sorting/physical validation belongs to the adapter. Distinct
+    Strict evaluation rejects extrapolation; clamping holds endpoint values.
+    Sorting/physical validation belongs to the adapter. Distinct
     samples must remain ordered at the active numerical precision.
     """
     wave = be.asarray(wavelength)
     samples = be.asarray(sample_wavelengths)
     data = be.asarray(values)
-    if bounds not in {"raise", "clamp"}:
-        raise ValueError(f"Unknown spectral bounds policy: {bounds!r}")
+    validate_bounds(bounds)
     if len(samples) == 0 or len(samples) != len(data):
         raise ValueError("Spectral interpolation requires paired samples")
     if be.any(samples[1:] <= samples[:-1]):
@@ -83,7 +91,11 @@ def interpolate_linear(
             "Sample wavelengths must remain distinct and increasing at the "
             "active backend precision"
         )
-    if bounds == "raise" and (be.any(wave < samples[0]) or be.any(wave > samples[-1])):
+    if bounds == "raise" and (
+        not be.all(be.isfinite(wave))
+        or be.any(wave < samples[0])
+        or be.any(wave > samples[-1])
+    ):
         raise ValueError("Wavelength outside tabulated range")
     if len(samples) == 1:
         return data[0] + wave * 0

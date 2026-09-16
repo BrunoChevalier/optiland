@@ -17,7 +17,11 @@ import optiland.backend as be
 from optiland.materials.base import BaseMaterial
 from optiland.materials.dispersion import evaluate_formula
 from optiland.materials.rii import decode_formula, decode_table
-from optiland.materials.spectral import interpolate_linear
+from optiland.materials.spectral import (
+    BoundsPolicy,
+    interpolate_linear,
+    validate_bounds,
+)
 
 
 class MaterialFile(BaseMaterial):
@@ -35,6 +39,9 @@ class MaterialFile(BaseMaterial):
         propagation_model (BasePropagationModel, optional): The propagation
             model to use. Defaults to None, which creates a
             HomogeneousPropagation model.
+        bounds: Out-of-range policy for tabulated n/k. ``"clamp"`` (default)
+            preserves endpoint values; ``"raise"`` rejects queries outside
+            each table. This option does not change analytic formula evaluation.
 
     Attributes:
         filename (str): The filename of the material file.
@@ -49,8 +56,11 @@ class MaterialFile(BaseMaterial):
 
     """
 
-    def __init__(self, filename, propagation_model=None):
+    def __init__(
+        self, filename, propagation_model=None, *, bounds: BoundsPolicy = "clamp"
+    ):
         super().__init__(propagation_model)
+        self._bounds = validate_bounds(bounds)
         self.filename = filename
         self._k_warning_printed = False
         self.coefficients = []
@@ -81,6 +91,11 @@ class MaterialFile(BaseMaterial):
         data = self._read_file()
         self._parse_file(data)
 
+    @property
+    def bounds(self) -> BoundsPolicy:
+        """The read-only out-of-range policy for tabulated n and k."""
+        return self._bounds
+
     def _cache_state(self) -> tuple | None:
         """Track the live optical arrays used by file and catalog materials."""
         if not isinstance(self._n_formula, str):
@@ -98,6 +113,7 @@ class MaterialFile(BaseMaterial):
         return self._state_key(
             (
                 self._n_formula,
+                self.bounds,
                 self.coefficients,
                 self.thermdispcoef,
                 self._t0,
@@ -278,7 +294,7 @@ class MaterialFile(BaseMaterial):
             wavelength,
             self._as_backend_array(self._k_wavelength),
             self._as_backend_array(self._k),
-            bounds="clamp",
+            bounds=self.bounds,
         )
 
     def _formula_1(self, w):
@@ -349,11 +365,11 @@ class MaterialFile(BaseMaterial):
                 w,
                 self._as_backend_array(self._n_wavelength),
                 self._as_backend_array(self._n),
-                bounds="clamp",
+                bounds=self.bounds,
             )
         except ValueError as err:  # Typically if _n_wavelength or _n is None or empty
             raise ValueError(
-                "No tabular refractive index data found or data is invalid."
+                f"No tabular refractive index data found or data is invalid: {err}"
             ) from err
 
     def _read_file(self) -> dict:
@@ -458,6 +474,7 @@ class MaterialFile(BaseMaterial):
         material_dict.update(
             {
                 "filename": self.filename,
+                "bounds": self.bounds,
             },
         )
 
@@ -477,4 +494,4 @@ class MaterialFile(BaseMaterial):
         if "filename" not in data:
             raise ValueError("Material file data missing filename.")
 
-        return cls(data["filename"])
+        return cls(data["filename"], bounds=data.get("bounds", "clamp"))

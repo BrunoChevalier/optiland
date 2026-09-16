@@ -44,7 +44,8 @@ Choosing and constructing a material
        sampled arrays and thermal fields, and retains filename-based JSON.
        Shared helpers evaluate its equations and interpolation.
      - Users with a YAML file and the ``Material`` catalog wrapper. Its normal
-       table evaluation retains endpoint clamping, including one-sample tables.
+       table evaluation defaults to endpoint clamping, including one-sample
+       tables; ``bounds="raise"`` opts into strict table support.
    * - ``Material``
      - Catalog resolution, name/reference identity and lookup provenance on top
        of ``MaterialFile``. It does not implement another dispersion engine.
@@ -106,7 +107,7 @@ their own format's physical restrictions.
 
 Sample arrays are sorted together and require at least two distinct positive
 wavelengths. All optical data must be finite; extinction must be nonnegative.
-Each table rejects queries beyond its own support. Missing extinction means
+Each table rejects queries beyond its own support by default. Missing extinction means
 zero at all finite positive wavelengths. Formula bounds are optional and enforced
 when supplied. Scalar evaluation returns a one-element array; array queries keep
 their shape and Torch wavelength gradients. Imported coefficients are constants,
@@ -118,6 +119,55 @@ names do not affect optical evaluation. ``BaseMaterial.from_dict`` dispatches
 the class and restores the registered propagation model. Existing public
 material JSON formats continue to work; there are no aliases for earlier
 unreleased material prototypes.
+
+Choosing a table bounds policy
+----------------------------------------
+
+``DataMaterial`` accepts a keyword-only ``bounds="raise"`` or ``bounds="clamp"``
+on its constructor and both factories. ``MaterialFile`` and its catalog wrapper
+``Material`` expose the same option with ``"clamp"`` as their existing default.
+The option applies to every tabulated property of the material, with each n/k
+table using its own wavelength interval. It does not change the stored samples
+or the support reported by ``spectral_range``.
+
+.. code-block:: python
+
+   from optiland.materials import DataMaterial, Material, MaterialFile
+
+   measured = DataMaterial.from_samples(
+       [0.4, 0.8], [1.6, 1.4], bounds="clamp",
+   )
+   assert measured.n(0.9).item() == 1.4
+   strict_file = MaterialFile("measurements.yml", bounds="raise")
+   strict_catalog = Material("N-BK7", catalog="schott", bounds="raise")
+
+Clamping holds the nearest endpoint value. It is an explicit assumption about
+unknown dispersion or absorption outside the supplied interval, not additional
+measurement data. The clamped interpolation's wavelength derivative is zero
+outside the table; later thermal corrections can still depend on wavelength.
+Gradients with respect to live file-table endpoint values remain available.
+The default exception for
+owned data prevents silently tracing with this assumption. A strict one-sample
+file table accepts only its recorded wavelength; clamping makes it constant.
+
+The policy is read-only after construction, is part of material cache state and
+is written as ``bounds`` in native material JSON. Construct a replacement to
+choose another policy. Old public ``MaterialFile``/``Material`` JSON without this
+field still loads with clamping, and new saves record it explicitly. This allows
+applications to opt into strict table evaluation now and retain their chosen
+behavior if a later breaking release changes the file-material default.
+
+Analytic equations are independent of table interpolation: a declared
+``DataMaterial`` formula range is always enforced, while ``MaterialFile`` keeps
+its existing analytic extrapolation behavior. On ``from_coefficients``, the
+``bounds`` option therefore affects only an optional tabulated extinction curve.
+Missing extinction remains the documented zero assumption. Invalid/nonpositive
+``DataMaterial`` wavelengths still fail even with clamping enabled.
+
+OSLO can preserve owned index samples but cannot encode this explicit clamping
+choice. Its writer rejects clamped ``DataMaterial`` objects before replacing the
+destination; use native JSON to retain the policy. Catalog-name exports in
+external formats retain the destination program's evaluation conventions.
 
 Shared implementation ownership
 -------------------------------
@@ -138,7 +188,8 @@ Shared implementation ownership
   ``MaterialFile`` binds those values to its existing live arrays; it does not
   retain a second immutable copy of mutable optical state.
 * ``BaseMaterial`` owns property caching. Mutable built-ins report all live
-  optical state; ``DataMaterial`` reports its immutable definition. New custom
+  optical state; ``DataMaterial`` reports its immutable definition and bounds
+  policy. New custom
   subclasses evaluate uncached unless they explicitly implement ``_cache_state``.
   Graph-bearing queries bypass result caching.
 

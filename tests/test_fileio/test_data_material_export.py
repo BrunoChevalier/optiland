@@ -20,14 +20,14 @@ def test_inline_material_does_not_become_air_or_an_abbe_approximation(writer, in
     assert output.read_bytes() == b'previous export'
 
 
-@pytest.mark.parametrize('kind', ['formula', 'extinction', 'negative'])
+@pytest.mark.parametrize('kind', ['formula', 'extinction', 'negative', 'clamp'])
 def test_oslo_only_encodes_lossless_positive_n_tables(kind, lens_file, tmp_path):
     optic = load_oslo_file(lens_file(), strict=True)
     if kind == 'formula':
         material = DataMaterial.from_coefficients('formula 5', [1.5])
     else:
         extinction = {'kind': 'tabulated_k', 'wavelengths_um': [.4, .8], 'values': [.01, .01]} if kind == 'extinction' else None
-        material = DataMaterial.from_samples([.4, .8], [-1.6, -1.4] if kind == 'negative' else [1.6, 1.4], extinction=extinction)
+        material = DataMaterial.from_samples([.4, .8], [-1.6, -1.4] if kind == 'negative' else [1.6, 1.4], extinction=extinction, bounds='clamp' if kind == 'clamp' else 'raise')
     optic.surfaces[1].material_post = material
     output = tmp_path / 'untouched.len'
     output.write_bytes(b'previous export')

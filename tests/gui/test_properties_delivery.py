@@ -70,7 +70,10 @@ def test_shape_edit_after_row_shift_targets_the_correct_surface(editor, qapp):
 
 def test_hover_in_properties_has_owner_but_no_cell_tint(editor, qapp):
     editor.move(40, 40)
-    editor.resize(850, 650)
+    # Keep the hit target inside the screen, including Qt's 800px offscreen
+    # display and taller/wider property pages contributed by other features.
+    available = editor.screen().availableGeometry()
+    editor.resize(min(650, available.width() - 80), 650)
     editor.raise_()
     editor.activateWindow()
     assert QTest.qWaitForWindowExposed(editor)
@@ -84,6 +87,7 @@ def test_hover_in_properties_has_owner_but_no_cell_tint(editor, qapp):
     qapp.processEvents()
     position = opened.close_button.mapToGlobal(opened.close_button.rect().center())
     local = editor.tableWidget.viewport().mapFromGlobal(position)
+    assert editor.screen().geometry().contains(position)
     assert QApplication.widgetAt(position) is opened.close_button, (
         position,
         local,

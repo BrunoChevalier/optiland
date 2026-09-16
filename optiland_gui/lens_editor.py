@@ -823,13 +823,30 @@ class LensEditor(QWidget):
         self.hover_tracker.refresh()
         self.hover_presentation.refresh()
 
-    def _scroll_to_properties(self, source_row):
-        self.tableWidget.scrollTo(
-            self.tableWidget.model().index(
-                self.map_surface_index_to_ui_row(source_row) + 1, 0
-            ),
-            QAbstractItemView.ScrollHint.PositionAtTop,
-        )
+    def _scroll_to_properties(self, source_row, scroll_position=None):
+        """Keep the viewport anchored, revealing only the clipped part of a panel."""
+        table = self.tableWidget
+        horizontal = table.horizontalScrollBar()
+        vertical = table.verticalScrollBar()
+        if scroll_position is None:
+            scroll_position = horizontal.value(), vertical.value()
+        # Inserting a row changes the scroll range and can introduce a scrollbar.
+        # Measure only after Qt has installed that geometry, without processing
+        # unrelated events or letting scrollTo move horizontally to the span.
+        table.doItemsLayout()
+        horizontal.setValue(scroll_position[0])
+        vertical.setValue(scroll_position[1])
+        row = self.map_surface_index_to_ui_row(source_row) + 1
+        top = table.rowViewportPosition(row)
+        height = table.rowHeight(row)
+        available = table.viewport().height()
+        if height > available or top < 0:
+            # A panel taller than the viewport cannot fit; keep its tabs/close
+            # control accessible and allow normal scrolling through the rest.
+            adjustment = top
+        else:
+            adjustment = max(0, top + height - available)
+        vertical.setValue(vertical.value() + adjustment)
 
     @Slot()
     def toggle_properties_widget(self, source_row):
@@ -839,6 +856,10 @@ class LensEditor(QWidget):
             self.close_properties_widget(source_row)
             return
         table = self.tableWidget
+        scroll_position = (
+            table.horizontalScrollBar().value(),
+            table.verticalScrollBar().value(),
+        )
         previous = table.blockSignals(True)
         try:
             self.open_prop_source_rows.add(source_row)
@@ -847,7 +868,7 @@ class LensEditor(QWidget):
         finally:
             table.blockSignals(previous)
         self._properties_changed()
-        self._scroll_to_properties(source_row)
+        self._scroll_to_properties(source_row, scroll_position)
 
     @Slot("QPoint")
     def show_context_menu(self, pos):

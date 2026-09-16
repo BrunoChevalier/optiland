@@ -3,37 +3,44 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any
 
 from PySide6.QtCore import QEvent, QObject, QTimer, Slot
 from PySide6.QtGui import QColor
+
+if TYPE_CHECKING:
+    import vtk
+
+    from .surface_interaction import SurfaceInteractionState
+    from .viewer_panel import VTKViewer
 
 
 @dataclass
 class ActorBinding:
     """One retained actor and its GUI-local surface ownership."""
 
-    actor: object
-    surfaces: tuple
+    actor: vtk.vtkActor
+    surfaces: tuple[Any, ...]
     role: str
-    normal: object
+    normal: vtk.vtkProperty
     visible: bool
 
 
 class LayoutHighlightController3D(QObject):
     """Keep VTK mutation on Qt and defer hidden-view changes until activation."""
 
-    def __init__(self, viewer, state):
+    def __init__(self, viewer: VTKViewer, state: SurfaceInteractionState) -> None:
         super().__init__(viewer)
         self.viewer, self.state = viewer, state
         self.document = None
-        self.bindings = []
+        self.bindings: list[ActorBinding] = []
         self._timer = QTimer(self)
         self._timer.setSingleShot(True)
         self._timer.timeout.connect(self.apply)
         state.changed.connect(self.schedule)
         viewer.installEventFilter(self)
 
-    def eventFilter(self, watched, event):
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:
         if event.type() == QEvent.Type.Show:
             self.schedule()
         elif event.type() == QEvent.Type.Hide:
@@ -41,11 +48,11 @@ class LayoutHighlightController3D(QObject):
         return super().eventFilter(watched, event)
 
     @Slot()
-    def schedule(self):
+    def schedule(self) -> None:
         if self.viewer.isVisible():
             self._timer.start(0)
 
-    def clear(self):
+    def clear(self) -> None:
         self._timer.stop()
         for binding in self.bindings:
             binding.actor.GetProperty().DeepCopy(binding.normal)
@@ -53,7 +60,9 @@ class LayoutHighlightController3D(QObject):
         self.bindings.clear()
         self.document = None
 
-    def install(self, actors, identities):
+    def install(
+        self, actors: list[tuple[vtk.vtkActor, dict]], identities: tuple[Any, ...]
+    ) -> None:
         import vtk
 
         self.clear()
@@ -75,7 +84,7 @@ class LayoutHighlightController3D(QObject):
         self.apply(render=False)
 
     @Slot()
-    def apply(self, *, render=True):
+    def apply(self, *, render: bool = True) -> None:
         if not self.viewer.isVisible():
             return
         selected = QColor(

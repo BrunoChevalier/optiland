@@ -136,6 +136,24 @@ def test_94_planar_surfaces_fit_transport_without_dense_overlay_grids():
     assert len(encode_message({"event": "result", "data": data})) < 1_000_000
 
 
+def test_zero_width_bundle_keeps_reference_highlights_finite_and_visible():
+    optic = plane_sequence(4)
+    optic.set_aperture("EPD", 0)
+    for surface in optic.surfaces:
+        surface.aperture = None
+    before = OpticSnapshot.capture(optic).data
+    faces = {
+        mesh["surfaces"]: mesh
+        for mesh in prepare(optic)["meshes"]
+        if mesh["role"] == "face_highlight"
+    }
+    for identity in ((1,), (2,)):
+        points = faces[identity]["points"]
+        assert np.isfinite(points).all()
+        np.testing.assert_allclose(np.ptp(points, axis=0), [0.2, 0.2, 0])
+    assert OpticSnapshot.capture(optic).data == before
+
+
 @pytest.mark.parametrize("with_normals", [False, True])
 def test_standalone_surface_reuses_payload_and_retained_polydata(qapp, with_normals):
     from optiland_gui.layout_presenter import present_3d

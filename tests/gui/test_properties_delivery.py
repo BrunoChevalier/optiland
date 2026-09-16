@@ -85,9 +85,13 @@ def test_hover_in_properties_has_owner_but_no_cell_tint(editor, qapp):
         editor.tableWidget.item(editor.map_surface_index_to_ui_row(2), 1)
     )
     qapp.processEvents()
+    horizontal = editor.tableWidget.horizontalScrollBar()
+    horizontal.setValue(horizontal.maximum())
+    qapp.processEvents()
     position = opened.close_button.mapToGlobal(opened.close_button.rect().center())
     local = editor.tableWidget.viewport().mapFromGlobal(position)
     assert editor.screen().geometry().contains(position)
+    assert editor.tableWidget.viewport().rect().contains(local)
     assert QApplication.widgetAt(position) is opened.close_button, (
         position,
         local,

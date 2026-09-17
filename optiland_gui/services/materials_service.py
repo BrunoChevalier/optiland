@@ -143,6 +143,17 @@ class MaterialsService(QObject):
             return next((m for m in source.snapshot.materials if m.key == key), None)
         return None
 
+    def query_transport(self) -> tuple[tuple[SourceStamp, ...], tuple[bytes, ...]]:
+        """Borrow immutable cached summaries for read-only property computations.
+
+        The source worker already evaluated reference coordinates. These blobs
+        exclude owned optical definitions and are reused unchanged until their
+        exact source generation is replaced or removed.
+        """
+        self._ensure_open()
+        stamps = tuple(source.snapshot.stamps[0] for source in self._sources.values())
+        return stamps, tuple(self._query_summaries[stamp] for stamp in stamps)
+
     def _target(self, source_id):
         return f"{self._prefix}:source:{source_id}"
 

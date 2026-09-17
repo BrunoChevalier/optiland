@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import csv
 import hashlib
 import importlib
 import json
 import os
 import warnings
 from pathlib import Path
+from typing import TYPE_CHECKING, Any, BinaryIO
 
 from optiland.fileio import (
     load_codev_file,
@@ -16,9 +18,20 @@ from optiland.fileio import (
     save_zemax_file,
 )
 from optiland.optic import Optic
+from optiland_gui.services.file_artifacts import (
+    MAX_ARTIFACT_BYTES,
+    BytesArtifact,
+    CsvArtifact,
+    RgbaArtifact,
+    validate_artifact,
+)
 from optiland_gui.services.job_records import OpticSnapshot, check_cancelled
 from optiland_gui.services.model_initialization import initialize_loaded_optic
 from optiland_gui.services.prepared_optic import PreparedOptic
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+    from threading import Event
 
 
 def load_file(snapshot, parameters, progress, cancelled):
@@ -149,6 +162,95 @@ def publish_output(snapshot, parameters, progress, cancelled):
         raise ValueError("Prepared file contents changed before publication.")
     os.replace(path, parameters["path"])
     return {"published": True}
+
+
+class _ArtifactWriter:
+    """Count all encoded writes; keep Pillow on this checked Python write path."""
+
+    def __init__(self, stream: BinaryIO, cancelled: Event) -> None:
+        self.stream, self.cancelled = stream, cancelled
+        self.count = 0
+
+    def write(self, data: bytes) -> int:
+        check_cancelled(self.cancelled)
+        if self.count + len(data) > MAX_ARTIFACT_BYTES:
+            raise ValueError("Encoded export exceeds the artifact byte limit.")
+        written = self.stream.write(data)
+        self.count += written
+        return written
+
+    def flush(self) -> None:
+        self.stream.flush()
+
+
+class _CsvWriter:
+    def __init__(self, stream: _ArtifactWriter) -> None:
+        self.stream = stream
+
+    def write(self, text: str) -> int:
+        self.stream.write(text.encode("utf-8"))
+        return len(text)
+
+
+def prepare_artifact_output(
+    snapshot: None,
+    parameters: dict[str, Any],
+    progress: Callable[[str], None],
+    cancelled: Event,
+) -> dict[str, str]:
+    """Encode detached output into an owned sibling, preserving the destination."""
+    check_cancelled(cancelled)
+    artifact = parameters.get("artifact")
+    validate_artifact(artifact, cancel_check=lambda: check_cancelled(cancelled))
+    check_cancelled(cancelled)
+    path = _stage_path(parameters)
+    created = False
+    progress("Preparing captured export")
+    try:
+        with open(path, "xb") as stream:
+            created = True
+            writer = _ArtifactWriter(stream, cancelled)
+            if isinstance(artifact, BytesArtifact):
+                for start in range(0, len(artifact.data), 1024 * 1024):
+                    writer.write(artifact.data[start : start + 1024 * 1024])
+            elif isinstance(artifact, CsvArtifact):
+                csv_writer = csv.writer(_CsvWriter(writer), lineterminator="\n")
+                csv_writer.writerow(
+                    (
+                        *artifact.columns,
+                        *(f"provenance:{key}" for key, _ in artifact.provenance),
+                    )
+                )
+                provenance = tuple(value for _, value in artifact.provenance)
+                for index, row in enumerate(artifact.rows):
+                    if index % 128 == 0:
+                        check_cancelled(cancelled)
+                    csv_writer.writerow((*row, *provenance))
+            else:
+                from PIL import Image
+                from PIL.PngImagePlugin import PngInfo
+
+                assert isinstance(artifact, RgbaArtifact)
+                metadata = PngInfo()
+                for key, value in artifact.metadata:
+                    metadata.add_text(key, value)
+                with Image.frombytes(
+                    "RGBA",
+                    (artifact.width, artifact.height),
+                    artifact.pixels,
+                    "raw",
+                    "RGBA",
+                    artifact.stride,
+                    1,
+                ) as image:
+                    image.save(writer, format="PNG", pnginfo=metadata)
+            check_cancelled(cancelled)
+        progress("Verifying captured export")
+        return {"digest": _digest(path)}
+    except BaseException:
+        if created:
+            path.unlink(missing_ok=True)
+        raise
 
 
 def reconcile_output(snapshot, parameters, progress, cancelled):

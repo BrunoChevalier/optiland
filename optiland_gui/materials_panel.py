@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import html
 import json
+from dataclasses import replace
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import (
@@ -44,6 +45,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from optiland.materials.comparison import MapCoordinate
 from optiland.materials.properties import (
     MaterialKey,
     MaterialQuery,
@@ -56,8 +58,27 @@ from optiland_gui.models.materials_model import (
     MaterialsTableModel,
 )
 from optiland_gui.services.material_browser import MaterialBrowserSources
+from optiland_gui.services.material_comparison import MaterialComparisonService
+from optiland_gui.services.material_exports import (
+    browse_csv,
+    browse_provenance,
+    condition_groups,
+    plot_png,
+    spectral_csv,
+    spectral_provenance,
+)
+from optiland_gui.services.material_presets import (
+    VIEWS,
+    MaterialPresetStore,
+    MaterialViewPreset,
+)
 from optiland_gui.widgets.glass_map import GlassMap, MapPoint
 from optiland_gui.widgets.material_apply_footer import MaterialApplyFooter
+from optiland_gui.widgets.material_compare_panel import (
+    ComparisonPin,
+    MaterialComparePanel,
+)
+from optiland_gui.widgets.material_export_dialog import MaterialExportDialog
 from optiland_gui.widgets.material_source_controls import MaterialSourceControls
 
 if TYPE_CHECKING:
@@ -92,7 +113,10 @@ class MaterialsPanel(QWidget):
         self.connector = connector
         self.service = connector.materials
         self.sources = MaterialBrowserSources(connector, self)
+        self.computations = MaterialComparisonService(connector, self)
+        self.export_dialog = MaterialExportDialog(connector.file_operations, self)
         self.settings = settings
+        self.presets = MaterialPresetStore(settings) if settings is not None else None
         self._autoload = autoload
         self._dock_visible: bool | None = None
         self._closed = False
@@ -101,21 +125,31 @@ class MaterialsPanel(QWidget):
         self._selecting = False
         self._catalog_choices: dict[tuple[str, str], bool] = {}
         self._catalog_default_checked = True
+        self._preset_catalogs: frozenset[tuple[str, str]] | None = None
+        self._pending_bounds = None
+        self._view_result = None
+        self._coordinates = {}
         self._diagnostic_sources: set[str] = set()
         self._source_states: dict[str, str] = {}
         self._plot_points: dict[str, dict[MaterialKey, MapPoint]] = {}
         self._records: tuple[MaterialSummary, ...] = ()
         self._last_query: MaterialQuery | None = None
+        self._accepted_query = None
+        self._accepted_result = None
         self._results_current = False
         self._filters_wanted: bool | None = None
         self._query_timer = QTimer(self)
         self._query_timer.setSingleShot(True)
         self._query_timer.setInterval(100)
         self._query_timer.timeout.connect(self.find_matches)
+        self._activation_timer = QTimer(self)
+        self._activation_timer.setSingleShot(True)
+        self._activation_timer.timeout.connect(self._on_visible)
         self._build_ui()
         self._connect_signals()
         self._rebuild_catalogs()
         self._show_inspector()
+        self._refresh_preset_names()
         if settings is not None:
             for key, splitter in (
                 ("Materials/browseSplitter", self.browse_splitter),
@@ -142,6 +176,8 @@ class MaterialsPanel(QWidget):
         layout.addWidget(self.tabs)
         self.browse = QWidget(self.tabs)
         self.tabs.addTab(self.browse, "&Browse")
+        self.compare = MaterialComparePanel(self)
+        self.tabs.addTab(self.compare, "&Compare")
         browse_layout = QVBoxLayout(self.browse)
         browse_layout.setContentsMargins(0, 4, 0, 0)
         tools = QHBoxLayout()
@@ -166,6 +202,50 @@ class MaterialsPanel(QWidget):
         self.help_button = QPushButton("Help", self)
         tools.addWidget(self.help_button)
         browse_layout.addLayout(tools)
+        view_tools = QHBoxLayout()
+        self.view_combo = QComboBox(self)
+        self.view_combo.setSizeAdjustPolicy(
+            QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon
+        )
+        self.view_combo.setMinimumContentsLength(14)
+        self.view_combo.setAccessibleName("Material map view")
+        for label, view in VIEWS:
+            self.view_combo.addItem(label, view)
+        view_tools.addWidget(self.view_combo, 1)
+        self.pin_button = QPushButton("Pin for comparison", self)
+        view_tools.addWidget(self.pin_button)
+        self.export_button = QPushButton("Export CSV…", self)
+        view_tools.addWidget(self.export_button)
+        browse_layout.addLayout(view_tools)
+        preset_tools = QHBoxLayout()
+        self.preset_name = QComboBox(self)
+        self.preset_name.setSizeAdjustPolicy(
+            QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon
+        )
+        self.preset_name.setMinimumContentsLength(14)
+        self.preset_name.setEditable(True)
+        self.preset_name.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
+        self.preset_name.setAccessibleName("Named material view")
+        self.preset_name.lineEdit().setPlaceholderText("Named view…")
+        self.preset_name.lineEdit().setMaxLength(128)
+        preset_tools.addWidget(self.preset_name, 1)
+        self.save_preset_button = QPushButton("Save view", self)
+        self.load_preset_button = QPushButton("Load view", self)
+        self.remove_preset_button = QPushButton("Delete view", self)
+        for button in (
+            self.save_preset_button,
+            self.load_preset_button,
+            self.remove_preset_button,
+        ):
+            preset_tools.addWidget(button)
+        for index in range(preset_tools.count()):
+            preset_tools.itemAt(index).widget().setEnabled(self.presets is not None)
+        browse_layout.addLayout(preset_tools)
+        self.preset_notice = QLabel(self)
+        self.preset_notice.setTextFormat(Qt.TextFormat.PlainText)
+        self.preset_notice.setWordWrap(True)
+        self.preset_notice.hide()
+        browse_layout.addWidget(self.preset_notice)
         self.selection_summary = QLabel(self)
         self.selection_summary.setTextFormat(Qt.TextFormat.PlainText)
         self.selection_summary.setWordWrap(True)
@@ -224,6 +304,18 @@ class MaterialsPanel(QWidget):
         )
         self.conditions_notice.setWordWrap(True)
         browse_layout.addWidget(self.conditions_notice)
+        for label in (
+            self.selection_summary,
+            self.status,
+            self.preset_notice,
+            self.conditions_notice,
+        ):
+            # Long Windows catalog paths must not impose their unbroken-word
+            # width on the whole dock. Keep height-for-width and full native
+            # accessible text; the inspector also retains the exact source.
+            policy = label.sizePolicy()
+            policy.setHorizontalPolicy(QSizePolicy.Policy.Ignored)
+            label.setSizePolicy(policy)
         self.footer = MaterialApplyFooter(self.connector.material_apply, self)
         layout.addWidget(self.footer)
 
@@ -316,6 +408,29 @@ class MaterialsPanel(QWidget):
         return box
 
     def _connect_signals(self) -> None:
+        self.view_combo.currentIndexChanged.connect(self._view_changed)
+        self.preset_name.currentTextChanged.connect(
+            lambda text: self.preset_name.setToolTip(
+                "<qt>" + html.escape(text) + "</qt>"
+            )
+        )
+        self.pin_button.clicked.connect(self._pin_selected)
+        self.compare.pins_changed.connect(self._refresh_pins)
+        self.compare.request_changed.connect(self._comparison_request)
+        self.compare.selection_requested.connect(self._inspect_comparison)
+        self.compare.nearby_requested.connect(self._nearby_requested)
+        self.compare.export_requested.connect(self._export_comparison)
+        self.compare.message.connect(self.status.setText)
+        self.computations.finished.connect(self._computation_finished)
+        self.computations.failed.connect(self._computation_failed)
+        self.computations.invalidated.connect(self._computation_invalidated)
+        self.connector.document_state.changed.connect(self._comparison_document_changed)
+        self.export_button.clicked.connect(lambda: self._export_browse("csv"))
+        self.map.export_requested.connect(lambda: self._export_browse("png"))
+        self.export_dialog.message.connect(self._export_message)
+        self.save_preset_button.clicked.connect(self.save_view)
+        self.load_preset_button.clicked.connect(self.load_view)
+        self.remove_preset_button.clicked.connect(self.remove_view)
         self.name_search.textChanged.connect(self.queue_query)
         self.catalogs.itemChanged.connect(self._catalog_changed)
         self.catalogs.currentItemChanged.connect(self._selected_source_changed)
@@ -373,6 +488,7 @@ class MaterialsPanel(QWidget):
         copy.activated.connect(self.copy_selected)
 
     def _focus_search(self) -> None:
+        self.tabs.setCurrentWidget(self.browse)
         self.name_search.setFocus(Qt.FocusReason.ShortcutFocusReason)
         self.name_search.selectAll()
 
@@ -459,6 +575,8 @@ class MaterialsPanel(QWidget):
             for name in names:
                 key = (source_id, name)
                 visible_catalogs.add(key)
+                if self._preset_catalogs is not None:
+                    self._catalog_choices[key] = key in self._preset_catalogs
                 selected = self._catalog_choices.setdefault(
                     key, self._catalog_default_checked
                 )
@@ -476,6 +594,7 @@ class MaterialsPanel(QWidget):
         }
         del blocker
         self._selected_source_changed()
+        self._update_preset_notice()
 
     def _selected_source_id(self) -> str | None:
         item = self.catalogs.currentItem()
@@ -496,6 +615,8 @@ class MaterialsPanel(QWidget):
                 return
 
     def _catalog_changed(self, item: QTreeWidgetItem, column: int) -> None:
+        self._preset_catalogs = None
+        self._update_preset_notice()
         for top in range(self.catalogs.topLevelItemCount()):
             parent = self.catalogs.topLevelItem(top)
             for child in range(parent.childCount()):
@@ -506,6 +627,7 @@ class MaterialsPanel(QWidget):
         self.queue_query()
 
     def _set_all_catalogs(self, selected: bool) -> None:
+        self._preset_catalogs = None
         self._catalog_default_checked = selected
         for key in self._catalog_choices:
             self._catalog_choices[key] = selected
@@ -549,10 +671,13 @@ class MaterialsPanel(QWidget):
 
     def _jobs_stopped(self) -> None:
         self._closed = True
+        self.computations.close()
+        self.export_dialog.close()
         self._plot_points.clear()
         self.footer.close_service()
         self.source_controls.close_service()
         self._query_timer.stop()
+        self._activation_timer.stop()
         self.setEnabled(False)
 
     def find_matches(self) -> None:
@@ -567,14 +692,14 @@ class MaterialsPanel(QWidget):
             return
         self._last_query = query
         self.status.setText("Finding materials…")
-        self.map.set_target(
-            query.target_nd, query.target_vd, query.nd_tolerance, query.vd_tolerance
-        )
+        self._show_target()
         self.service.query(query)
 
     def _query_finished(self, result: MaterialQueryResult) -> None:
         if self.service.last_query_result is not result:
             return
+        self._accepted_result = result
+        self._accepted_query = self._last_query
         # One exact lookup per source avoids scanning the full source for every
         # matched row (quadratic work when a catalog-wide query completes).
         by_key = {
@@ -591,18 +716,8 @@ class MaterialsPanel(QWidget):
         self._selecting = True
         self.model.set_records(records, result.matches)
         self._selecting = False
-        self.map.set_points(
-            tuple(
-                self._plot_point(record)
-                for record in records
-                if record.nd.value is not None and record.vd.value is not None
-            )
-        )
-        self._refresh_context()
-        self._sync_selection()
-        off_map = sum(
-            record.nd.value is None or record.vd.value is None for record in records
-        )
+        self._render_map()
+        off_map = sum(self._plot_point(record) is None for record in records)
         if not self._last_query.catalog_keys:
             message = "Select one or more catalogs to browse."
         else:
@@ -614,7 +729,7 @@ class MaterialsPanel(QWidget):
         self.status.setText(message)
         self._show_inspector()
 
-    def _plot_point(self, record: MaterialSummary) -> MapPoint:
+    def _plot_point(self, record: MaterialSummary) -> MapPoint | None:
         # Source publication/removal clears only that source's presentation
         # cache. Repeated filtering reuses immutable coordinates and labels.
         points = self._plot_points.get(record.key.source_id)
@@ -622,10 +737,463 @@ class MaterialsPanel(QWidget):
             points = self._plot_points[record.key.source_id] = {}
         point = points.get(record.key)
         if point is None:
+            if self.view_combo.currentData() == "nd-vd":
+                x, y = record.vd.value, record.nd.value
+            else:
+                coordinate = self._coordinates.get(record.key)
+                x, y = (
+                    (coordinate.x.value, coordinate.y.value)
+                    if coordinate
+                    else (None, None)
+                )
+            if x is None or y is None:
+                return None
             point = points[record.key] = MapPoint(
-                record.key, record.vd.value, record.nd.value, self._qualified(record)
+                record.key, x, y, self._qualified(record)
             )
         return point
+
+    def _show_target(self):
+        query = self._last_query
+        if query is not None and self.view_combo.currentData() == "nd-vd":
+            self.map.set_target(
+                query.target_nd, query.target_vd, query.nd_tolerance, query.vd_tolerance
+            )
+        else:
+            self.map.set_target(None, None, None, None)
+
+    def _view_changed(self, *args):
+        self._pending_bounds = None
+        self._request_view(reset=True)
+
+    def _request_view(self, *, reset=False):
+        if self._closed:
+            return
+        if not reset and self._view_result is not None and self._pending_bounds is None:
+            self._pending_bounds = self.map.view_bounds()
+        self._coordinates.clear()
+        self._view_result = None
+        self._plot_points.clear()
+        self.map.set_context(())
+        self.map.set_selected_point(None)
+        self._show_target()
+        self._render_map(preserve_view=not reset)
+        self._show_inspector()
+        if self.view_combo.currentData() == "nd-vd":
+            self.computations.cancel("view")
+        elif self._dock_visible is not False and self.isVisible():
+            self.status.setText("Computing map coordinates…")
+            self.computations.request_view(self.view_combo.currentData())
+
+    def _render_map(self, *, preserve_view=True):
+        points = tuple(
+            point
+            for record in self._records
+            if (point := self._plot_point(record)) is not None
+        )
+        if self.view_combo.currentData() == "nd-vd":
+            self.map.set_points(points, preserve_view=preserve_view)
+        elif self._view_result is not None:
+            view = self._view_result
+            self.map.set_points(
+                points,
+                xlabel=view.xlabel + " (native conditions)",
+                ylabel=view.ylabel.split(" = ", 1)[0] + "\n(native conditions)",
+                descending=view.descending_x,
+                preserve_view=preserve_view,
+            )
+        else:
+            self.map.set_points(
+                (),
+                xlabel="Computing " + self.view_combo.currentText(),
+                ylabel="Native source conditions",
+                preserve_view=False,
+            )
+        self._refresh_context()
+        self._sync_selection()
+        if self._pending_bounds is not None and (
+            self.view_combo.currentData() == "nd-vd" or self._view_result is not None
+        ):
+            bounds, self._pending_bounds = self._pending_bounds, None
+            self.map.set_view_bounds(*sorted(bounds[:2]), *sorted(bounds[2:]))
+
+    def _computation_finished(self, kind, result):
+        if self.computations.result(kind) is not result:
+            return
+        if kind == "view":
+            self._view_result = result
+            self._coordinates = {point.key: point for point in result.coordinates}
+            self._plot_points.clear()
+            self._render_map()
+            self._show_inspector()
+            off_map = sum(self._plot_point(record) is None for record in self._records)
+            self.status.setText(
+                f"{len(self._records)} matches · "
+                f"{off_map} without coordinates in this view"
+            )
+        elif kind == "spectral":
+            self.compare.set_result(result)
+        else:
+            records = tuple(
+                record
+                for match in result.matches
+                if (record := self.service.material(match.key)) is not None
+            )
+            self.compare.set_nearby(result, records)
+
+    def _computation_invalidated(self, kind):
+        if kind == "view" and self.view_combo.currentData() != "nd-vd":
+            if self._view_result is not None and self._pending_bounds is None:
+                self._pending_bounds = self.map.view_bounds()
+            self._view_result = None
+            self._coordinates.clear()
+            self._plot_points.clear()
+            self._render_map()
+            self._show_inspector()
+        elif kind == "spectral":
+            self.compare.set_pending("Comparison needs recomputation.")
+        elif kind == "nearby":
+            self.compare.clear_nearby()
+
+    def _computation_failed(self, kind, message):
+        if kind == "spectral":
+            self.compare.set_error(message)
+        elif kind == "nearby":
+            self.compare.set_nearby_error(message)
+        else:
+            self.status.setText(f"Material calculation failed: {message}")
+
+    def _comparison_document_changed(self, token):
+        if self._closed or self._dock_visible is False or not self.isVisible():
+            return
+        # Catalog-only accepted results survive unrelated edits. Source change
+        # signals separately update any current-design data captured by a view.
+        if (
+            self.view_combo.currentData() != "nd-vd"
+            and self.computations.result("view") is None
+            and not self.computations.is_pending("view")
+        ):
+            self._request_view()
+        if (
+            self.compare.pin_keys
+            and self.computations.result("spectral") is None
+            and not self.computations.is_pending("spectral")
+        ):
+            self._comparison_request(self.compare.request)
+
+    def _pin_selected(self):
+        record = self.selected_material
+        if record is None:
+            return
+        source = self.service.source_result(record.key.source_id)
+        self.compare.pin(
+            record,
+            source.snapshot.stamps[0],
+            source_label=self.sources.labels.get(
+                record.key.source_id, record.key.source_id
+            ),
+        )
+
+    def _refresh_pins(self, *args):
+        records = {
+            key: record
+            for key in self.compare.pin_keys
+            if (record := self.service.material(key)) is not None
+        }
+        stamps = {
+            key.source_id: source.snapshot.stamps[0]
+            for key in self.compare.pin_keys
+            if (source := self.service.source_result(key.source_id)) is not None
+        }
+        reasons = {
+            key: "Source or exact record is unavailable; reload its catalog."
+            for key in self.compare.pin_keys
+            if key not in records
+        }
+        self.compare.refresh_pins(
+            records, stamps, reasons, source_labels=self.sources.labels
+        )
+
+    def _comparison_request(self, request):
+        if (
+            request is None
+            or not request.keys
+            or self._closed
+            or self._dock_visible is False
+            or not self.isVisible()
+        ):
+            self.computations.cancel("spectral")
+            return
+        self.computations.request_comparison(request)
+
+    def _nearby_requested(self, key, nd_scale, vd_scale):
+        if not self._closed and self._dock_visible is not False and self.isVisible():
+            self.computations.request_nearby(key, nd_scale, vd_scale)
+
+    def _inspect_comparison(self, key):
+        if self.service.material(key) is not None:
+            self.tabs.setCurrentWidget(self.browse)
+            self.select_key(key)
+
+    def _cancel_computations(self):
+        for kind in self.computations.KINDS:
+            self.computations.cancel(kind)
+
+    def _can_export_browse(self):
+        if (
+            not self._records
+            or not self._results_current
+            or self._accepted_result is not self.service.last_query_result
+        ):
+            return False
+        try:
+            if self.make_query() != self._accepted_query:
+                return False
+        except ValueError:
+            return False
+        return (
+            self.view_combo.currentData() == "nd-vd"
+            or self.computations.result("view") is self._view_result
+            and self._view_result is not None
+        )
+
+    def _export_browse(self, extension):
+        if self._closed or self.export_dialog.choosing:
+            return
+        if not self._can_export_browse():
+            self.status.setText(
+                "Refresh matching materials and map coordinates before exporting."
+            )
+            return
+        view = self.view_combo.currentData()
+        stamps = (
+            self._view_result.stamps
+            if self._view_result
+            else self._accepted_result.stamps
+        )
+        provenance = browse_provenance(
+            self._accepted_query, stamps, view, self.map.view_bounds()
+        )
+        provenance["sort"] = {
+            "column": self.model.HEADERS[
+                self.table.horizontalHeader().sortIndicatorSection()
+            ],
+            "order": "ascending"
+            if self.table.horizontalHeader().sortIndicatorOrder()
+            == Qt.SortOrder.AscendingOrder
+            else "descending",
+        }
+        try:
+            if extension == "csv":
+                coordinates = (
+                    {r.key: MapCoordinate(r.key, r.vd, r.nd) for r in self._records}
+                    if view == "nd-vd"
+                    else self._coordinates
+                )
+                ordered = tuple(
+                    self._records[
+                        self.proxy.mapToSource(self.proxy.index(row, 0)).row()
+                    ]
+                    for row in range(self.proxy.rowCount())
+                )
+                artifact = browse_csv(
+                    ordered,
+                    coordinates,
+                    self.sources.labels,
+                    provenance,
+                    self._accepted_result.matches,
+                )
+            else:
+                # The visible context/selection layer also belongs in PNG provenance.
+                provenance["context"] = [
+                    {"source_id": s.source_id, "generation": s.generation}
+                    for source_id in self.service.source_ids
+                    if source_id.startswith("design:")
+                    and self.context_check.isChecked()
+                    for s in self.service.source_result(source_id).snapshot.stamps
+                ]
+                provenance["selection"] = (
+                    {
+                        "source_id": self._selected_key.source_id,
+                        "catalog": self._selected_key.catalog,
+                        "record_id": self._selected_key.record_id,
+                    }
+                    if self._selected_key
+                    else None
+                )
+                selected = self.selected_material
+                provenance["selection_source"] = (
+                    {
+                        "source_id": selected.key.source_id,
+                        "generation": self.service.source_result(selected.key.source_id)
+                        .snapshot.stamps[0]
+                        .generation,
+                    }
+                    if selected is not None
+                    else None
+                )
+                displayed = [*self._records]
+                for source_id in self.service.source_ids:
+                    if (
+                        source_id.startswith("design:")
+                        and self.context_check.isChecked()
+                    ):
+                        displayed.extend(
+                            self.service.source_result(source_id).snapshot.materials
+                        )
+                if selected is not None:
+                    displayed.append(selected)
+                provenance["native_condition_groups"] = condition_groups(displayed)
+                artifact = plot_png(self.map.capture_rgba(), provenance)
+            self.export_dialog.choose(artifact, extension, "material-map")
+        except (ValueError, KeyError) as error:
+            self.status.setText(f"Cannot export material view: {error}")
+
+    def _export_comparison(self, extension):
+        result = self.compare.result
+        if self._closed or self.export_dialog.choosing:
+            return
+        if result is None or self.computations.result("spectral") is not result:
+            self.compare.set_error("Recompute the comparison before exporting.")
+            return
+        try:
+            bounds = self.compare.view_bounds()
+            artifact = (
+                spectral_csv(result, self.sources.labels, bounds)
+                if extension == "csv"
+                else plot_png(
+                    self.compare.capture_rgba(), spectral_provenance(result, bounds)
+                )
+            )
+            self.export_dialog.choose(artifact, extension, "material-comparison")
+        except ValueError as error:
+            self.compare.status.setText(f"Cannot export comparison: {error}")
+
+    def _export_message(self, message):
+        self.status.setText(message)
+        if self.tabs.currentWidget() is self.compare:
+            self.compare.status.setText(message)
+
+    def _refresh_preset_names(self, selected=""):
+        if self.presets is None:
+            return
+        try:
+            names = self.presets.names()
+        except ValueError as error:
+            self.status.setText(str(error))
+            return
+        blocker = QSignalBlocker(self.preset_name)
+        self.preset_name.clear()
+        self.preset_name.addItems(names)
+        self.preset_name.setEditText(selected)
+        del blocker
+
+    def save_view(self):
+        if self.presets is None or self._closed:
+            return
+        try:
+            query = self.make_query()
+            if self._preset_catalogs is not None:
+                # Preserve unavailable exact choices through a round trip.
+                query = replace(
+                    query,
+                    catalog_keys=tuple(sorted(self._preset_catalogs)),
+                    source_ids=tuple(sorted({s for s, _ in self._preset_catalogs})),
+                )
+            preset = MaterialViewPreset(
+                self.view_combo.currentData(),
+                query,
+                tuple(
+                    (p.key, p.display_name, p.source_label) for p in self.compare.pins
+                ),
+                self._pending_bounds or self.map.view_bounds(),
+                self.context_check.isChecked(),
+            )
+            name = self.preset_name.currentText().strip()
+            self.presets.save(name, preset)
+            self._refresh_preset_names(name)
+            self.status.setText(f"Saved material view: {name}")
+        except ValueError as error:
+            self.status.setText(str(error))
+
+    def load_view(self):
+        if self.presets is None or self._closed:
+            return
+        try:
+            preset = self.presets.load(self.preset_name.currentText())
+            query = preset.query
+            numbers = [
+                (self.target_nd, query.target_nd),
+                (self.target_vd, query.target_vd),
+                (self.tolerance_nd, query.nd_tolerance),
+                (self.tolerance_vd, query.vd_tolerance),
+            ]
+            if query.wavelength_range_um is not None:
+                numbers.extend(
+                    zip(
+                        (self.wave_min, self.wave_max),
+                        query.wavelength_range_um,
+                        strict=True,
+                    )
+                )
+            if (query.target_nd is None) != (query.target_vd is None) or any(
+                value is not None
+                and not control.minimum() <= value <= control.maximum()
+                for control, value in numbers
+            ):
+                raise ValueError(
+                    "Saved numeric filters exceed the supported control ranges"
+                )
+        except ValueError as error:
+            self.status.setText(str(error))
+            return
+        controls = (
+            self.name_search,
+            self.patent,
+            self.support,
+            self.unknown_support,
+            self.view_combo,
+            self.context_check,
+        )
+        blockers = [QSignalBlocker(control) for control in controls]
+        self.name_search.setText(query.name)
+        self.patent.setChecked(query.target_nd is not None)
+        self.support.setChecked(query.wavelength_range_um is not None)
+        self.unknown_support.setCurrentIndex(
+            self.unknown_support.findData(query.unknown_policy)
+        )
+        for control, value in numbers:
+            if value is not None:
+                control.setValue(value)
+        self.context_check.setChecked(preset.show_context)
+        self.view_combo.setCurrentIndex(self.view_combo.findData(preset.view))
+        del blockers
+        self._catalog_default_checked = False
+        self._preset_catalogs = frozenset(query.catalog_keys)
+        self._rebuild_catalogs()
+        self.compare.set_pins(tuple(ComparisonPin(*pin) for pin in preset.pins))
+        self._refresh_pins()
+        self._pending_bounds = preset.bounds
+        self._request_view(reset=True)
+        self.find_matches()
+
+    def remove_view(self):
+        if self.presets is None or self._closed:
+            return
+        try:
+            self.presets.remove(self.preset_name.currentText())
+            self._refresh_preset_names()
+            self.status.setText("Saved material view deleted.")
+        except ValueError as error:
+            self.status.setText(str(error))
+
+    def _update_preset_notice(self):
+        missing = (self._preset_catalogs or frozenset()) - set(self._catalog_choices)
+        self.preset_notice.setVisible(bool(missing))
+        self.preset_notice.setText(
+            "Saved catalogs unavailable (reload their exact sources): "
+            + "; ".join(f"{source} / {catalog}" for source, catalog in sorted(missing))
+        )
 
     def _query_failed(self, message: str) -> None:
         self.status.setText(f"Query failed: {message}. Previous results are retained.")
@@ -638,6 +1206,9 @@ class MaterialsPanel(QWidget):
 
     def _source_changed(self, source_id: str) -> None:
         self._plot_points.pop(source_id, None)
+        if self.view_combo.currentData() != "nd-vd":
+            self._request_view()
+        self._refresh_pins()
         if source_id.startswith("design:"):
             self._refresh_context()
         else:
@@ -689,15 +1260,16 @@ class MaterialsPanel(QWidget):
                 if not source_id.startswith("design:"):
                     continue
                 for record in self.service.source_result(source_id).snapshot.materials:
-                    if record.nd.value is not None and record.vd.value is not None:
+                    point = self._plot_point(record)
+                    if point is not None:
                         label = self.sources.design_labels.get(
                             record.key.record_id, "Current design"
                         )
                         points.append(
                             MapPoint(
                                 record.key,
-                                record.vd.value,
-                                record.nd.value,
+                                point.x,
+                                point.y,
                                 f"{label} · {record.display_name}",
                             )
                         )
@@ -737,13 +1309,7 @@ class MaterialsPanel(QWidget):
         self.map.set_selected(self._selected_key)
         record = self.selected_material
         self.map.set_selected_point(
-            MapPoint(
-                record.key, record.vd.value, record.nd.value, self._qualified(record)
-            )
-            if record is not None
-            and record.nd.value is not None
-            and record.vd.value is not None
-            else None
+            self._plot_point(record) if record is not None else None
         )
 
     def _qualified(self, record: MaterialSummary) -> str:
@@ -781,8 +1347,10 @@ class MaterialsPanel(QWidget):
         else:
             record = self._selected_record
         self.locate_button.setEnabled(
-            available and record.nd.value is not None and record.vd.value is not None
+            available and self._plot_point(record) is not None
         )
+        self.pin_button.setEnabled(available)
+        self.export_button.setEnabled(self._can_export_browse())
         self.reveal_button.setEnabled(
             available and not record.key.source_id.startswith("design:")
             if record
@@ -888,6 +1456,7 @@ class MaterialsPanel(QWidget):
         self.name_search.clear()
         self.patent.setChecked(False)
         self.support.setChecked(False)
+        self._preset_catalogs = None
         self._catalog_choices[(record.key.source_id, record.key.catalog)] = True
         self._rebuild_catalogs()
         self.find_matches()
@@ -962,32 +1531,47 @@ class MaterialsPanel(QWidget):
     def update_theme(self, theme: str) -> None:
         """Restyle existing plot artists through the host theme contract."""
         self.map.update_theme(theme)
+        self.compare.update_theme(theme)
 
     def showEvent(self, event: QShowEvent) -> None:
         super().showEvent(event)
         self._adapt_layout()
-        QTimer.singleShot(0, self._on_visible)
+        self._activation_timer.start(0)
 
     def _on_visible(self) -> None:
-        if self.isVisible() and not self._closed and self._dock_visible is not False:
+        if (
+            self.isVisible()
+            and not self.visibleRegion().isEmpty()
+            and not self._closed
+            and self._dock_visible is not False
+        ):
             if self._autoload:
                 self.sources.set_active(True)
             self.queue_query()
+            if self.view_combo.currentData() != "nd-vd":
+                self._request_view()
+            self._comparison_request(self.compare.request)
 
     def set_dock_visible(self, visible: bool) -> None:
         """Follow dock-tab visibility, distinct from child QWidget visibility."""
         self._dock_visible = visible
         if visible:
-            self._on_visible()
+            # Native layout can announce transient visibility while restoring
+            # a dock stack. Start discovery only after that layout settles.
+            self._activation_timer.start(0)
         else:
+            self._activation_timer.stop()
             self.sources.set_active(False)
             self._query_timer.stop()
             self.service.cancel_query()
+            self._cancel_computations()
 
     def hideEvent(self, event: QHideEvent) -> None:
+        self._activation_timer.stop()
         self.sources.set_active(False)
         self._query_timer.stop()
         self.service.cancel_query()
+        self._cancel_computations()
         if self.settings is not None:
             self.settings.setValue(
                 "Materials/browseSplitter", self.browse_splitter.saveState()

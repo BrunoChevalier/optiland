@@ -273,7 +273,8 @@ native optical conditions and match independent index/Abbe tolerances. See
 keyboard controls.
 Follow :doc:`gui_materials_tutorial` for a worked catalog lookup, strict matching
 criteria, same-name local RII/GLC records and an explicit Apply/Undo/save workflow
-using a self-contained sample lens.
+using a self-contained sample lens. The walkthrough also compares spectral
+curves and measured transmission, saves named views and exports CSV/PNG evidence.
 
 This quickstart covered only the very basics. The Optiland GUI has many more features for detailed optical design and analysis. We encourage you to explore the menus, right-click options in different panels, and consult the other sections of the Optiland documentation for more in-depth information on specific functionalities.
 

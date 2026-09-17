@@ -3,8 +3,8 @@
 Materials workspace
 ===================
 
-The desktop Materials workspace links a glass map, an exact catalog table and a
-read-only property inspector. Open **Materials** in the sidebar, **View → Toggle
+The desktop Materials workspace links glass maps, an exact catalog table,
+a property inspector and spectral comparisons. Open **Materials** in the sidebar, **View → Toggle
 Materials**, or the **Materials** command in the command palette (``Ctrl+K``).
 It is a dock: move, float, resize or hide it using the normal window controls.
 You can browse without creating a lens. Selecting or inspecting a material does
@@ -14,7 +14,7 @@ For a reproducible walkthrough with sample files and expected matching results,
 follow :doc:`gui_materials_tutorial`.
 
 Catalogs and exact identity
---------------------------
+---------------------------
 
 The first visit loads the installed glass catalogs in the calculation worker.
 Select catalogs independently in the **Filters** pane. **All** selects the loaded
@@ -36,7 +36,7 @@ context without cancelling an independent catalog query. The inspector identifie
 the medium after each surface, following :doc:`conventions`.
 
 Local RII and OSLO catalogs
---------------------------
+---------------------------
 
 In **Filters**, choose **Add source… → RII directory…** for a folder of supported
 RII ``.yml`` material definitions, or **Add source… → OSLO GLC file…** for a supported
@@ -90,6 +90,102 @@ Mouse-wheel zoom is centered on the pointer. The **Bounds** control sets numeric
 axis limits. **Apply** or ``Enter`` applies valid bounds and keeps the dialog
 open. Invalid or unordered limits show a message and leave the view unchanged.
 **Close** or ``Escape`` dismisses the dialog.
+
+Choose a map in the **Material map view** list. Besides n_d versus V_d, the
+available views are n_d versus n_F − n_C and the partial dispersions P_F,d,
+P_g,F and P_d,C versus V_d. Each partial dispersion divides its indicated index
+difference by n_F − n_C: P_F,d = (n_F − n_d)/(n_F − n_C),
+P_g,F = (n_g − n_F)/(n_F − n_C), and P_d,C = (n_d − n_C)/(n_F − n_C).
+Axis labels identify these quantities and their native conditions. The reference
+wavelengths are F = 0.4861327 µm, d = 0.5875618 µm, C = 0.6562725 µm and
+g = 0.4358343 µm. Missing reference values or a zero denominator produce an
+unavailable coordinate. The catalog table remains accessible.
+
+The patent tolerances continue to filter n_d and V_d in every map view. Their
+rectangle is shown only in the n_d/V_d view, where it represents those axes.
+Changing views retains exact selection and current-design context. Coordinate
+refreshes and filtering preserve the viewport; Reset explicitly fits the data.
+
+Compare a shortlist
+-------------------
+
+Select a record in **Browse** and click **Pin for comparison**, then open
+**Compare**. Pin up to four exact records; equal names remain distinct. Adding
+a fifth asks you to remove a pin first. Use **Move up**, **Move down** and
+**Remove pin** on the current pin row. Selecting a pin or a spectral sample does
+not change Browse selection or an Apply target. **Inspect in Browse** explicitly
+opens that pin's exact record for inspection.
+
+Select **Refractive index n(λ)** or **Internal transmission**. The default
+**Common declared support** interval is the intersection of known support for
+the chosen quantity. **Explicit interval** enables From/To in µm. The default
+201 samples can be changed from 2 to 2001. Transmission also takes a thickness
+in mm, including zero. Input edits request fresh results after a short pause;
+**Recompute** requests them immediately. Finish incomplete numeric entries before
+continuing. Displayed results and export buttons clear when inputs become stale.
+
+The plot and **Spectral samples** table use the same wavelengths and values.
+Curves have numbered labels, different line styles and marker shapes in both
+themes. Missing, unsupported or invalid samples remain explicit table cells and
+gaps in the curve. Select rows and press ``Ctrl+C`` to copy their displayed
+samples. Plot arrows pan, ``+``/``-`` zoom, ``Home`` restores the initial view and
+``Escape`` exits pan/rectangle-zoom mode. Drag the splitter to enlarge either the
+plot or data tabs. **Expand data** temporarily gives the data tabs the plot's
+space; **Show plot** restores the split view. This is useful for reading sample
+rows in a compact dock. Compact controls remain reachable with their scroll bars.
+
+Known support is enforced even when a native material's usual bounds policy is
+``clamp``. Unknown index support is excluded from the default interval; an
+explicit bounded interval allows evaluation with a warning. If known intervals
+do not overlap, no curve is invented: inspect the pins and choose an appropriate
+explicit interval. Individual unsupported wavelengths still remain gaps.
+
+Internal transmission excludes interface reflection and scattering losses. It
+requires actual extinction or internal-transmission data and uses their separate
+support interval. Missing extinction remains missing even at zero thickness;
+it does not become 100% transmission. Supplied zero and unity transmission are
+preserved. Read thickness, support and native conditions together before comparing.
+The workspace does not normalize temperature, pressure or index conventions.
+
+**Details** shows the current pin's model, coefficients, metadata and native
+conditions as bounded plain text. **Nearby alternatives** searches across loaded
+sources using the current pin and positive n_d/V_d scales. Its signed deltas and
+normalized distance describe geometric proximity, not optical performance.
+**Inspect alternative in Browse** is an explicit selection action. Nearby results
+clear when the target, scales or their source data change.
+
+Removing a source leaves its pins visibly unavailable with their saved labels.
+It discards their optical results; it never substitutes a same-name record.
+Reload the exact source to resolve those identities again.
+
+Save views and export results
+-----------------------------
+
+In Browse, enter a name beside **Save view** to save the map choice, filters,
+exact selected catalogs, ordered pin identities, map bounds and current-design
+context visibility. **Load view** restores that view; **Delete view** removes
+the saved entry. Saving an existing name replaces that entry. These are local
+application preferences. They do not store
+catalog files or spectral results. Comparison quantity/interval/thickness are
+chosen in Compare. Unavailable saved catalogs and pins stay explicit; load
+their exact local sources at the same paths again rather than broadening the
+search accidentally. Changed source contents can make an old record unavailable.
+
+Browse's **Export CSV** captures the current result rows in displayed sort order,
+including identities, coordinates, statuses, match deltas, support, native
+conditions and source generations. The map toolbar's **Export PNG** captures the
+visible plot. Compare provides **Export samples CSV…** and **Export plot PNG…**.
+Its CSV contains one row per pin and wavelength, preserving every gap and its
+reason; values match the plot/table samples. CSV uses locale-independent numeric
+values. PNG embeds an ``Optiland`` metadata entry with the captured request,
+sources, conditions and plot bounds.
+
+An export freezes the accepted result before opening the filename chooser.
+Changing filters while choosing a destination does not change that captured
+artifact. Confirm the destination and wait for the completion message. A failed
+or cancelled export does not change the lens, its native filename, modified
+state or Undo history. Export buttons require current results. Use the normal
+**File → Save** or **Save As** commands to save a lens document.
 
 Patent matching and supported wavelengths
 -----------------------------------------
@@ -185,7 +281,7 @@ new undo entry. Converting an equivalent file lookup into an owned definition
 is a real persistence change.
 
 Keyboard, focus and compact docks
---------------------------------
+---------------------------------
 
 ``Ctrl+F`` focuses and selects the search text. ``Tab`` and ``Shift+Tab`` move
 through native controls; ``F6`` and ``Shift+F6`` move between visible search,

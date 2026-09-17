@@ -1,7 +1,7 @@
 .. _gui-materials-tutorial:
 
 Find, inspect and apply a glass in the desktop GUI
-=================================================
+==================================================
 
 This walkthrough uses the **Materials** workspace in the development version
 documented here. Use a build containing that workspace; older installed releases
@@ -16,7 +16,7 @@ search uses installed data and needs no supplier account or live download.
 Selecting a row or map point only inspects the material.
 
 Find an exact installed record
------------------------------
+------------------------------
 
 1. Launch the GUI and open **Materials** in the sidebar. You can do this before
    opening a lens. Wait for the installed source to finish loading.
@@ -53,7 +53,7 @@ mean something different. These shapes remain useful without interpreting color.
    qualified identity.
 
 Reproduce a patent-style match
------------------------------
+------------------------------
 
 1. Clear the search with ``Ctrl+F``, then ``Backspace``.
 2. Enable **Patent match** and enter the following values. Use the decimal
@@ -213,8 +213,72 @@ input data, whereas unknown extinction in ``DEMO-CROWN`` is missing input data.
 These quoted samples are for a 5 mm thickness; transmission comparisons must
 use the same wavelength and thickness.
 
+Compare the two references and inspect transmission
+---------------------------------------------------
+
+1. Select the local RII ``DEMO-CROWN`` row and click **Pin for comparison**.
+   Select the GLC ``DEMO-CROWN`` row and pin it too. Clear the name search,
+   select GLC ``DEMO-LOSS``, and pin that record. All three identities remain
+   separate even when display names match.
+2. Change the Browse map to the P_g,F partial-dispersion view. The axes now
+   describe (n_g − n_F)/(n_F − n_C) versus V_d. The same selected identity stays
+   selected. Return to n_d/V_d to see the original coordinates again.
+3. Open **Compare** and choose **Refractive index n(λ)** with **Common declared
+   support**. The synthetic records share 0.4–0.8 µm support. In **Spectral
+   samples**, inspect the 0.6 µm row: RII ``DEMO-CROWN`` gives 1.555555556 and
+   GLC ``DEMO-CROWN`` gives 1.516666667. The curves and table show the same values.
+4. Select **Internal transmission**, enter **5 mm** thickness, and wait for the
+   fresh result. ``DEMO-LOSS`` gives 0 at 0.4 µm, 0.7 at 0.6 µm and 0.85 at
+   0.8 µm. Both ``DEMO-CROWN`` pins show missing data, including an explanation;
+   neither becomes a measured 100% transmission curve.
+5. Change thickness to **10 mm**. At 0.6 µm, ``DEMO-LOSS`` becomes 0.49, following
+   the native thickness scaling. Restore 5 mm. Select **Explicit interval** and
+   enter 0.35–0.85 µm to observe unsupported samples outside the known range.
+   Return to **Common declared support** afterward.
+6. Use the pin table's **Move up** or **Move down** to reorder the curves and
+   numbered columns. **Details** describes the selected pin's native formula
+   and conditions. In **Nearby alternatives**, keep the visible positive scales
+   and click **Find nearby alternatives**; inspect a result only through
+   **Inspect alternative in Browse**. Distance alone does not establish a useful
+   replacement in this lens.
+
+.. figure:: _static/glassmap/compare-transmission-light.png
+   :alt: Materials Compare with three exact pins at 5 mm thickness, a DEMO-LOSS transmission curve starting at zero, and missing transmission cells for both DEMO-CROWN records.
+
+   Supplied zero transmission is a numeric result. Missing extinction remains
+   unavailable, with the same status and reason in the plot and sample table.
+
+.. figure:: _static/glassmap/compare-samples-compact-dark.png
+   :width: 680
+   :alt: Compact dark Materials Compare with Expand data active, three qualified pins and five visible spectral sample rows; the plot is temporarily hidden.
+
+   In a compact dock, choose **Expand data** to give the numeric table more
+   space. Scroll horizontally to reach every pin and vertically to inspect all
+   samples. **Show plot** restores the plot without changing the comparison.
+
+Keep a named view and export your evidence
+------------------------------------------
+
+1. Return to **Browse**, enter ``Tutorial shortlist`` in **Named view**, and
+   click **Save view**. Change the map and search, then select that name and
+   click **Load view**. The map, filters, exact catalogs and ordered pins return.
+   Recompute the intended quantity and thickness in Compare when needed.
+2. In Browse, click **Export CSV**, choose ``tutorial-map.csv`` and wait for
+   completion. The file includes the displayed sort order and full exact keys.
+   Export the visible map with its toolbar's **Export PNG**.
+3. In Compare, compute **Internal transmission** at **5 mm** over common support.
+   Click **Export samples CSV…** and save ``tutorial-transmission.csv``. With
+   three pins and the default 201 wavelengths, the file has 603 data rows.
+   Check the status/reason columns for the two missing-extinction materials.
+   Use **Export plot PNG…** to save the matching plot and embedded provenance.
+4. These outputs do not change the open lens or its filename. A named view also
+   does not bundle local catalogs. After restarting, add the same local sources
+   before expecting their saved identities to resolve.
+
+Continue below to make an explicit change to the optical design.
+
 Apply the GLC record to the front-surface medium
------------------------------------------------
+------------------------------------------------
 
 1. Open the downloaded ``singlet.json`` if it is not already the active lens.
    In the **Lens Data Editor**, focus surface 1's **Material** cell, which shows

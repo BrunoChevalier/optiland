@@ -88,6 +88,17 @@ class MemoryMaterials(QObject):
         self.pending = query
         self.last_query_result = None
 
+    def query_transport(self):
+        from optiland_gui.services.material_jobs import encode_query_source
+
+        return (
+            tuple(source.snapshot.stamps[0] for source in self.accepted.values()),
+            tuple(
+                encode_query_source(source.snapshot)
+                for source in self.accepted.values()
+            ),
+        )
+
     def complete(self):
         result = query_materials(
             self.snapshot, self.pending, request_id=len(self.queries)
@@ -105,6 +116,13 @@ class Surface:
 
 class Jobs(QObject):
     stopped = Signal()
+    finished = Signal(object)
+
+    def cancel_target(self, target):
+        pass
+
+    def submit(self, *args, **kwargs):
+        raise RuntimeError("This browser fixture has no calculation worker")
 
 
 class NoTargetApply(QObject):
@@ -130,12 +148,22 @@ class NoTargetApply(QObject):
         raise AssertionError("A browser without a captured target cannot apply")
 
 
+class MemoryArtifacts:
+    def __init__(self):
+        self.requests = []
+
+    def request_artifact(self, path, artifact):
+        self.requests.append((path, artifact))
+        return SimpleNamespace(path=path, artifact=artifact)
+
+
 def make_connector(surfaces=()):
     optic = SimpleNamespace(surfaces=list(surfaces))
     return SimpleNamespace(
         document_state=DocumentState(),
         materials=MemoryMaterials(),
         material_apply=NoTargetApply(),
+        file_operations=MemoryArtifacts(),
         calculation_jobs=Jobs(),
         get_optic=lambda: optic,
     )

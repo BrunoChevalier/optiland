@@ -251,6 +251,23 @@ selection coordinates support only Locate and the selected outline; they never
 become matches, hit candidates or reset limits. Themes change local artists and
 toolbar palette without modifying global Matplotlib or application defaults.
 
+``MaterialComparePanel`` keeps four ordered exact pins and native controls.
+``MaterialComparisonService`` captures immutable source snapshots and validates
+the shared worker's source/backend/request generations for map coordinates,
+spectra and nearby alternatives. The Qt-free numerical contract is in
+``optiland.materials.comparison``. One ``SpectralResult`` supplies plot and table
+cells; missing values become NaN only in the drawing adapter. Numeric drafts
+are validated and interpreted under signal blockers before reading their values.
+Pin focus, Browse selection and the captured Apply target are separate states.
+
+``MaterialPresetStore`` persists validated identities and view preferences in
+QSettings. It retains unavailable catalog choices without widening the query.
+``MaterialExportDialog`` freezes CSV or RGBA artifacts before opening its native
+chooser; ``FileOperations`` publishes them through the shared atomic artifact
+writer. A captured export cannot become a newer result while the chooser is
+open. This path does not update native document path, dirty state or history.
+Do not restore Matplotlib's independent Save action on either material plot.
+
 Meaningful tests are in ``tests/gui/test_materials_service.py``,
 ``test_material_jobs.py``, ``test_material_browser.py``,
 ``test_materials_panel.py``, ``test_materials_model.py``, ``test_glass_map.py``,
@@ -258,6 +275,11 @@ Meaningful tests are in ``tests/gui/test_materials_service.py``,
 coverage includes ``test_material_apply.py``, ``test_material_apply_tasks.py``,
 ``test_materials_actions.py``, ``test_materials_workflow.py`` and
 ``test_document_mutation_guards.py``.
+Comparison coverage adds ``test_material_compare_panel.py``,
+``test_material_comparison_service.py``, ``test_material_comparison_jobs.py``,
+``test_materials_comparison_integration.py``, ``test_material_exports.py`` and
+``test_material_presets.py``. Core NumPy/Torch behavior is exercised by
+``tests/test_material_comparison.py``.
 Keep native keyboard/persistent-selection, exact source generations,
 same-name/overlap, stale-result, source-lifecycle and actual-worker tests when
 changing these contracts. GUI coverage is supplementary to the core CI

@@ -96,6 +96,9 @@ Build a system
    * - apply a local catalog glass to a surface and save it with the lens?
      - :doc:`Materials workspace <gui_materials>` and
        :doc:`the desktop Materials tutorial <gui_materials_tutorial>`
+   * - compare glass dispersion or transmission and export the actual samples?
+     - :doc:`Materials workspace <gui_materials>` and
+       :doc:`the desktop Materials tutorial <gui_materials_tutorial>`
    * - design an infrared or lithographic system?
      - :doc:`gallery/specialized_lenses/infrared`,
        :doc:`Tutorial 4e <examples/Tutorial_4e_Lithographic_Projection_System>`

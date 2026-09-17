@@ -538,9 +538,12 @@ def test_keyboard_navigation_keeps_selection_and_escape_cancels_tools(chart):
 
 
 @pytest.mark.parametrize("width,height", [(620, 270), (400, 250)])
-def test_compact_resize_reserves_axis_label_space(chart, qapp, width, height):
+@pytest.mark.parametrize(
+    "ylabel", ["n_d (native conditions)", "P_g,F\n(native conditions)"]
+)
+def test_compact_resize_reserves_axis_label_space(chart, qapp, width, height, ylabel):
     chart.resize(width, height)
-    chart.set_points((point(), point("B", 40, 1.7)))
+    chart.set_points((point(), point("B", 40, 1.7)), ylabel=ylabel)
     qapp.processEvents()
     chart.canvas.draw()
     renderer = chart.canvas.get_renderer()

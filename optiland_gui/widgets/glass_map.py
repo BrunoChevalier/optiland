@@ -49,6 +49,16 @@ class MapPoint:
             raise ValueError("Map coordinates must be finite")
 
 
+class _MapToolbar(NavigationToolbar2QT):
+    # Output is published by the document's shared artifact writer. Arbitrary
+    # figure edits would disconnect displayed axes from their data provenance.
+    toolitems = tuple(
+        item
+        for item in NavigationToolbar2QT.toolitems
+        if item[3] not in {"save_figure", "edit_parameters", "configure_subplots"}
+    )
+
+
 class GlassMap(QWidget):
     """Linked glass map: gestures request selection and never mutate the design.
 
@@ -59,6 +69,7 @@ class GlassMap(QWidget):
     """
 
     selection_requested = Signal(object)
+    export_requested = Signal()
     _PICK_RADIUS = 8.0  # Logical screen pixels, scaled to the canvas display.
     _MAX_VIEW = 1e100  # Avoid transforms with overflow-prone extreme coordinates.
 
@@ -75,10 +86,11 @@ class GlassMap(QWidget):
         )
         self.ax = self.figure.add_subplot()
         self.figure.subplots_adjust(left=0.13, right=0.97, bottom=0.16, top=0.96)
-        self.toolbar = NavigationToolbar2QT(self.canvas, self)
+        self.toolbar = _MapToolbar(self.canvas, self)
         self.toolbar.setAccessibleName("Material map navigation")
         self.toolbar.addSeparator()
         self.toolbar.addAction("Bounds…", self._show_bounds)
+        self.toolbar.addAction("Export PNG…", self.export_requested.emit)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self.toolbar)
@@ -90,6 +102,7 @@ class GlassMap(QWidget):
         self._selected_point: MapPoint | None = None
         self._hovered: MaterialKey | None = None
         self._descending = True
+        self._target_spec = (None, None, None, None)
         self._has_view = False
         self._hit_points: tuple[MapPoint, ...] = ()
         self._screen = np.empty((0, 2))
@@ -152,6 +165,21 @@ class GlassMap(QWidget):
         self.ax.callbacks.connect("ylim_changed", self._invalidate_view)
         self.toolbar.push_current()
         self.update_theme("light")
+
+    def view_bounds(self) -> tuple[float, float, float, float]:
+        """Return actual plotted bounds, including descending axes."""
+        return tuple(
+            float(value) for value in (*self.ax.get_xlim(), *self.ax.get_ylim())
+        )
+
+    def capture_rgba(self) -> tuple[int, int, bytes]:
+        """Detach the displayed image on Qt, including retained selection cues."""
+        self.canvas.draw()
+        # Animated overlays are normally blitted after drawing; reuse that path
+        # so the export agrees with the currently visible map.
+        self._draw_overlays()
+        pixels = self.canvas.buffer_rgba()
+        return pixels.shape[1], pixels.shape[0], bytes(pixels)
 
     @staticmethod
     def _validated(points: Iterable[MapPoint]) -> tuple[MapPoint, ...]:
@@ -331,6 +359,10 @@ class GlassMap(QWidget):
         ):
             raise ValueError("Target exceeds safe plot coordinate limits")
         visible = nd is not None and vd is not None
+        spec = (nd, vd, ntol, vtol) if visible else (None, None, None, None)
+        if spec == self._target_spec:
+            return
+        self._target_spec = spec
         self._target.set_data([vd] if visible else [], [nd] if visible else [])
         rectangle = visible and ntol is not None and vtol is not None
         self._target_box.set_visible(rectangle)

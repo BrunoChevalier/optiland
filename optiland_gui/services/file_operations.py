@@ -9,7 +9,8 @@ from pathlib import Path
 
 from PySide6.QtCore import QObject, QTimer, Signal, Slot
 
-from optiland_gui.services.job_records import BackendConfig, OpticSnapshot
+from optiland_gui.services.file_artifacts import FileArtifact, validate_artifact
+from optiland_gui.services.job_records import BackendConfig, JobRequest, OpticSnapshot
 from optiland_gui.services.prepared_optic import PreparedOptic
 
 
@@ -30,6 +31,7 @@ class FileOperation:
     digest: str | None = None
     load_options: dict = field(default_factory=dict)
     save_sequence: int = 0
+    artifact: FileArtifact | None = None
 
 
 class FileOperations(QObject):
@@ -125,6 +127,29 @@ class FileOperations(QObject):
             for op in self._operations.values()
         )
 
+    def request_artifact(
+        self, path: str | os.PathLike[str], artifact: FileArtifact
+    ) -> JobRequest | None:
+        """Export captured immutable data without changing native document state."""
+        if self._closing:
+            return None
+        try:
+            self.connector.document_acceptance.require_start("file")
+            file_format = validate_artifact(artifact)
+            self.connector.document_acceptance.require_start("file")
+        except Exception as exc:
+            self._notify(f"Unable to capture export: {exc}", "error")
+            return None
+        path = os.path.abspath(path)
+        operation = self._new_operation(
+            "export", path, file_format, "file-output-" + os.path.normcase(path), None
+        )
+        operation.artifact = artifact
+        operation.staged_path = str(
+            Path(path).with_name(f".optiland-{operation.identifier}.tmp")
+        )
+        return self._queue(operation, "prepare_artifact_output")
+
     def _new_operation(self, kind, path, file_format, target, snapshot):
         operation = FileOperation(
             uuid.uuid4().hex,
@@ -157,6 +182,9 @@ class FileOperations(QObject):
             "backend": BackendConfig.capture(),
             "load_options": operation.load_options,
         }
+        if operation.phase == "preparing" and operation.artifact is not None:
+            parameters["artifact"] = operation.artifact
+        phase = operation.phase
         try:
             request = self.jobs.submit(
                 operation.target
@@ -184,6 +212,8 @@ class FileOperations(QObject):
             self._notify(f"File operation could not start: {exc}", "error")
             self._resume_publications()
             self._changed()
+            return None
+        if operation.identifier not in self._operations or operation.phase != phase:
             return None
         self._requests[request.job_id] = operation
         self._changed()
@@ -268,7 +298,17 @@ class FileOperations(QObject):
     def _finished(self, result):
         operation = self._requests.pop(result.request.job_id, None)
         if operation is None:
-            return
+            # A queued callback can cancel synchronously inside jobs.submit,
+            # before _queue receives its JobRequest. Context already owns it.
+            pending = result.request.context
+            if (
+                not isinstance(pending, FileOperation)
+                or self._operations.get(pending.identifier) is not pending
+                or pending.phase != "preparing"
+                or result.request.target != pending.target
+            ):
+                return
+            operation = pending
         phase = operation.phase
         if phase == "cleaning":
             if result.status != "succeeded":
@@ -332,6 +372,7 @@ class FileOperations(QObject):
                     )
                 self._complete(operation)
         else:
+            operation.artifact = None
             try:
                 # Already-owned writes must drain during close. File ownership
                 # excludes material preparation; the short publication guard
@@ -429,6 +470,7 @@ class FileOperations(QObject):
                 self.connector.set_modified(False)
 
     def _cleanup(self, operation):
+        operation.artifact = None
         if operation.staged_path is not None:
             operation.phase = "cleaning"
             self._queue(operation, "cleanup_output")

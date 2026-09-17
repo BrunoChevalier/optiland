@@ -220,6 +220,21 @@ def read_glc_catalog(path: str | Path) -> list[CatalogEntry]:
         raise ValueError(f"{path.name}: expected a GLC text catalog")
     with path.open("rb") as stream:
         raw = stream.read(MAX_CATALOG_BYTES + 1)
+    return decode_glc_catalog(raw, name=path)
+
+
+def decode_glc_catalog(
+    raw: bytes, *, name: str | Path = "catalog.glc"
+) -> list[CatalogEntry]:
+    """Decode captured GLC bytes without reopening a file.
+
+    ``name`` is used only for diagnostic locations and the fallback catalog
+    label. The provenance hash describes these exact bytes. Validation matches
+    :func:`read_glc_catalog`; no material registry is changed.
+    """
+    path = Path(name)
+    if not isinstance(raw, bytes):
+        raise TypeError("Captured GLC data must be bytes")
     if len(raw) > MAX_CATALOG_BYTES:
         raise ValueError(f"{path.name}: catalog exceeds size limit")
     try:

@@ -228,7 +228,7 @@ def test_file_material_is_inspectable_but_not_falsely_portable(set_test_backend)
     with pytest.raises(ValueError, match="no portable owned"):
         reconstruct_material(record)
     wrong_type = replace(record, owned_data=b'{"type":"Material","name":"N-BK7"}')
-    with pytest.raises(ValueError, match="DataMaterial"):
+    with pytest.raises(ValueError, match="Unsupported native material type"):
         reconstruct_material(wrong_type)
 
 
@@ -238,6 +238,14 @@ def test_custom_behavior_does_not_claim_native_reconstruction():
     assert describe_material(material, KEY).owned_data is None
     material = analytic_material()
     material.propagation_model.propagate = lambda rays, t: None
+    assert describe_material(material, KEY).owned_data is None
+    material = analytic_material()
+    material._dispersion = lambda wavelength: np.array([1.9])
+    record = describe_material(material, KEY)
+    assert record.nd.value == 1.9
+    assert record.owned_data is None
+    material = analytic_material()
+    material.propagation_model.material = IdealMaterial(1.0)
     assert describe_material(material, KEY).owned_data is None
 
 

@@ -103,8 +103,12 @@ discovery; they do not freeze file contents or provide portable worker payloads.
 :mod:`optiland.materials.properties` supplies immutable optical summaries and
 independently bounded index/Abbe queries without importing Qt. It distinguishes
 supported values, unknown support and unavailable values, and preserves the
-material's bounds policy. See :ref:`material_discovery_queries` for executable
-examples, the reference-line convention and ownership limits.
+material's bounds policy. :mod:`optiland.materials.portability` captures supported
+live material state as self-contained native data, including file-backed
+coefficients. :mod:`optiland.materials.sources` loads exact registry, local GLC
+and captured current-design records with content generations and diagnostics.
+See :ref:`material_discovery_queries` for executable examples, the reference-line
+convention, declared-domain limits and background-service ownership.
 
 Evaluation and Caching
 ----------------------
@@ -166,3 +170,5 @@ lookup when an input or tracked parameter requires a fresh gradient graph.
 
    materials/materials.registry
    materials/materials.properties
+   materials/materials.portability
+   materials/materials.sources

@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import contextlib
 import os
+from copy import deepcopy
+from typing import TYPE_CHECKING
 
 import yaml
 
@@ -23,6 +25,9 @@ from optiland.materials.spectral import (
     validate_bounds,
 )
 from optiland.materials.thermal import catalog_air_index, schott_relative_index
+
+if TYPE_CHECKING:
+    from optiland.materials.data import DataMaterial
 
 
 class MaterialFile(BaseMaterial):
@@ -60,6 +65,11 @@ class MaterialFile(BaseMaterial):
     def __init__(
         self, filename, propagation_model=None, *, bounds: BoundsPolicy = "clamp"
     ):
+        self._initialize(filename, propagation_model, bounds)
+        self._parse_file(self._read_file())
+
+    def _initialize(self, filename, propagation_model, bounds):
+        """Initialize live evaluator state shared by file and captured input."""
         super().__init__(propagation_model)
         self._bounds = validate_bounds(bounds)
         self.filename = filename
@@ -89,8 +99,30 @@ class MaterialFile(BaseMaterial):
             "tabulated nk": self._tabulated_n,
         }
 
-        data = self._read_file()
-        self._parse_file(data)
+    @classmethod
+    def from_data(
+        cls,
+        data: dict,
+        *,
+        name: str = "material.yml",
+        propagation_model=None,
+        bounds: BoundsPolicy = "clamp",
+    ) -> MaterialFile:
+        """Parse captured RII YAML data without opening a file or registry.
+
+        ``name`` is a diagnostic source label, not a lookup instruction. The
+        decoded mapping and its descriptive metadata are copied on input.
+        This constructor creates an exact ``MaterialFile``; catalog ``Material``
+        instances must continue to use their normal identity-resolving constructor.
+        """
+        if cls is not MaterialFile:
+            raise ValueError("Captured RII data requires an exact MaterialFile")
+        if not isinstance(data, dict) or not isinstance(name, str):
+            raise ValueError("RII data must be an object and its name a string")
+        material = cls.__new__(cls)
+        material._initialize(name, propagation_model, bounds)
+        material._parse_file(deepcopy(data))
+        return material
 
     @property
     def bounds(self) -> BoundsPolicy:
@@ -356,6 +388,9 @@ class MaterialFile(BaseMaterial):
         Args:
             data (dict): Dictionary containing parsed JSON/YAML material data.
         """
+        self._source_metadata = {
+            key: deepcopy(value) for key, value in data.items() if key != "DATA"
+        }
         for sub_data in data.get("DATA", []):
             self._parse_sub_data(sub_data)
 
@@ -420,6 +455,77 @@ class MaterialFile(BaseMaterial):
         if waves is not None and len(waves):
             return float(waves[0]), float(waves[-1])
         return self._formula_wavelength_range if property_name == "n" else None
+
+    def to_owned_material(self) -> DataMaterial:
+        """Capture the live evaluator as a self-contained ``DataMaterial``.
+
+        Equivalence is limited to the declared spectral domain: the owned
+        evaluator enforces analytic validity limits that this file adapter does
+        not enforce. Table bounds, independent n/k grids and active thermal
+        behavior are retained. No file is reread and no spectrum is approximated.
+        Single-sample tables and custom evaluators/propagation are rejected.
+        """
+        from optiland.materials.data import DataMaterial
+        from optiland.materials.portability import _check_builtin_material
+
+        _check_builtin_material(self)
+
+        def values(array):
+            return be.to_numpy(array).reshape(-1).tolist()
+
+        if self._n_formula in {"tabulated n", "tabulated nk"}:
+            dispersion = {
+                "kind": "tabulated",
+                "wavelengths_um": values(self._n_wavelength),
+                "indices": values(self._n),
+            }
+        elif self._n_formula in self.formula_map:
+            dispersion = {
+                "kind": "formula",
+                "formula": self._n_formula,
+                "coefficients": values(self.coefficients),
+                "wavelength_range_um": self._formula_wavelength_range,
+            }
+        else:
+            raise ValueError("File material has no supported refractive-index model")
+
+        extinction = None
+        if (self._k is None) != (self._k_wavelength is None):
+            raise ValueError("File material has an incomplete extinction table")
+        if self._k is not None:
+            extinction = {
+                "kind": "tabulated_k",
+                "wavelengths_um": values(self._k_wavelength),
+                "values": values(self._k),
+            }
+        thermal = None
+        coefficients = values(self.thermdispcoef)
+        if self._t0 is not None and any(coefficients):
+            thermal = {
+                "kind": "schott",
+                "coefficients": coefficients,
+                "reference_temperature_c": float(self._t0),
+            }
+        metadata = {
+            "source_format": "refractiveindex.info",
+            "source_file": os.path.basename(self.filename),
+            "rii": self._source_metadata,
+            "reference": self.reference_data,
+        }
+        if hasattr(self, "name"):
+            metadata["catalog_material"] = {
+                "name": self.name,
+                "reference": self.reference,
+                "catalog": self._catalog,
+            }
+        # The new default propagation model is bound to this owned instance,
+        # never to the source instance that may subsequently change or disappear.
+        return DataMaterial(
+            {"dispersion": dispersion, "extinction": extinction, "thermal": thermal},
+            name=self.display_name,
+            metadata=metadata,
+            bounds=self.bounds,
+        )
 
     def to_dict(self):
         """Returns the material data as a dictionary.

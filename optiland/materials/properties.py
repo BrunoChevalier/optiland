@@ -8,20 +8,20 @@ evaluation even when a material's table policy permits clamping.
 
 from __future__ import annotations
 
-import json
 import math
+from contextlib import suppress
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
 import optiland.backend as be
-from optiland.materials.base import BaseMaterial
 from optiland.materials.data import DataMaterial
 from optiland.materials.definition import TransmissionTable
 from optiland.materials.material_file import MaterialFile
-from optiland.propagation.homogeneous import HomogeneousPropagation
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
+
+    from optiland.materials.base import BaseMaterial
 
 D_LINE_UM = 0.5875618
 F_LINE_UM = 0.4861327
@@ -212,21 +212,12 @@ def describe_material(material: BaseMaterial, key: MaterialKey) -> MaterialSumma
     if isinstance(material, DataMaterial):
         extinction = material.definition.extinction is not None
         transmission = isinstance(material.definition.extinction, TransmissionTable)
-        if (
-            type(material) is DataMaterial
-            and type(material.propagation_model) is HomogeneousPropagation
-            and not any(
-                name in vars(material)
-                for name in ("n", "k", "_calculate_n", "_calculate_k", "to_dict")
-            )
-            and "propagate" not in vars(material.propagation_model)
-        ):
-            owned_data = json.dumps(
-                material.to_dict(),
-                sort_keys=True,
-                separators=(",", ":"),
-                allow_nan=False,
-            ).encode("utf-8")
+        from optiland.materials.portability import capture_material
+
+        # Inspection can describe custom behavior without claiming that the
+        # native codec can preserve it. All payloads share one capture gate.
+        with suppress(ValueError, TypeError, NotImplementedError):
+            owned_data = capture_material(material)
     elif isinstance(material, MaterialFile):
         extinction = material.spectral_range("k") is not None
         transmission = False
@@ -245,14 +236,13 @@ def describe_material(material: BaseMaterial, key: MaterialKey) -> MaterialSumma
     )
 
 
-def reconstruct_material(summary: MaterialSummary) -> DataMaterial:
-    """Restore independent owned native data without file or catalog resolution."""
+def reconstruct_material(summary: MaterialSummary) -> BaseMaterial:
+    """Restore supported owned native data without file or catalog resolution."""
+    from optiland.materials.portability import restore_material
+
     if summary.owned_data is None:
         raise ValueError("This material has no portable owned definition")
-    data = json.loads(summary.owned_data)
-    if data.get("type") != "DataMaterial":
-        raise ValueError("Expected an owned DataMaterial definition")
-    return BaseMaterial.from_dict(data)
+    return restore_material(summary.owned_data)
 
 
 @dataclass(frozen=True)

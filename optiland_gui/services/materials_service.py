@@ -33,6 +33,7 @@ class _Query:
     document: DocumentToken | None
     snapshot: MaterialSnapshot
     serial: int
+    spec: MaterialQuery
 
 
 class MaterialsService(QObject):
@@ -40,7 +41,8 @@ class MaterialsService(QObject):
 
     Every load replaces one source atomically. An unsuccessful reload leaves its
     previous snapshot available and emits ``source_failed``. A successful source
-    publication or removal revokes existing query results. Optical edits revoke
+    publication or removal revokes queries that could include that source.
+    Optical edits revoke
     current-design snapshots and mixed queries, while independent catalog jobs
     continue. The cache retains portable optical data; query jobs receive only
     lightweight property summaries.
@@ -85,6 +87,7 @@ class MaterialsService(QObject):
         self._query_serial = 0
         self._backend = BackendConfig.capture()
         self._last_query_result = None
+        self._last_query_spec: MaterialQuery | None = None
         self._closed = False
         jobs.finished.connect(self._on_finished)
         document.changed.connect(self._document_changed)
@@ -203,8 +206,20 @@ class MaterialsService(QObject):
         self.cancel_source(source_id)
         self._errors.pop(source_id, None)
         if self._sources.pop(source_id, None) is not None:
-            self._invalidate_query()
+            self._invalidate_source_query(source_id)
             self.source_removed.emit(source_id)
+
+    @staticmethod
+    def _includes_source(query: MaterialQuery, source_id: str) -> bool:
+        return (not query.source_ids or source_id in query.source_ids) and (
+            query.catalog_keys is None
+            or any(key[0] == source_id for key in query.catalog_keys)
+        )
+
+    def _invalidate_source_query(self, source_id: str) -> None:
+        spec = self._query.spec if self._query is not None else self._last_query_spec
+        if spec is not None and self._includes_source(spec, source_id):
+            self._invalidate_query()
 
     def query(self, query: MaterialQuery) -> JobRequest | None:
         """Submit the latest query over only its selected, published sources."""
@@ -217,7 +232,7 @@ class MaterialsService(QObject):
         sources = tuple(
             source
             for source_id, source in self._sources.items()
-            if not query.source_ids or source_id in query.source_ids
+            if self._includes_source(query, source_id)
         )
         snapshot = MaterialSnapshot(
             tuple(s for source in sources for s in source.snapshot.stamps),
@@ -233,7 +248,7 @@ class MaterialsService(QObject):
             else None
         )
         backend = BackendConfig.capture()
-        pending = _Query(None, backend, document, snapshot, serial)
+        pending = _Query(None, backend, document, snapshot, serial, query)
         self._query = pending
         try:
             request = self.jobs.submit(
@@ -272,6 +287,7 @@ class MaterialsService(QObject):
         had_result = self._query is not None or self._last_query_result is not None
         self._query = None
         self._last_query_result = None
+        self._last_query_spec = None
         self.jobs.cancel_target(self._query_target)
         if had_result:
             self.query_invalidated.emit()
@@ -287,15 +303,8 @@ class MaterialsService(QObject):
                 self.cancel_source(source_id)
                 self._errors.pop(source_id, None)
                 if self._sources.pop(source_id, None) is not None:
+                    self._invalidate_source_query(source_id)
                     self.source_removed.emit(source_id)
-        if (self._query is not None and self._query.document is not None) or (
-            self._last_query_result is not None
-            and any(
-                stamp.source_id.startswith("design:")
-                for stamp in self._last_query_result.stamps
-            )
-        ):
-            self._invalidate_query()
 
     def _source_failure(self, source_id, error):
         error = error[:2000]
@@ -370,7 +379,7 @@ class MaterialsService(QObject):
             return
         self._sources[source_id] = data
         self._errors.pop(source_id, None)
-        self._invalidate_query()
+        self._invalidate_source_query(source_id)
         if self._sources.get(source_id) is data and not self._closed:
             self.state_changed.emit(source_id, "ready")
             if self._sources.get(source_id) is data and not self._closed:
@@ -399,6 +408,7 @@ class MaterialsService(QObject):
             self.query_invalidated.emit()
             return
         self._last_query_result = data
+        self._last_query_spec = pending.spec
         self.state_changed.emit("query", "ready")
         if self._last_query_result is data and self._current(pending):
             self.query_finished.emit(data)

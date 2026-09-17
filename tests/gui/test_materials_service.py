@@ -252,6 +252,113 @@ def test_design_changes_revoke_only_design_and_mixed_queries(materials):
     assert "another document" in service.source_error(design_id)
 
 
+@pytest.mark.parametrize("finished", [False, True])
+@pytest.mark.parametrize("qualified", [False, True])
+def test_excluded_source_publication_and_removal_preserve_catalog_query(
+    materials, finished, qualified
+):
+    state, jobs, service = materials
+    design_id = f"design:{state.token.document_id}"
+    publish(jobs, service, owned_source())
+    publish(jobs, service, owned_source(design_id))
+    query = (
+        MaterialQuery(catalog_keys=(("catalog:a", "Owned"),))
+        if qualified
+        else MaterialQuery(source_ids=("catalog:a",))
+    )
+    service.query(query)
+    pending = service._query
+    assert tuple(stamp.source_id for stamp in pending.snapshot.stamps) == ("catalog:a",)
+    assert pending.document is None
+    original = finish_query(jobs, service) if finished else None
+    invalidations = []
+    service.query_invalidated.connect(lambda: invalidations.append(True))
+    state.change()
+    publish(jobs, service, owned_source(design_id, ("Fresh design",)))
+    publish(jobs, service, owned_source("catalog:b"))
+    service.remove_source("catalog:b")
+    service.remove_source(design_id)
+    assert not invalidations
+    if finished:
+        assert service.last_query_result is original
+    else:
+        assert service._query is pending
+        assert len(finish_query(jobs, service).matches) == 2
+
+
+@pytest.mark.parametrize("finished", [False, True])
+@pytest.mark.parametrize(
+    "query",
+    [
+        MaterialQuery(),
+        MaterialQuery(source_ids=("catalog:a", "catalog:new")),
+        MaterialQuery(catalog_keys=(("catalog:a", "Owned"), ("catalog:new", "Owned"))),
+    ],
+)
+def test_new_selected_source_invalidates_pending_and_cached_queries(
+    materials, finished, query
+):
+    state, jobs, service = materials
+    publish(jobs, service, owned_source())
+    service.query(query)
+    if finished:
+        finish_query(jobs, service)
+    invalidations = []
+    service.query_invalidated.connect(lambda: invalidations.append(True))
+    publish(jobs, service, owned_source("catalog:new"))
+    assert invalidations == [True]
+    assert service._query is None and service.last_query_result is None
+
+
+def test_empty_qualified_catalog_selection_never_claims_source_generations(materials):
+    state, jobs, service = materials
+    publish(jobs, service, owned_source())
+    design_id = f"design:{state.token.document_id}"
+    publish(jobs, service, owned_source(design_id))
+    service.query(MaterialQuery(catalog_keys=()))
+    pending = service._query
+    assert not pending.snapshot.stamps and not pending.snapshot.materials
+    assert pending.document is None
+    service.remove_source("catalog:a")
+    state.change()
+    publish(jobs, service, owned_source("catalog:new"))
+    assert service._query is pending
+    result = finish_query(jobs, service)
+    assert not result.matches and not result.stamps
+    service.remove_source("catalog:new")
+    assert service.last_query_result is result
+
+
+@pytest.mark.parametrize("finished", [False, True])
+def test_selected_source_removal_invalidates_qualified_query(materials, finished):
+    state, jobs, service = materials
+    publish(jobs, service, owned_source())
+    service.query(MaterialQuery(catalog_keys=(("catalog:a", "Owned"),)))
+    if finished:
+        finish_query(jobs, service)
+    service.remove_source("catalog:a")
+    assert service._query is None and service.last_query_result is None
+
+
+def test_design_removed_callback_can_query_fresh_current_generation(materials):
+    state, jobs, service = materials
+    design_id = f"design:{state.token.document_id}"
+    publish(jobs, service, owned_source(design_id))
+    service.query(MaterialQuery())
+    fresh = []
+
+    def removed(source_id):
+        assert source_id == design_id
+        publish(jobs, service, owned_source(design_id, ("Fresh design",)))
+        fresh.append(service.query(MaterialQuery(source_ids=(design_id,))))
+
+    service.source_removed.connect(removed)
+    state.change()
+    assert service._query.request is fresh[0]
+    assert service._query.document == state.token
+    assert len(finish_query(jobs, service).matches) == 1
+
+
 def test_cache_limits_fail_atomically_without_evicting_old_data(materials):
     state, jobs, service = materials
     service.max_sources = 1

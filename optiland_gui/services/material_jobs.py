@@ -9,7 +9,12 @@ from .job_records import check_cancelled
 
 
 def load_material_source(snapshot, parameters, progress, cancelled):
-    """Read one captured source request and return portable records and diagnostics."""
+    """Discover/read a source off Qt and return portable records and diagnostics.
+
+    Installed and directory requests deliberately defer registry creation and
+    catalog discovery to this process. RegistrySource requests instead carry the
+    submitting process's already-registered exact metadata.
+    """
     check_cancelled(cancelled)
     parameters["backend"].apply()
     progress("Loading material source")

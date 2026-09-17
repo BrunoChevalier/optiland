@@ -620,7 +620,7 @@ class LensEditor(QWidget):
             ):
                 properties[id(old_surfaces[owner])] = {
                     "tab": panel.tabs.currentIndex(),
-                    "frame": panel.placement.frame.currentData(),
+                    "placement": panel.placement.capture_draft(),
                     "drafts": {
                         name: widget.text()
                         for name, widget in panel.input_widgets.items()
@@ -827,9 +827,7 @@ class LensEditor(QWidget):
                 id(self._displayed_surfaces[owner])
             ]
             panel.tabs.setCurrentIndex(settings["tab"])
-            panel.placement.frame.setCurrentIndex(
-                1 if settings["frame"] == "reference" else 0
-            )
+            panel.placement.restore_draft(settings["placement"])
             for name, draft in settings["drafts"].items():
                 if name in panel.input_widgets:
                     panel.input_widgets[name].setText(draft)
@@ -980,7 +978,7 @@ class LensEditor(QWidget):
 
     def close_properties_widget(self, source_row):
         """Dismiss only this panel, leaving the other controls and drafts intact."""
-        if source_row not in self.open_prop_source_rows:
+        if self._table_loading or source_row not in self.open_prop_source_rows:
             return
         table = self.tableWidget
         row = self.map_surface_index_to_ui_row(source_row) + 1
@@ -1042,7 +1040,7 @@ class LensEditor(QWidget):
 
     @Slot()
     def toggle_properties_widget(self, source_row):
-        if not 0 <= source_row < len(self._displayed_surfaces):
+        if self._table_loading or not 0 <= source_row < len(self._displayed_surfaces):
             return
         if source_row in self.open_prop_source_rows:
             self.close_properties_widget(source_row)

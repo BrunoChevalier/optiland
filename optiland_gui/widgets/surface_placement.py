@@ -109,6 +109,23 @@ class SurfacePlacementWidget(QWidget):
             if edit.text() != self._baseline.get(key)
         }
 
+    def capture_draft(self):
+        """Retain an uncommitted draft and its original ownership during rebuilds."""
+        return {
+            "frame": self.frame.currentData(),
+            "changes": self.changes(),
+            "edit_token": self._edit_token,
+        }
+
+    def restore_draft(self, state):
+        """Restore only typed components; a changed document keeps them stale."""
+        self.frame.setCurrentIndex(1 if state["frame"] == "reference" else 0)
+        for name, value in state["changes"].items():
+            self.inputs[name].setText(value)
+        if self.changes():
+            self._edit_token = state["edit_token"]
+        self.refresh_values()
+
     def refresh_values(self, *, force=False):
         if not force and self.changes():
             if self._edit_token != self.connector.document_state.edit_token:

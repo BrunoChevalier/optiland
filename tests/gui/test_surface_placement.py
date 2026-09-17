@@ -188,9 +188,13 @@ def test_expansion_and_drafts_for_standard_mirror_object_image(qapp, connector):
         ui_row = editor.map_surface_index_to_ui_row(row)
         assert not editor.tableWidget.cellWidget(ui_row, 0).props_button.isHidden()
         editor.toggle_properties_widget(row)
-        panel = editor.tableWidget.cellWidget(row + 1, 0)
+        panel = editor.tableWidget.cellWidget(
+            editor.map_surface_index_to_ui_row(row) + 1, 0
+        )
         assert panel.placement.inputs["z"].isEnabled()
-    widget = editor.tableWidget.cellWidget(4, 0).placement
+    widget = editor.tableWidget.cellWidget(
+        editor.map_surface_index_to_ui_row(3) + 1, 0
+    ).placement
     original = widget.inputs["x"].text()
     assert not widget.apply_button.isEnabled()
     widget.frame.setCurrentIndex(1)
@@ -365,5 +369,51 @@ def test_placement_rebind_survives_batched_editor_and_keeps_reference_mode(qapp)
     finally:
         c.calculation_jobs.shutdown()
         wait_for(qapp, lambda: c.calculation_jobs._process is None)
+        editor.deleteLater()
+        c.deleteLater()
+
+
+def test_placement_rebind_during_batch_preserves_each_panel_and_other_draft(
+    qapp, monkeypatch
+):
+    c = make_large_connector(100)
+    editor = LensEditor(c)
+    try:
+        wait_for(qapp, lambda: not editor._table_loading)
+        editor.toggle_properties_widget(20)
+        editor.toggle_properties_widget(72)
+        second = editor.tableWidget.cellWidget(74, 0).placement
+        second.frame.setCurrentIndex(1)
+        second.inputs["y"].setText("0.5")
+        old_token = second._edit_token
+        monkeypatch.setattr(c.calculation_jobs, "_dispatch", lambda: None)
+        assert c.placement.submit(
+            c.get_optic().surfaces[20], "global", {"x": 0.25}, old_token
+        )
+        request = c.placement.request
+        candidate = prepare_placement(
+            request.snapshot, request.parameters, lambda *args: None, Event()
+        )
+        monkeypatch.setattr(LensEditor, "_BATCH_SECONDS", 0)
+        editor.load_data()
+        assert editor._table_loading
+        c.placement._finished(JobResult(request, "succeeded", candidate, current=True))
+        wait_for(qapp, lambda: not editor._table_loading)
+        assert "applied" in c.placement.message
+        assert editor.open_prop_source_rows == {20, 72}
+        assert float(c.get_optic().surfaces[20].geometry.cs.x) == 0.25
+        first = editor.tableWidget.cellWidget(21, 0).placement
+        second = editor.tableWidget.cellWidget(74, 0).placement
+        assert first.surface is c.get_optic().surfaces[20]
+        assert second.surface is c.get_optic().surfaces[72]
+        assert second.frame.currentData() == "reference"
+        assert second.inputs["y"].text() == "0.5"
+        assert second._edit_token == old_token
+        assert "design changed" in second.status.text()
+        second.apply()
+        assert not c.placement.busy
+        assert float(c.get_optic().surfaces[72].geometry.cs.y) == 0
+    finally:
+        c.calculation_jobs.shutdown()
         editor.deleteLater()
         c.deleteLater()

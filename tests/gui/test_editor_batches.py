@@ -297,3 +297,50 @@ def test_failed_batch_is_recoverable_and_destruction_cancels_pending_timers(
     QCoreApplication.sendPostedEvents(None, QEvent.DeferredDelete)
     qapp.processEvents()
     c.deleteLater()
+
+
+def test_multiple_properties_and_drafts_survive_superseded_batches(qapp, monkeypatch):
+    """Canonical independent panels retain identity during deferred row installs."""
+    c = make_large_connector()
+    c.set_surface_type(20, "biconic")
+    c.set_surface_type(70, "biconic")
+    editor = LensEditor(c)
+    try:
+        wait_for(qapp, lambda: not editor._table_loading)
+        editor.toggle_properties_widget(20)
+        editor.toggle_properties_widget(70)
+        first = editor.tableWidget.cellWidget(21, 0)
+        second = editor.tableWidget.cellWidget(72, 0)
+        first.tabs.setCurrentIndex(1)
+        first.input_widgets["Conic X"].setText("-0.375")
+        first.input_widgets["Conic X"].setModified(True)
+        second.placement.frame.setCurrentIndex(1)
+        second.placement.inputs["x"].setText("0.75")
+        draft_token = second.placement._edit_token
+        identities = (c.get_optic().surfaces[20], c.get_optic().surfaces[70])
+        monkeypatch.setattr(LensEditor, "_BATCH_SECONDS", 0)
+        c.add_surface(index=10)
+        assert editor._table_loading
+        # Ignore controls while their row mapping is only partially installed.
+        editor.close_properties_widget(21)
+        editor.toggle_properties_widget(50)
+        c.set_surface_data(5, c.COL_COMMENT, "Supersede the row batch")
+        wait_for(qapp, lambda: not editor._table_loading)
+        assert editor.open_prop_source_rows == {21, 71}
+        first = editor.tableWidget.cellWidget(22, 0)
+        second = editor.tableWidget.cellWidget(73, 0)
+        assert c.get_optic().surfaces[21] is identities[0]
+        assert c.get_optic().surfaces[71] is identities[1]
+        assert first.tabs.currentIndex() == 1
+        assert first.input_widgets["Conic X"].text() == "-0.375"
+        assert first.input_widgets["Conic X"].isModified()
+        assert second.placement.frame.currentData() == "reference"
+        assert second.placement.inputs["x"].text() == "0.75"
+        assert second.placement._edit_token == draft_token
+        assert "design changed" in second.placement.status.text()
+        second.placement.apply()
+        assert not c.placement.busy
+        assert float(c.get_optic().surfaces[71].geometry.cs.x) == 0
+    finally:
+        editor.deleteLater()
+        c.deleteLater()

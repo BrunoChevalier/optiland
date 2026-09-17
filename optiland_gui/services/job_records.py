@@ -5,7 +5,7 @@ from __future__ import annotations
 import pickle
 from dataclasses import dataclass, field
 from types import MethodType
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 if TYPE_CHECKING:
     from optiland.optic import Optic
@@ -170,6 +170,7 @@ class JobRequest:
     cancel_on_document_change: bool = True
     context: Any = field(default=None, compare=False, repr=False)
     cancellable: bool = True
+    progress_policy: Literal["current", "detached"] = "current"
 
     def worker_message(self) -> dict:
         return {

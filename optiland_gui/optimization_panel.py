@@ -1368,9 +1368,17 @@ class OptimizationPanel(QWidget):
 
     @Slot(str)
     def _on_optimization_state(self, state: str) -> None:
-        if state == "cancelling":
-            self.btnStop.setText("Cancelling…")
-            self.btnStop.setEnabled(False)
+        running = self.connector.is_optimization_running()
+        stopping = state in {"cancelling", "stopping"}
+        self.btnRun.setEnabled(not running)
+        self.btnStop.setEnabled(running and not stopping)
+        self.btnStop.setText(
+            "Cancelling…"
+            if state == "cancelling"
+            else "Stopping…"
+            if state == "stopping"
+            else "■  Stop"
+        )
 
     @Slot()
     def _open_candidate(self) -> None:

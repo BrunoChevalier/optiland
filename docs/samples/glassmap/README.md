@@ -9,6 +9,11 @@ glasses. No commercial optical software is needed.
   owns the formula `n(lambda) = 1.5 + 0.005 / lambda**2`, valid from 0.4 to
   0.8 micrometers. It has no measured extinction or transmission data. Bounds
   policy is `raise`. `make_singlet.py` regenerates it with the public API.
+- `typed_glass_expert.py` is a self-contained Python API example. It creates
+  a separate synthetic singlet and two exact, owned candidates sharing the name
+  `Synthetic crown`, round-trips its pool through JSON, and jointly optimizes
+  front radius and material. It requires this revision's typed GlassExpert API,
+  prints a bounded finite JSON report, and needs no other sample files or GUI.
 - `rii/DEMO-CROWN.yml` is a local RII-format example with
   `n(lambda) = 1.5 + 0.02 / lambda**2`, explicit air-relative index,
   air wavelengths and a 20 degrees Celsius reference. Extinction is unknown.

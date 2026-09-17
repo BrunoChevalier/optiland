@@ -8,7 +8,7 @@ import sys
 import uuid
 from collections import deque
 from contextlib import contextmanager
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from PySide6.QtCore import QObject, QProcess, QProcessEnvironment, QTimer, Signal, Slot
 
@@ -240,10 +240,15 @@ class CalculationJobs(QObject):
         document_token: DocumentToken | None = None,
         cancellable: bool = True,
         context: Any = None,
+        progress_policy: Literal["current", "detached"] = "current",
     ) -> JobRequest:
         """Queue detached inputs; replace previews while keeping explicit FIFO jobs."""
         if self._closed:
             raise RuntimeError("Calculation service is closed.")
+        if progress_policy not in {"current", "detached"}:
+            raise ValueError("Unknown calculation progress policy.")
+        if progress_policy == "detached" and cancel_on_document_change:
+            raise ValueError("Detached progress requires a retained explicit job.")
         if replace:
             self.cancel_target(target)
         if len(self._pending) >= self.max_pending:
@@ -263,6 +268,7 @@ class CalculationJobs(QObject):
             cancel_on_document_change,
             context,
             cancellable,
+            progress_policy,
         )
         self._pending.append(request)
         self.state_changed.emit(request, "queued")
@@ -275,9 +281,14 @@ class CalculationJobs(QObject):
         Detached explicit jobs may finish against an older document; their data
         can be offered for review but never automatically overwrite current edits.
         """
+        return request.document == self.document.token and self._owns_generation(
+            request
+        )
+
+    def _owns_generation(self, request: JobRequest) -> bool:
+        """Execution ownership; independent of live-document acceptance."""
         return (
             not self._closed
-            and request.document == self.document.token
             and request.generation == self._generations.get(request.target, 0)
             and self._visible.get(request.target, True)
             and (
@@ -449,7 +460,10 @@ class CalculationJobs(QObject):
             # Ownership receipts must survive cancellation and document changes.
             # Presentation consumers still receive only current progress below.
             self.transaction_progress.emit(request, message)
-            if not self._cancelling and self.is_current(request):
+            presentable = self.is_current(request) or (
+                request.progress_policy == "detached" and self._owns_generation(request)
+            )
+            if not self._cancelling and presentable:
                 self.progress.emit(request, message)
         elif message["event"] == "result":
             self._kill_timer.stop()

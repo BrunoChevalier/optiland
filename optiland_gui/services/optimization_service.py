@@ -34,6 +34,8 @@ class OptimizationService(QObject):
     failed = Signal(str)
     stateChanged = Signal(str)
     candidateAvailable = Signal(bool)
+    glassExpertChanged = Signal()
+    glassExpertProgress = Signal(object)
 
     # ------------------------------------------------------------------
     # Catalog constants
@@ -188,11 +190,13 @@ class OptimizationService(QObject):
         self._stopping = False
         self._candidate = None
         self._callbacks = (None, None, None)
+        self._glass_expert = None
         self.preview_options = {"enabled": False, "frequency": 10}
         jobs = connector.calculation_jobs
         jobs.progress.connect(self._on_progress)
         jobs.finished.connect(self._on_finished)
         jobs.state_changed.connect(self._on_state_changed)
+        jobs.stopped.connect(self._close_glass_expert)
         self._init_operand_metadata()
         self._init_optimizer_metadata()
 
@@ -363,6 +367,7 @@ class OptimizationService(QObject):
                 (float|None), ``coeff_number`` (int|None).
         """
         self._variables.append(dict(var_dict))
+        self._glass_inputs_changed()
 
     def remove_variable(self, index: int) -> None:
         """Remove a variable by its list index.
@@ -372,6 +377,7 @@ class OptimizationService(QObject):
         """
         if 0 <= index < len(self._variables):
             self._variables.pop(index)
+            self._glass_inputs_changed()
 
     def get_variables(self) -> list[dict]:
         """Return a shallow copy of the variable list."""
@@ -381,6 +387,7 @@ class OptimizationService(QObject):
         """Replace a variable at *index* with *var_dict*."""
         if 0 <= index < len(self._variables):
             self._variables[index] = dict(var_dict)
+            self._glass_inputs_changed()
 
     def get_variable_metadata(self, var_type: str) -> dict:
         """Return graphical configuration metadata for a variable type.
@@ -398,6 +405,7 @@ class OptimizationService(QObject):
     def clear_variables(self) -> None:
         """Remove all registered variables."""
         self._variables.clear()
+        self._glass_inputs_changed()
 
     def get_variable_current_value(self, var_dict: dict) -> float | None:
         """Read the current physical value for a variable from the live optic.
@@ -439,6 +447,7 @@ class OptimizationService(QObject):
                 ``input_data_str`` (str — JSON without optic).
         """
         self._operands.append(dict(op_dict))
+        self._glass_inputs_changed()
 
     def remove_operand(self, index: int) -> None:
         """Remove an operand by its list index.
@@ -448,6 +457,7 @@ class OptimizationService(QObject):
         """
         if 0 <= index < len(self._operands):
             self._operands.pop(index)
+            self._glass_inputs_changed()
 
     def get_operands(self) -> list[dict]:
         """Return a shallow copy of the operand list."""
@@ -457,6 +467,7 @@ class OptimizationService(QObject):
         """Replace an operand at *index* with *op_dict*."""
         if 0 <= index < len(self._operands):
             self._operands[index] = dict(op_dict)
+            self._glass_inputs_changed()
 
     def _resolve_wavelength(self, wave_val: str | float) -> float | str:
         """Resolve 'primary' to the actual wavelength float."""
@@ -511,6 +522,7 @@ class OptimizationService(QObject):
     def clear_operands(self) -> None:
         """Remove all registered operands."""
         self._operands.clear()
+        self._glass_inputs_changed()
 
     def get_default_input_data_str(self, op_type: str) -> str:
         """Return the default extra-parameter JSON string for an operand type.
@@ -761,7 +773,59 @@ class OptimizationService(QObject):
     @property
     def is_running(self) -> bool:
         """``True`` while an optimisation run is in progress."""
-        return self._request is not None
+        return self._request is not None or (
+            self._glass_expert is not None and self._glass_expert.busy
+        )
+
+    def _glass_expert_strategy(self):
+        if self._glass_expert is None:
+            from .glass_expert_strategy import GlassExpertStrategy
+
+            self._glass_expert = GlassExpertStrategy(self)
+            self._connector.document_state.committed.connect(self._glass_inputs_changed)
+            self._connector.materials.source_changed.connect(self._glass_inputs_changed)
+            self._connector.materials.source_removed.connect(self._glass_inputs_changed)
+        return self._glass_expert
+
+    @Slot()
+    def _glass_inputs_changed(self):
+        if self._glass_expert is not None:
+            self.glassExpertChanged.emit()
+
+    def capture_glass_expert_setup(self, targets, settings=None):
+        """Freeze the current problem and explicit pools without evaluating optics."""
+        return self._glass_expert_strategy().capture(targets, settings)
+
+    def prepare_glass_expert(self, setup):
+        """Validate a frozen setup on the shared calculation worker."""
+        return self._glass_expert_strategy().prepare(setup)
+
+    def run_glass_expert(self, prepared):
+        """Run the exact prepared setup with completion retained for review."""
+        return self._glass_expert_strategy().run(prepared)
+
+    def glass_expert_prepared(self):
+        return None if self._glass_expert is None else self._glass_expert.prepared
+
+    def glass_expert_result(self):
+        return None if self._glass_expert is None else self._glass_expert.result
+
+    def glass_expert_status(self):
+        """Return the run state and explanation for GlassExpert presentation."""
+        strategy = self._glass_expert_strategy()
+        return strategy.state, strategy.message
+
+    def glass_expert_freshness(self):
+        """Report input freshness; this diagnostic grants no Apply permission."""
+        return self._glass_expert_strategy().freshness()
+
+    def discard_glass_expert_candidate(self):
+        self._glass_expert_strategy().discard()
+
+    @Slot()
+    def _close_glass_expert(self):
+        if self._glass_expert is not None:
+            self._glass_expert.close()
 
     def run(
         self,
@@ -825,18 +889,28 @@ class OptimizationService(QObject):
 
     def stop(self) -> None:
         """Request cancellation of an in-progress run."""
-        if self._request is not None:
+        if self._glass_expert is not None and self._glass_expert.busy:
+            self._glass_expert.stop()
+        elif self._request is not None:
             self._stopping = True
             self.stateChanged.emit("cancelling")
             self._connector.calculation_jobs.cancel_target("optimization")
 
     @Slot(object, str)
     def _on_state_changed(self, request: JobRequest, state: str) -> None:
+        if self._glass_expert is not None and self._glass_expert.on_state(
+            request, state
+        ):
+            return
         if self._request is not None and request.job_id == self._request.job_id:
             self.stateChanged.emit(state)
 
     @Slot(object, dict)
     def _on_progress(self, request: JobRequest, message: dict) -> None:
+        if self._glass_expert is not None and self._glass_expert.on_progress(
+            request, message
+        ):
+            return
         if (
             self._stopping
             or self._request is None
@@ -865,6 +939,8 @@ class OptimizationService(QObject):
 
     @Slot(object)
     def _on_finished(self, result: JobResult) -> None:
+        if self._glass_expert is not None and self._glass_expert.on_finished(result):
+            return
         if self._request is None or result.request.job_id != self._request.job_id:
             return
         # Keep ownership through document/candidate notifications. A listener

@@ -385,6 +385,95 @@ def test_detached_explicit_job_survives_document_edit_as_stale(qapp, jobs):
     assert not receiver.results[0].current
 
 
+@pytest.mark.parametrize("policy,expected", [("current", 0), ("detached", 1)])
+def test_explicit_progress_policy_preserves_stale_acceptance(
+    qapp, jobs, policy, expected
+):
+    state, service, receiver = jobs
+    request = service.submit(
+        "optimization",
+        "unused",
+        None,
+        {},
+        cancel_on_document_change=False,
+        progress_policy=policy,
+    )
+    state.replace()
+    wait_for(qapp, lambda: receiver.results)
+    assert receiver.progress == [request.job_id] * expected
+    assert receiver.results[0].status == "succeeded"
+    assert not receiver.results[0].current
+    assert not service.is_current(request)
+
+
+def test_detached_progress_still_checks_captured_backend(
+    qapp, jobs, minimal_optic, monkeypatch
+):
+    from optiland_gui.services.job_records import BackendConfig
+
+    state, service, receiver = jobs
+    snapshot = OpticSnapshot.capture(minimal_optic)
+    service.submit(
+        "optimization",
+        "unused",
+        snapshot,
+        {},
+        cancel_on_document_change=False,
+        progress_policy="detached",
+    )
+    state.change()
+    monkeypatch.setattr(
+        BackendConfig, "capture", classmethod(lambda cls: cls("changed"))
+    )
+    wait_for(qapp, lambda: receiver.results)
+    assert receiver.progress == []
+    assert not receiver.results[0].current
+
+
+def test_detached_progress_from_superseded_run_cannot_reach_new_run(qapp, jobs):
+    state, service, receiver = jobs
+    first = service.submit(
+        "optimization",
+        "unused",
+        None,
+        {"delay": 0.4},
+        cancel_on_document_change=False,
+        progress_policy="detached",
+    )
+    wait_for(qapp, lambda: first.job_id in receiver.progress)
+    state.change()
+    second = service.submit(
+        "optimization",
+        "unused",
+        None,
+        {},
+        cancel_on_document_change=False,
+        progress_policy="detached",
+    )
+    count = len(receiver.progress)
+    # An already in-flight old progress frame must be rejected during Stop and
+    # after the new worker starts, regardless of the detached document policy.
+    frame = {"event": "progress", "job_id": first.job_id, "stage": "late"}
+    service._message(frame)
+    assert len(receiver.progress) == count
+    wait_for(qapp, lambda: len(receiver.results) == 2)
+    service._message(frame)
+    assert receiver.progress == [first.job_id, second.job_id]
+    assert receiver.results[0].status == "cancelled"
+
+
+def test_invalid_progress_policy_does_not_cancel_existing_request(qapp, jobs):
+    state, service, receiver = jobs
+    first = service.submit("optimization", "unused", None, {})
+    with pytest.raises(ValueError, match="progress policy"):
+        service.submit("optimization", "unused", None, {}, progress_policy="unknown")
+    with pytest.raises(ValueError, match="retained explicit"):
+        service.submit("optimization", "unused", None, {}, progress_policy="detached")
+    wait_for(qapp, lambda: receiver.results)
+    assert receiver.results[0].request is first
+    assert receiver.results[0].status == "succeeded"
+
+
 def test_current_must_be_rechecked_at_commit(qapp, jobs):
     state, service, receiver = jobs
     request = service.submit("analysis", "unused", None, {})

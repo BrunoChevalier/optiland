@@ -50,6 +50,7 @@ downloadable sample files; it does not run inside the browser notebook viewer.
    Tutorial 3c: User-Defined Optimization <examples/Tutorial_3c_User_Defined_Optimization>
    Tutorial 3d: Optimization Case Study: Cooke Triplet <examples/Tutorial_3d_Optimization_Case_Study_Cooke_Triplet>
    Tutorial 3e: Glass Expert Categorical Optimization <examples/Tutorial_3e_Glass_Expert_Categorical_Optimization>
+   Exact owned material pools with GlassExpert <typed_glass_expert>
 
 
 4. Off-Axis & Complex Systems

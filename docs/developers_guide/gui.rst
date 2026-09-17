@@ -285,6 +285,65 @@ same-name/overlap, stale-result, source-lifecycle and actual-worker tests when
 changing these contracts. GUI coverage is supplementary to the core CI
 configuration, which omits GUI modules; do not silently combine the denominators.
 
+Frozen GlassExpert worker strategy
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The GlassExpert strategy uses the existing ``OptimizationService`` and
+``CalculationJobs`` executor. ``capture_glass_expert_setup`` captures a
+``PreparedOptic``, original variable/operand definitions and exact typed material
+pools. Stable descriptor IDs sit beside canonical definition bytes; they are
+not forwarded as arbitrary variable-constructor arguments. Current-design
+ownership stays in the service, outside the frozen worker records.
+
+``prepare_glass_expert`` evaluates a detached baseline through
+``glass_expert_jobs.prepare_setup``. It checks target eligibility, supported
+variables, conflicting pickups/solves, configured wavelengths and actual pool
+resolution. Primary-wavelength selectors become numeric arguments, and implicit
+operand targets are resolved against the pristine reference before material
+substitution. A nonzero effective objective contribution is required. Frozen
+settings are finite and bounded; the complete internal input/output budget is
+64 MiB, with at most 32 material targets, 256 variables, 10,000 operand rows and
+10,000 unique candidate definitions.
+
+``run_glass_expert`` accepts the exact prepared setup. The worker rebuilds and
+validates that setup, invokes the public typed core, then independently verifies
+every continuous value/bound and exact material assignment, including singleton
+pools. It reevaluates the final squared merit and proves unchanged surface
+identity/order before producing the prepared candidate and row mapping.
+Progress uses original descriptor associations even while the core activates its
+continuous subset. Reports preserve sum-squared merit, eligibility, convergence
+and improvement separately. ``OptimizationService.glassExpertProgress`` carries
+the typed GlassExpert update; the ordinary ``progressChanged`` signal retains
+its established payload. The existing optimizer panel derives Run/Stop controls
+from the shared service's busy state.
+
+Queue ``progress_policy="detached"`` allows retained old-document progress while
+still checking job ID, generation, visibility, shutdown and captured backend.
+It requires ``cancel_on_document_change=False``. Ordinary callers retain the
+default current-document progress policy. Neither policy relaxes ``is_current``
+or terminal acceptance freshness. The strategy additionally checks the frozen
+run ID and input digest, and Stop retains ownership through terminal delivery.
+
+GlassExpert completion retains a frozen result for inspection; it does not
+publish a document. The original optimizer's automatic-if-current behavior is
+unchanged. ``glass_expert_freshness`` is only a diagnostic: optical or metadata
+edits, history, source generations, backend or changed nested definitions can
+make a retained result stale. The subsequent desktop review/Apply workflow is a
+separate integration step, not authority carried by a worker result.
+
+``glass_expert_portability`` captures native baseline/candidate bytes in the
+worker, including untouched material and coating slots. Supported-behavior and
+native round-trip checks gate portable output. Internal prepared transport is
+distinct from external JSON; a serialized definition cannot contain a QObject,
+callable, live acceptance token or executable registry alias. If native replay
+cannot preserve the supported state, its reason is explicit and portable output
+is unavailable. Core API usage remains independent of PySide; see
+:doc:`../typed_glass_expert`.
+
+Relevant tests are ``test_glass_expert_service.py``, ``test_glass_expert_jobs.py``
+and ``test_calculation_jobs.py`` under ``tests/gui/``, plus public core tests
+``tests/test_material_candidates.py`` and ``tests/test_glass_expert.py``.
+
 Running the GUI
 ---------------
 

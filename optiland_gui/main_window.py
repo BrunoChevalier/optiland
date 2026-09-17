@@ -1117,6 +1117,17 @@ class MainWindow(FramelessWindow):
             )
 
         # --- Analysis types ---
+        reg.register(
+            PaletteCommand(
+                name="Materials",
+                description="Browse glass catalogs, match and inspect materials",
+                callback=lambda: self.panel_manager.on_sidebar_menu_selected(
+                    "materials"
+                ),
+                keywords=["glass", "glassmap", "catalog", "patent"],
+                category="View",
+            )
+        )
         if hasattr(self, "panel_manager") and self.panel_manager.analysis_panel:
             ap = self.panel_manager.analysis_panel
             for analysis_name in ap._analysis_class_map:

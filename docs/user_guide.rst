@@ -77,3 +77,4 @@ optical system, plus the reference pages you will keep coming back to.
    cheat_sheet
    glossary
    gui_quickstart
+   gui_materials

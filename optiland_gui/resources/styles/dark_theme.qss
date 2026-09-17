@@ -1,5 +1,51 @@
 /* Optiland Dark Theme */
 
+/* Materials uses model/view tables and plain-text inspection. */
+QWidget#MaterialsPanel, QWidget#MaterialsPanel QTabWidget::pane,
+QWidget#MaterialsPanel QScrollArea, QWidget#MaterialsPanel QScrollArea > QWidget > QWidget {
+    background-color: #202020;
+    color: #E0E0E0;
+}
+QWidget#MaterialsPanel QLabel, QWidget#MaterialsPanel QCheckBox,
+QWidget#MaterialsPanel QGroupBox {
+    color: #E0E0E0;
+}
+QWidget#MaterialsPanel QTableView, QWidget#MaterialsPanel QTreeWidget,
+QWidget#MaterialsPanel QPlainTextEdit {
+    background-color: #252525;
+    alternate-background-color: #303030;
+    color: #E0E0E0;
+    gridline-color: #4A4A4A;
+    selection-background-color: #215A83;
+    selection-color: #FFFFFF;
+    border: 1px solid #4A4A4A;
+}
+QWidget#MaterialsPanel QHeaderView::section {
+    background-color: #363636;
+    color: #E0E0E0;
+    border: 1px solid #4A4A4A;
+    padding: 4px;
+}
+QWidget#MaterialsPanel QToolButton, QWidget#MaterialsPanel QTabBar::tab {
+    color: #E0E0E0;
+    background-color: #363636;
+    border: 1px solid #646464;
+    padding: 5px 8px;
+}
+QWidget#MaterialsPanel QToolButton:checked,
+QWidget#MaterialsPanel QTabBar::tab:selected {
+    background-color: #215A83;
+    border: 1px solid #AFCDE4;
+}
+QWidget#MaterialsPanel QToolButton:focus {
+    border: 2px solid #AFCDE4;
+}
+QWidget#MaterialsPanel QSplitter::handle {
+    background-color: #4A4A4A;
+    width: 3px;
+    height: 3px;
+}
+
 /* Global Colors - Hex values will be used directly based on these definitions
     --background-color: #202020;
     --surface-color: #2E2E2E;

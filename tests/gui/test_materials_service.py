@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pickle
+import threading
 from dataclasses import replace
 
 import pytest
@@ -25,6 +27,7 @@ from optiland.materials.sources import (
 )
 from optiland_gui.services.calculation_jobs import CalculationJobs, DocumentState
 from optiland_gui.services.job_records import BackendConfig, JobResult
+from optiland_gui.services.material_jobs import filter_materials
 from optiland_gui.services.materials_service import MaterialsService
 from tests.gui.test_calculation_jobs import wait_for
 from tests.gui.test_material_jobs import owned_source
@@ -50,11 +53,141 @@ def publish(jobs, service, source):
 
 def finish_query(jobs, service, *, current=True):
     pending = service._query
-    result = query_materials(
-        pending.snapshot, pending.request.parameters["query"], request_id=pending.serial
+    result = filter_materials(
+        None, pending.request.parameters, lambda *args: None, threading.Event()
     )
     jobs.finished.emit(JobResult(pending.request, "succeeded", result, current=current))
     return result
+
+
+def test_queries_reuse_generation_bytes_without_reserializing_summaries(
+    materials, monkeypatch
+):
+    import optiland_gui.services.materials_service as module
+
+    state, jobs, service = materials
+    encoded = []
+    original = module.encode_query_source
+
+    def encode(snapshot):
+        encoded.append(snapshot.stamps)
+        return original(snapshot)
+
+    monkeypatch.setattr(module, "encode_query_source", encode)
+    _, source = publish(jobs, service, owned_source())
+    stamp = source.snapshot.stamps[0]
+    blob = service._query_summaries[stamp]
+    assert isinstance(blob, bytes)
+    records = pickle.loads(blob)
+    assert records == tuple(
+        replace(m, owned_data=None) for m in source.snapshot.materials
+    )
+    assert all(m.owned_data for m in service.snapshot.materials)
+    for name in ("Crown", "Flint", "missing", "Crown"):
+        request = service.query(MaterialQuery(name=name))
+        assert request.parameters["material_blobs"] == (blob,)
+        assert request.parameters["stamps"] == (stamp,)
+        assert "materials" not in request.parameters
+        result = finish_query(jobs, service)
+        assert len(result.matches) == (0 if name == "missing" else 1)
+        assert result.stamps == (stamp,)
+    assert encoded == [(stamp,)]
+
+
+def test_serialized_generations_replace_atomically_and_are_evicted(materials):
+    state, jobs, service = materials
+    _, old = publish(jobs, service, owned_source())
+    old_stamp = old.snapshot.stamps[0]
+    service.query(MaterialQuery())
+    _, new = publish(jobs, service, owned_source(names=("Replacement",)))
+    stamp = new.snapshot.stamps[0]
+    assert stamp != old_stamp and old_stamp not in service._query_summaries
+    assert service.last_query_result is None and service._query is None
+    assert tuple(service._query_summaries) == (stamp,)
+    service.query(MaterialQuery())
+    assert [m.display_name for m in pickle.loads(service._query_summaries[stamp])] == [
+        "Replacement"
+    ]
+    assert len(finish_query(jobs, service).matches) == 1
+    design_id = f"design:{state.token.document_id}"
+    _, design = publish(jobs, service, owned_source(design_id))
+    assert len(service._query_summaries) == 2
+    state.change()
+    assert design.snapshot.stamps[0] not in service._query_summaries
+    assert tuple(service._query_summaries) == (stamp,)
+    service.remove_source("catalog:a")
+    assert not service._query_summaries
+    publish(jobs, service, owned_source())
+    service.close()
+    assert not service._query_summaries
+
+
+def test_summary_staging_failure_and_combined_budget_preserve_old_query(
+    materials, monkeypatch
+):
+    import optiland_gui.services.materials_service as module
+
+    state, jobs, service = materials
+    _, old = publish(jobs, service, owned_source())
+    original_cache = dict(service._query_summaries)
+    original_encoder = module.encode_query_source
+    service.query(MaterialQuery())
+    pending = service._query
+
+    def fail(snapshot):
+        raise ValueError("Cannot encode this summary")
+
+    monkeypatch.setattr(module, "encode_query_source", fail)
+    publish(jobs, service, owned_source(names=("Replacement",)))
+    assert "Cannot encode" in service.source_error("catalog:a")
+    assert service.source_result("catalog:a") is old
+    assert service._query_summaries == original_cache and service._query is pending
+    monkeypatch.setattr(module, "encode_query_source", original_encoder)
+    replacement = load_source(owned_source(names=("Replacement",)))
+    # The optical definition fits, but its additional summary transport does not.
+    service.max_payload_bytes = sum(
+        len(record.owned_data or b"") for record in replacement.snapshot.materials
+    )
+    publish(jobs, service, owned_source(names=("Replacement",)))
+    assert "capacity" in service.source_error("catalog:a")
+    assert service.source_result("catalog:a") is old
+    assert service._query_summaries == original_cache and service._query is pending
+    assert len(finish_query(jobs, service).matches) == 2
+
+
+def test_reloading_one_source_retains_other_serialized_generation(materials):
+    state, jobs, service = materials
+    _, a = publish(jobs, service, owned_source("a"))
+    _, b = publish(jobs, service, owned_source("b"))
+    b_stamp = b.snapshot.stamps[0]
+    retained = service._query_summaries[b_stamp]
+    service.query(MaterialQuery(source_ids=("b",)))
+    pending = service._query
+    _, new_a = publish(jobs, service, owned_source("a", ("New",)))
+    assert a.snapshot.stamps[0] not in service._query_summaries
+    assert new_a.snapshot.stamps[0] in service._query_summaries
+    assert service._query_summaries[b_stamp] is retained
+    assert service._query is pending
+    assert {match.key.source_id for match in finish_query(jobs, service).matches} == {
+        "b"
+    }
+
+
+def test_backend_change_reuses_portable_catalog_bytes_with_fresh_request_config(
+    materials, monkeypatch
+):
+    state, jobs, service = materials
+    publish(jobs, service, owned_source())
+    original_cache = dict(service._query_summaries)
+    first = service.query(MaterialQuery())
+    changed = BackendConfig("torch", "cpu", 32)
+    monkeypatch.setattr(BackendConfig, "capture", lambda: changed)
+    state.change()
+    assert service._query is None
+    request = service.query(MaterialQuery())
+    assert request.parameters["backend"] == changed
+    assert request.parameters["material_blobs"] == first.parameters["material_blobs"]
+    assert service._query_summaries == original_cache
 
 
 def test_real_worker_atomic_load_and_lightweight_query_survive_unrelated_edits(
@@ -78,7 +211,11 @@ def test_real_worker_atomic_load_and_lightweight_query_survive_unrelated_edits(
     assert service.material(MaterialKey("missing", "", "")) is None
     assert service.material(replace(cached.key, record_id="missing")) is None
     query = service.query(MaterialQuery(name="Flint"))
-    assert all(m.owned_data is None for m in query.parameters["materials"].materials)
+    assert all(
+        m.owned_data is None
+        for blob in query.parameters["material_blobs"]
+        for m in pickle.loads(blob)
+    )
     state.change()
     wait_for(qapp, lambda: service.last_query_result is not None, timeout=30)
     assert len(service.last_query_result.matches) == 1
@@ -268,7 +405,7 @@ def test_excluded_source_publication_and_removal_preserve_catalog_query(
     )
     service.query(query)
     pending = service._query
-    assert tuple(stamp.source_id for stamp in pending.snapshot.stamps) == ("catalog:a",)
+    assert tuple(stamp.source_id for stamp in pending.stamps) == ("catalog:a",)
     assert pending.document is None
     original = finish_query(jobs, service) if finished else None
     invalidations = []
@@ -317,7 +454,7 @@ def test_empty_qualified_catalog_selection_never_claims_source_generations(mater
     publish(jobs, service, owned_source(design_id))
     service.query(MaterialQuery(catalog_keys=()))
     pending = service._query
-    assert not pending.snapshot.stamps and not pending.snapshot.materials
+    assert not pending.stamps and not pending.request.parameters["material_blobs"]
     assert pending.document is None
     service.remove_source("catalog:a")
     state.change()
@@ -464,8 +601,8 @@ def test_query_failures_and_stale_generations_are_not_presented(
     publish(jobs, service, owned_source())
     request = service.query(MaterialQuery())
     pending = service._query
-    result = query_materials(
-        pending.snapshot, MaterialQuery(), request_id=pending.serial
+    result = filter_materials(
+        None, pending.request.parameters, lambda *args: None, threading.Event()
     )
     errors, invalidated = [], []
     service.query_failed.connect(errors.append)

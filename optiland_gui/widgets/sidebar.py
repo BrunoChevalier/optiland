@@ -53,7 +53,6 @@ class SidebarWidget(QWidget):
         # Buttons that are not yet implemented
         self._wip_buttons = [
             "dash",
-            "materials",
             "tolerancing",
         ]
         self._last_checked_button: QToolButton | None = None

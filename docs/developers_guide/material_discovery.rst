@@ -9,10 +9,10 @@ a summary captures properties; a query filters those summaries. The GUI service
 runs source loading and queries through the shared background job lifecycle.
 None of these operations edits an optical system.
 
-These APIs and the background service are the foundation for the Materials
-workspace. The desktop browser, interactive map and Apply/Undo integration are
-subsequent work. Full desktop usage guides and worked tutorials will accompany
-those workflows; the examples here exercise the implemented core APIs.
+These APIs and the background service support the desktop Materials workspace,
+including its linked catalog table, interactive map and property inspector.
+See :doc:`../gui_materials` for browsing and keyboard controls. The examples here
+exercise the core APIs. Target-surface Apply/Undo integration is subsequent work.
 
 Discover exact entries
 ----------------------
@@ -479,7 +479,7 @@ Background service ownership
 ----------------------------
 
 ``optiland_gui.services.materials_service.MaterialsService`` owns published source
-snapshots for a future Materials panel. The connector exposes its shared instance
+snapshots for the Materials panel. The connector exposes its shared instance
 as ``connector.materials``, backed by ``connector.calculation_jobs`` and the
 existing document state. Code constructing an isolated service supplies those
 ``CalculationJobs`` and ``DocumentState`` objects explicitly. It borrows that
@@ -578,7 +578,8 @@ Cancellation uses the shared queue's cooperative checkpoints and bounded process
 teardown. It does not wait synchronously on the GUI thread; revoked results
 remain ineligible for publication even if a worker finishes during cancellation.
 
-These are data-service contracts. They do not yet supply a Materials dock,
-selection/hover state, comparison pins, target-surface routing or an Apply
-command. A future Apply command must independently verify its target and
-material freshness and use the established undoable document mutation path.
+These are data-service contracts. The desktop Materials panel separately owns
+linked selection, hover and the dock's visibility lifecycle. Comparison pins,
+target-surface routing and Apply are subsequent work. An Apply command must
+independently verify its target and material freshness and use the established
+undoable document mutation path.

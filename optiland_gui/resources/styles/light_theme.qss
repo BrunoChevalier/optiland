@@ -1,3 +1,41 @@
+/* Materials uses model/view tables and plain-text inspection. */
+QWidget#MaterialsPanel QTableView, QWidget#MaterialsPanel QTreeWidget,
+QWidget#MaterialsPanel QPlainTextEdit {
+    background-color: #FFFFFF;
+    alternate-background-color: #F0F3F6;
+    color: #212529;
+    gridline-color: #CED4DA;
+    selection-background-color: #245F90;
+    selection-color: #FFFFFF;
+    border: 1px solid #ADB5BD;
+}
+QWidget#MaterialsPanel QHeaderView::section {
+    background-color: #E9ECEF;
+    color: #212529;
+    border: 1px solid #CED4DA;
+    padding: 4px;
+}
+QWidget#MaterialsPanel QToolButton, QWidget#MaterialsPanel QTabBar::tab {
+    color: #212529;
+    background-color: #E9ECEF;
+    border: 1px solid #89939C;
+    padding: 5px 8px;
+}
+QWidget#MaterialsPanel QToolButton:checked,
+QWidget#MaterialsPanel QTabBar::tab:selected {
+    color: #FFFFFF;
+    background-color: #245F90;
+    border: 1px solid #173F60;
+}
+QWidget#MaterialsPanel QToolButton:focus {
+    border: 2px solid #173F60;
+}
+QWidget#MaterialsPanel QSplitter::handle {
+    background-color: #CED4DA;
+    width: 3px;
+    height: 3px;
+}
+
 /*
   Base Backgrounds:
     --main-bg: #F8F9FA;         (Windows, central areas, list dropdowns, table cells)

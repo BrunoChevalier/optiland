@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import pickle
 import threading
 
 import pytest
@@ -51,7 +52,8 @@ def test_handlers_return_portable_data_and_exact_query_stamps(set_test_backend):
     query = material_jobs.filter_materials(
         None,
         {
-            "materials": result.snapshot,
+            "material_blobs": (material_jobs.encode_query_source(result.snapshot),),
+            "stamps": result.snapshot.stamps,
             "query": MaterialQuery(name="Flint"),
             "request_id": 17,
             "backend": config,
@@ -64,6 +66,59 @@ def test_handlers_return_portable_data_and_exact_query_stamps(set_test_backend):
     assert len(query.matches) == 1
     assert query.matches[0].key.record_id == "1"
     assert be.get_backend() == config.name
+
+
+def test_worker_reconstructs_multiple_exact_generations_without_owned_payloads():
+    sources = tuple(load_source(owned_source(source_id)) for source_id in ("a", "b"))
+    stamps = tuple(stamp for source in sources for stamp in source.snapshot.stamps)
+    result = material_jobs.filter_materials(
+        None,
+        {
+            "material_blobs": tuple(
+                material_jobs.encode_query_source(source.snapshot) for source in sources
+            ),
+            "stamps": stamps,
+            "query": MaterialQuery(name="Crown"),
+            "request_id": 19,
+            "backend": BackendConfig.capture(),
+        },
+        lambda *args: None,
+        threading.Event(),
+    )
+    assert result.stamps == stamps and result.request_id == 19
+    assert {match.key.source_id for match in result.matches} == {"a", "b"}
+
+
+def test_worker_cancellation_stops_before_next_summary_deserialization(monkeypatch):
+    blob = material_jobs.encode_query_source(load_source(owned_source()).snapshot)
+    cancelled = threading.Event()
+    decoded = []
+    original = pickle.loads
+
+    def decode(value):
+        decoded.append(value)
+        cancelled.set()
+        return original(value)
+
+    monkeypatch.setattr(material_jobs.pickle, "loads", decode)
+    with pytest.raises(CalculationCancelled):
+        material_jobs.filter_materials(
+            None,
+            {"backend": BackendConfig.capture(), "material_blobs": (blob, blob)},
+            lambda *args: None,
+            cancelled,
+        )
+    assert len(decoded) == 1
+
+
+def test_invalid_internal_summary_transport_fails_without_a_result():
+    with pytest.raises(pickle.UnpicklingError):
+        material_jobs.filter_materials(
+            None,
+            {"backend": BackendConfig.capture(), "material_blobs": (b"invalid",)},
+            lambda *args: None,
+            threading.Event(),
+        )
 
 
 @pytest.mark.parametrize(
@@ -121,7 +176,12 @@ def test_completed_but_cancelled_calculation_is_not_returned(
             {
                 "source": owned_source(),
                 "backend": BackendConfig(),
-                "materials": load_source(owned_source()).snapshot,
+                "material_blobs": (
+                    material_jobs.encode_query_source(
+                        load_source(owned_source()).snapshot
+                    ),
+                ),
+                "stamps": load_source(owned_source()).snapshot.stamps,
                 "query": MaterialQuery(),
                 "request_id": 1,
             },

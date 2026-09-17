@@ -15,6 +15,7 @@ from PySide6.QtWidgets import QDockWidget, QMainWindow, QWidget
 
 from .analysis_panel import AnalysisPanel
 from .lens_editor import LensEditor
+from .materials_panel import MaterialsPanel
 from .optimization_panel import OptimizationPanel
 from .surface_interaction import SurfaceInteractionState
 from .system_properties_panel import SystemPropertiesPanel
@@ -92,6 +93,17 @@ class PanelManager:
             self.analysis_panel, "AnalysisPanelDock", "Analysis"
         )
 
+        self.materials_panel = MaterialsPanel(
+            self.connector, settings=self.main_window.settings
+        )
+        self.materials_dock = self._create_dock(
+            self.materials_panel, "MaterialsDock", "Materials"
+        )
+        self.materials_panel.set_dock_visible(False)
+        self.materials_dock.visibilityChanged.connect(
+            self.materials_panel.set_dock_visible
+        )
+
         self.optimization_panel = OptimizationPanel(self.connector)
         self.optimization_dock = self._create_dock(
             self.optimization_panel, "OptimizationDock", "Optimization"
@@ -116,6 +128,7 @@ class PanelManager:
             self.lens_editor_dock,
             self.system_properties_dock,
             self.analysis_dock,
+            self.materials_dock,
             self.optimization_dock,
             self.terminal_dock,
         ]
@@ -186,6 +199,7 @@ class PanelManager:
             self.analysis_dock, self.system_properties_dock
         )
         self.main_window.tabifyDockWidget(self.analysis_dock, self.optimization_dock)
+        self.main_window.tabifyDockWidget(self.analysis_dock, self.materials_dock)
 
         # Raise panels in reverse order so the first item ends up on top
         for dock in reversed(self.all_docks):
@@ -221,6 +235,7 @@ class PanelManager:
         """
         dock_map = {
             "analysis": self.analysis_dock,
+            "materials": self.materials_dock,
             "optimization": self.optimization_dock,
             "scripts": self.terminal_dock,
             "design": self.lens_editor_dock,
@@ -238,6 +253,7 @@ class PanelManager:
         """
         self.sidebar_content_widget.update_icons(theme_name)
         self.analysis_panel.update_theme(theme_name)
+        self.materials_panel.update_theme(theme_name)
         self.viewer_panel.update_theme(theme_name)
         self.python_terminal.set_theme(theme_name)
         self.optimization_panel.update_theme(theme_name)

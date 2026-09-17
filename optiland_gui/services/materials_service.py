@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import uuid
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 
 from PySide6.QtCore import QObject, Signal, Slot
 
@@ -13,10 +13,12 @@ from optiland.materials.properties import (
     MaterialQueryResult,
     MaterialSnapshot,
     MaterialSummary,
+    SourceStamp,
 )
 from optiland.materials.sources import SourceResult
 
 from .job_records import BackendConfig, DocumentToken, JobRequest
+from .material_jobs import encode_query_source
 
 
 @dataclass
@@ -31,7 +33,7 @@ class _Query:
     request: JobRequest | None
     backend: BackendConfig
     document: DocumentToken | None
-    snapshot: MaterialSnapshot
+    stamps: tuple[SourceStamp, ...]
     serial: int
     spec: MaterialQuery
 
@@ -44,8 +46,9 @@ class MaterialsService(QObject):
     publication or removal revokes queries that could include that source.
     Optical edits revoke
     current-design snapshots and mixed queries, while independent catalog jobs
-    continue. The cache retains portable optical data; query jobs receive only
-    lightweight property summaries.
+    continue. The cache retains portable optical data and one serialized summary
+    per source generation within the shared byte budget. Query jobs receive the
+    immutable summary bytes, decoded off Qt, without any owned optical payload.
 
     This service borrows the connector's ``CalculationJobs``. Closing it cancels
     only its own targets and never shuts down the shared worker.
@@ -81,6 +84,7 @@ class MaterialsService(QObject):
         self._query_target = f"{self._prefix}:query"
         self._targets = {self._query_target}
         self._sources: dict[str, SourceResult] = {}
+        self._query_summaries: dict[SourceStamp, bytes] = {}
         self._loads: dict[str, _Load] = {}
         self._errors: dict[str, str] = {}
         self._query: _Query | None = None
@@ -205,7 +209,9 @@ class MaterialsService(QObject):
         """Remove a source and revoke its in-flight and cached query ownership."""
         self.cancel_source(source_id)
         self._errors.pop(source_id, None)
-        if self._sources.pop(source_id, None) is not None:
+        source = self._sources.pop(source_id, None)
+        if source is not None:
+            self._query_summaries.pop(source.snapshot.stamps[0], None)
             self._invalidate_source_query(source_id)
             self.source_removed.emit(source_id)
 
@@ -234,21 +240,15 @@ class MaterialsService(QObject):
             for source_id, source in self._sources.items()
             if self._includes_source(query, source_id)
         )
-        snapshot = MaterialSnapshot(
-            tuple(s for source in sources for s in source.snapshot.stamps),
-            tuple(
-                replace(m, owned_data=None)
-                for source in sources
-                for m in source.snapshot.materials
-            ),
-        )
+        stamps = tuple(s for source in sources for s in source.snapshot.stamps)
+        blobs = tuple(self._query_summaries[stamp] for stamp in stamps)
         document = (
             self.document.token
-            if any(s.source_id.startswith("design:") for s in snapshot.stamps)
+            if any(s.source_id.startswith("design:") for s in stamps)
             else None
         )
         backend = BackendConfig.capture()
-        pending = _Query(None, backend, document, snapshot, serial, query)
+        pending = _Query(None, backend, document, stamps, serial, query)
         self._query = pending
         try:
             request = self.jobs.submit(
@@ -256,7 +256,8 @@ class MaterialsService(QObject):
                 "optiland_gui.services.material_jobs:filter_materials",
                 None,
                 {
-                    "materials": snapshot,
+                    "material_blobs": blobs,
+                    "stamps": stamps,
                     "query": query,
                     "request_id": serial,
                     "backend": backend,
@@ -302,7 +303,9 @@ class MaterialsService(QObject):
             if source_id.startswith("design:"):
                 self.cancel_source(source_id)
                 self._errors.pop(source_id, None)
-                if self._sources.pop(source_id, None) is not None:
+                source = self._sources.pop(source_id, None)
+                if source is not None:
+                    self._query_summaries.pop(source.snapshot.stamps[0], None)
                     self._invalidate_source_query(source_id)
                     self.source_removed.emit(source_id)
 
@@ -357,11 +360,21 @@ class MaterialsService(QObject):
                 or "Source loading failed",
             )
             return
+        try:
+            summaries = encode_query_source(data.snapshot)
+        except Exception as error:
+            self._source_failure(
+                source_id, f"Unable to stage material summaries: {error}"
+            )
+            return
         others = [s for key, s in self._sources.items() if key != source_id]
         payload_size = sum(
             len(material.owned_data or b"")
             for source in (*others, data)
             for material in source.snapshot.materials
+        )
+        payload_size += len(summaries) + sum(
+            len(self._query_summaries[source.snapshot.stamps[0]]) for source in others
         )
         if (
             len(others) + 1 > self.max_sources
@@ -377,7 +390,11 @@ class MaterialsService(QObject):
                 "Material cache capacity exceeded; remove a source before loading more",
             )
             return
+        previous = self._sources.get(source_id)
+        if previous is not None:
+            self._query_summaries.pop(previous.snapshot.stamps[0], None)
         self._sources[source_id] = data
+        self._query_summaries[data.snapshot.stamps[0]] = summaries
         self._errors.pop(source_id, None)
         self._invalidate_source_query(source_id)
         if self._sources.get(source_id) is data and not self._closed:
@@ -395,15 +412,15 @@ class MaterialsService(QObject):
         data = result.data
         stamps = tuple(
             stamp
-            for stamp in pending.snapshot.stamps
+            for stamp in pending.stamps
             if stamp.source_id in self._sources
             and self._sources[stamp.source_id].snapshot.stamps == (stamp,)
         )
         if (
             not isinstance(data, MaterialQueryResult)
             or data.request_id != pending.serial
-            or data.stamps != pending.snapshot.stamps
-            or stamps != pending.snapshot.stamps
+            or data.stamps != pending.stamps
+            or stamps != pending.stamps
         ):
             self.query_invalidated.emit()
             return
@@ -423,4 +440,5 @@ class MaterialsService(QObject):
         for target in self._targets:
             self.jobs.cancel_target(target)
         self._sources.clear()
+        self._query_summaries.clear()
         self._errors.clear()

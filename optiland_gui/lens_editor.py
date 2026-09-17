@@ -10,7 +10,7 @@ Author: Manuel Fragata Mendes, 2025
 from __future__ import annotations
 
 from time import perf_counter
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, TypedDict
 
 from PySide6.QtCore import (
     QEvent,
@@ -51,7 +51,19 @@ from .surface_interaction import EditorHoverTracker, SurfaceInteractionState
 from .widgets.surface_placement import SurfacePlacementWidget
 
 if TYPE_CHECKING:
+    from optiland.surfaces.standard_surface import Surface
+
     from .optiland_connector import OptilandConnector
+    from .services.document_acceptance import SurfaceReplacement
+    from .services.job_records import DocumentToken
+
+
+class ShapeDraft(TypedDict):
+    """Uncommitted text with its original live surface and document authority."""
+
+    changes: dict[str, str]
+    edit_token: DocumentToken | None
+    surface: Surface | None
 
 
 class _SurfacePropertiesTabs(QTabWidget):
@@ -88,11 +100,19 @@ class SurfacePropertiesWidget(QWidget):
         super().__init__(parent)
         self.row = row
         self.connector = connector
+        self.surface = connector.get_optic().surfaces[row]
+        self._shape_baseline: dict[str, str] = {}
+        self._shape_token: DocumentToken | None = None
+        self._shape_surface: Surface | None = None
+        self._loading_shape = False
+        self._applying_shape = False
         self.setObjectName("SurfacePropertiesWidget")
         self.setMinimumWidth(420)
 
         self.input_widgets = {}
         self._populate_properties_form()
+        connector.document_state.changed.connect(self._shape_document_changed)
+        connector.document_state.committed.connect(self._shape_document_changed)
 
     def _create_parameter_input(self, name, value):
         """Creates a configured QLineEdit for a given surface parameter."""
@@ -106,8 +126,10 @@ class SurfacePropertiesWidget(QWidget):
         else:
             line_edit.setText(f"{value:.6f}")
 
-        line_edit.editingFinished.connect(self.apply_changes)
         self.input_widgets[name] = line_edit
+        self._shape_baseline[name] = line_edit.text()
+        line_edit.textChanged.connect(self._shape_changed)
+        line_edit.editingFinished.connect(self.apply_changes)
         return line_edit
 
     def _populate_properties_form(self):
@@ -135,10 +157,21 @@ class SurfacePropertiesWidget(QWidget):
         columns_layout = QHBoxLayout()
         columns_layout.setSpacing(20)
         main_layout.addLayout(columns_layout)
+        shape_actions = QHBoxLayout()
+        self.shape_status = QLabel()
+        self.shape_status.setWordWrap(True)
+        self.shape_status.setAccessibleName("Shape draft status")
+        self.shape_reload = QPushButton("Reload Shape")
+        self.shape_reload.setToolTip("Discard the Shape draft and read current values.")
+        self.shape_reload.clicked.connect(self.reload_shape)
+        shape_actions.addWidget(self.shape_status, 1)
+        shape_actions.addWidget(self.shape_reload)
+        main_layout.addLayout(shape_actions)
 
         params = self.connector.get_surface_geometry_params(self.row)
 
         if not params:
+            self.shape_reload.setEnabled(False)
             form_layout = QFormLayout()
             form_layout.addRow(
                 QLabel("No additional properties for this surface type.")
@@ -168,27 +201,156 @@ class SurfacePropertiesWidget(QWidget):
 
         columns_layout.addStretch(1)
 
-    @Slot()
-    def apply_changes(self):
-        """Collects data from input fields and sends it to the connector."""
-        params_to_set = {}
-        for name, widget in self.input_widgets.items():
-            params_to_set[name] = widget.text()
-        self.connector.set_surface_geometry_params(self.row, params_to_set)
+    def _shape_changes(self) -> dict[str, str]:
+        return {
+            name: widget.text()
+            for name, widget in self.input_widgets.items()
+            if widget.text() != self._shape_baseline[name]
+        }
 
-    def refresh_values(self):
-        """Refresh derived values without discarding a focused parameter draft."""
-        self.placement.refresh_values()
-        params = self.connector.get_surface_geometry_params(self.row)
-        for name, widget in self.input_widgets.items():
-            if widget.hasFocus() or name not in params:
-                continue
-            value = params[name]
-            if isinstance(value, (list, tuple)) or hasattr(value, "tolist"):
-                values = value.tolist() if hasattr(value, "tolist") else value
-                widget.setText(str(values))
+    def _surface_row(self) -> int:
+        return next(
+            (
+                i
+                for i, surface in enumerate(self.connector.get_optic().surfaces)
+                if surface is self.surface
+            ),
+            -1,
+        )
+
+    def _shape_is_stale(self) -> bool:
+        return bool(self._shape_changes()) and (
+            self._shape_token != self.connector.document_state.edit_token
+            or self._shape_surface is not self.surface
+            or self._surface_row() < 0
+        )
+
+    @Slot()
+    def _shape_changed(self) -> None:
+        if self._loading_shape:
+            return
+        if self._shape_changes():
+            if self._shape_token is None:
+                self._shape_token = self.connector.document_state.edit_token
+                self._shape_surface = self.surface
+        else:
+            self._shape_token = None
+            self._shape_surface = None
+        self._show_shape_state()
+
+    def _show_shape_state(self) -> None:
+        self.shape_status.setText(
+            "The design changed. Reload Shape before applying this draft."
+            if self._shape_is_stale()
+            else ""
+        )
+
+    @Slot()
+    def _shape_document_changed(self) -> None:
+        if not self._applying_shape:
+            self._show_shape_state()
+
+    def capture_shape_draft(self) -> ShapeDraft:
+        """Retain changed text with the surface and token that authorized it."""
+        return {
+            "changes": self._shape_changes(),
+            "edit_token": self._shape_token,
+            "surface": self._shape_surface,
+        }
+
+    def restore_shape_draft(self, state: ShapeDraft) -> None:
+        """Preserve original authority across a UI or mapped-model rebuild."""
+        self._loading_shape = True
+        try:
+            for name, text in state["changes"].items():
+                if name in self.input_widgets:
+                    self.input_widgets[name].setText(text)
+                    self.input_widgets[name].setModified(True)
+            if self._shape_changes():
+                self._shape_token = state["edit_token"]
+                self._shape_surface = state["surface"]
             else:
-                widget.setText(f"{value:.6f}")
+                self._discard_shape()
+        finally:
+            self._loading_shape = False
+        self._show_shape_state()
+
+    @Slot()
+    def _discard_shape(self) -> None:
+        self._shape_token = None
+        self._shape_surface = None
+
+    @Slot()
+    def reload_shape(self) -> None:
+        """Explicitly discard stale text and read the currently retained surface."""
+        row = self._surface_row()
+        if row < 0:
+            self.shape_status.setText(
+                "Surface unavailable. Open its current properties."
+            )
+            return
+        self.row = row
+        self._discard_shape()
+        self._refresh_shape(force=True)
+
+    @Slot()
+    def apply_changes(self) -> None:
+        """Apply only modified fields while their exact surface authority is current."""
+        changes = self._shape_changes()
+        if self._loading_shape or self._applying_shape or not changes:
+            return
+        if QApplication.focusWidget() is self.shape_reload:
+            # Qt transfers focus before emitting editingFinished. Reload is a
+            # discard action, including when reached from the edit using Tab.
+            return
+        if self._shape_is_stale():
+            self._show_shape_state()
+            return
+        self._applying_shape = True
+        try:
+            self.connector.document_acceptance.assert_mutation_allowed()
+            self.connector.set_surface_geometry_params(self._surface_row(), changes)
+        except Exception as exc:
+            self.shape_status.setText(str(exc))
+            return
+        finally:
+            self._applying_shape = False
+        self.reload_shape()
+
+    def _refresh_shape(self, *, force: bool = False) -> None:
+        if self._applying_shape:
+            return
+        retained = self._shape_changes() if not force else {}
+        row = self._surface_row()
+        if row < 0:
+            self.shape_status.setText(
+                "Surface unavailable. Open its current properties."
+            )
+            return
+        params = self.connector.get_surface_geometry_params(row)
+        self._loading_shape = True
+        try:
+            for name, widget in self.input_widgets.items():
+                if name not in params or name in retained:
+                    continue
+                value = params[name]
+                if isinstance(value, (list, tuple)) or hasattr(value, "tolist"):
+                    values = value.tolist() if hasattr(value, "tolist") else value
+                    widget.setText(str(values))
+                else:
+                    widget.setText(f"{value:.6f}")
+                self._shape_baseline[name] = widget.text()
+                widget.setModified(False)
+        finally:
+            self._loading_shape = False
+        if not self._shape_changes():
+            self._discard_shape()
+        self._show_shape_state()
+
+    def refresh_values(self) -> None:
+        """Refresh untouched values while preserving the authority of each draft."""
+        self.placement.refresh_values()
+        self._refresh_shape()
 
 
 class SurfaceTypeWidget(QWidget):
@@ -379,6 +541,7 @@ class LensEditor(QWidget):
         self._table_loading = False
         self._table_failed = False
         self._pending_table_state = None
+        self._replacement_table_state = None
         self._load_timer = QTimer(self)
         self._load_timer.setSingleShot(True)
         self._load_timer.timeout.connect(self._load_table_batch)
@@ -389,33 +552,44 @@ class LensEditor(QWidget):
         self.load_data()
         self.connect_signals()
         self.hover_tracker = EditorHoverTracker(self)
-        self.connector.placement.about_to_apply.connect(self._rebind_placement)
+        self.connector.document_acceptance.model_replaced.connect(self._rebind_model)
 
-    def _rebind_placement(self, candidate):
-        """Preserve current UI indices for an index-preserving placement commit."""
+    def _rebind_model(self, replacement: SurfaceReplacement) -> None:
+        """Translate retained UI identity before the committed replacement rebuild."""
         state = self.interaction_state
-        selected = [state.index_of(surface) for surface in state.selected_surfaces]
-        hovered = state.index_of(state.hovered_surface)
-        column = state.hovered_column
-        old_surfaces = self._displayed_surfaces
-        new_surfaces = tuple(candidate.surfaces)
-        if self._table_loading:
-            identities = {
-                id(old): id(new)
-                for old, new in zip(old_surfaces, new_surfaces, strict=True)
-            }
-            self._pending_table_state["current_id"] = identities.get(
-                self._pending_table_state["current_id"]
-            )
-            self._pending_table_state["properties"] = {
+        captured = self._capture_table_state()
+        identities = {id(old): id(new) for old, new in replacement.mapping}
+        selected = {identities.get(id(surface)) for surface in state.selected_surfaces}
+        hovered = identities.get(captured["hover_id"])
+        column = captured["hover_column"]
+        captured = {
+            **captured,
+            "current_id": identities.get(captured["current_id"]),
+            "hover_id": hovered,
+            "hover_column": column,
+            "properties": {
                 identities[owner]: settings
-                for owner, settings in self._pending_table_state["properties"].items()
+                for owner, settings in captured["properties"].items()
                 if owner in identities
-            }
-        self._displayed_surfaces = new_surfaces
-        state.sync_document(candidate)
-        state.set_selected_indices(selected)
-        state.set_hover(hovered, column)
+            },
+            "replacement_hover": (hovered, column),
+        }
+        self._replacement_table_state = captured
+        state.sync_document(replacement.new_optic)
+        state.set_selected_indices(
+            i for i, surface in enumerate(state.surfaces) if id(surface) in selected
+        )
+        state.set_hover(
+            next(
+                (
+                    i
+                    for i, surface in enumerate(state.surfaces)
+                    if id(surface) == hovered
+                ),
+                -1,
+            ),
+            column,
+        )
 
     def _init_ui(self):
         """Initializes the main UI components of the editor."""
@@ -494,6 +668,9 @@ class LensEditor(QWidget):
 
     def eventFilter(self, source, event):
         if source is self.tableWidget and event.type() == QEvent.KeyPress:
+            if event.key() == Qt.Key_M and event.modifiers() == Qt.ControlModifier:
+                self._request_browse_materials()
+                return True
             if event.key() == Qt.Key_Insert:
                 self.add_surface_handler()
                 return True
@@ -506,6 +683,24 @@ class LensEditor(QWidget):
                 self._request_add_optimization_variable()
                 return True
         return super().eventFilter(source, event)
+
+    def _request_browse_materials(self, surface: Surface | None = None) -> None:
+        """Capture an explicit material-cell action, never subsequent focus changes."""
+        if self._table_loading:
+            return
+        if surface is None:
+            table = self.tableWidget
+            if table.currentColumn() != self.connector.COL_MATERIAL:
+                return
+            row = table.currentRow()
+            if row < 0 or self.is_properties_row(row):
+                return
+            index = self.map_ui_row_to_surface_index(row)
+            if not 0 <= index < len(self._displayed_surfaces):
+                return
+            surface = self._displayed_surfaces[index]
+        if any(value is surface for value in self.connector.get_optic().surfaces):
+            self.connector.requestBrowseMaterials.emit(surface)
 
     def _request_add_optimization_variable(self) -> None:
         """Emit requestAddOptimizationVariable for the currently focused cell."""
@@ -602,6 +797,9 @@ class LensEditor(QWidget):
         self.full_refresh_from_optic()
 
     def _capture_table_state(self):
+        if self._replacement_table_state is not None:
+            state, self._replacement_table_state = self._replacement_table_state, None
+            return state
         if self._table_loading or self._table_failed:
             return self._pending_table_state
         table = self.tableWidget
@@ -621,15 +819,13 @@ class LensEditor(QWidget):
                 properties[id(old_surfaces[owner])] = {
                     "tab": panel.tabs.currentIndex(),
                     "placement": panel.placement.capture_draft(),
-                    "drafts": {
-                        name: widget.text()
-                        for name, widget in panel.input_widgets.items()
-                        if widget.isModified()
-                    },
+                    "shape": panel.capture_shape_draft(),
                 }
         return {
             "current_id": current_id,
             "current_column": table.currentColumn(),
+            "hover_id": id(self.interaction_state.hovered_surface),
+            "hover_column": self.interaction_state.hovered_column,
             "properties": properties,
             "horizontal": table.horizontalScrollBar().value(),
             "vertical": table.verticalScrollBar().value(),
@@ -723,6 +919,11 @@ class LensEditor(QWidget):
                         break
 
             self.tableWidget.setItem(row, col_idx, item)
+            if col_idx == self.connector.COL_MATERIAL:
+                item.setToolTip(
+                    "Browse Materials for this medium: Ctrl+M or its context menu. "
+                    "Browsing does not apply a material."
+                )
 
     def _process_table_row(self, row_index, display_row=None):
         """Populates a single row in the lens data editor table."""
@@ -828,10 +1029,7 @@ class LensEditor(QWidget):
             ]
             panel.tabs.setCurrentIndex(settings["tab"])
             panel.placement.restore_draft(settings["placement"])
-            for name, draft in settings["drafts"].items():
-                if name in panel.input_widgets:
-                    panel.input_widgets[name].setText(draft)
-                    panel.input_widgets[name].setModified(True)
+            panel.restore_shape_draft(settings["shape"])
             if not synchronous and perf_counter() >= deadline:
                 self._load_timer.start(0)
                 return
@@ -859,6 +1057,19 @@ class LensEditor(QWidget):
         if hasattr(self, "hover_tracker"):
             self.hover_tracker.set_suspended(False)
             self.hover_tracker.refresh()
+        if not error and "replacement_hover" in self._pending_table_state:
+            hovered, column = self._pending_table_state.pop("replacement_hover")
+            self.interaction_state.set_hover(
+                next(
+                    (
+                        i
+                        for i, surface in enumerate(self._displayed_surfaces)
+                        if id(surface) == hovered
+                    ),
+                    -1,
+                ),
+                column,
+            )
         self.hover_presentation.refresh()
         self.update_headers_on_selection()
         if error:
@@ -1062,6 +1273,8 @@ class LensEditor(QWidget):
 
     @Slot("QPoint")
     def show_context_menu(self, pos):
+        if self._table_loading:
+            return
         ui_row = self.tableWidget.rowAt(pos.y())
         if ui_row < 0:
             return
@@ -1074,6 +1287,15 @@ class LensEditor(QWidget):
         menu.setObjectName("LDEContextMenu")
 
         if not is_prop_widget_row:
+            if self.tableWidget.columnAt(pos.x()) == self.connector.COL_MATERIAL:
+                surface = self._displayed_surfaces[surface_index]
+                browse = menu.addAction("Browse Materials…  Ctrl+M")
+                browse.triggered.connect(
+                    lambda _=False, retained=surface: self._request_browse_materials(
+                        retained
+                    )
+                )
+                menu.addSeparator()
             add_above = menu.addAction("Add Surface Above")
             add_above.triggered.connect(lambda: self.add_surface_handler(surface_index))
             remove_action = menu.addAction("Remove Current Surface")

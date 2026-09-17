@@ -175,8 +175,8 @@ Styling and Resources
 *   **Resource Files (`resources.qrc`, `resources_rc.py`)**: Icons and other assets are managed using Qt's resource system. `resources.qrc` is an XML file defining resources, which is compiled into `resources_rc.py` using `pyside6-rcc`. This allows resources to be bundled with the application.
 *   **Plot Styling (`gui_plot_utils.py`)**: Contains utility functions to apply consistent Matplotlib styles that match the selected GUI theme.
 
-Material discovery service
---------------------------
+Materials workspace ownership
+-----------------------------
 
 ``connector.materials`` exposes the shared ``MaterialsService`` for source
 loading and property queries. It uses ``connector.calculation_jobs`` to evaluate
@@ -184,7 +184,84 @@ captured registry, GLC and current-design sources outside the Qt thread. Source
 publication is atomic, failed reloads retain previously accepted data, and query
 acceptance checks source generations and the relevant document/backend context.
 See :doc:`material_discovery` for the API contract and runnable core examples.
-This service does not yet add a Materials panel or a material Apply command.
+See :doc:`../gui_materials` and :doc:`../gui_materials_tutorial` for user controls.
+
+The service owns immutable accepted source data and a serialized query summary
+for each source generation. Query jobs receive those summaries without copying
+owned optical definitions on every keystroke. A failed staged reload retains
+the accepted source. A publication revokes only queries that could include that
+source; an independent catalog query survives current-design refresh.
+
+``MaterialBrowserSources`` owns reload requests and display labels, and captures
+live surface-material occurrences in bounded Qt event-loop batches. It performs
+no spectral evaluation on Qt. Retained surface identities disambiguate current
+occurrences; changing a document token during capture discards the capture.
+Native ``QDockWidget.visibilityChanged`` drives this adapter: a child widget can
+remain visible while hidden behind another dock tab, so child show/hide events
+are insufficient. Hiding or stopping Materials cancels its own pending work.
+
+``MaterialsPanel`` owns user criteria, selected exact ``MaterialKey``, visible
+results and an independently retained inspected record. Publication uses an
+exact-key lookup and caches qualified ``MapPoint`` values per source generation.
+It clears only the affected cache when a source changes or disappears. Filtering
+does not overwrite the selected identity, and current-design context does not
+inflate the matching row count. Untrusted source text remains plain text;
+metadata previews are explicitly bounded. No plot selection calls a document
+mutation API.
+
+``MaterialSourceControls`` owns one nonblocking native chooser and lexical,
+path-qualified source identities. It passes local locators to the browser
+adapter; directory traversal and parsing stay in the worker. It does not mutate
+the global registry. Removal forgets a local source and its cache, preserving
+the original file and any definition already embedded in a lens.
+
+``MaterialApplyFooter`` displays a retained target and an exact selected key plus
+source stamp. Only its explicit Apply action calls ``MaterialApplyService``.
+The Lens Data Editor's material-cell action captures the actual Surface object;
+table focus never grants new target authority. The service checks document edit
+and history revisions, backend and source generation before accepting a worker's
+prepared candidate. Known n/k support is checked independently of clamp policy;
+unknown extinction retains its explicit native fallback warning.
+
+``DocumentAcceptance`` supplies the short publication boundary shared with
+history and placement. Ordinary live setters call ``assert_mutation_allowed``
+before capture or mutation; they remain usable during asynchronous preparation,
+which their edits invalidate. New file work and loaded-document publication use
+``require_start("file")``. Already-owned writes use the short publication guard
+so they can drain during close; close cancels pending material Apply first.
+``FileOperations.has_pending_load`` includes a retained conflict candidate even
+when no calculation remains active. A prepared replacement supplies a retained
+surface mapping before UI rebuilding, then publishes one history/document event.
+Do not reconstruct these contracts with a row number or a material name lookup.
+
+``MaterialsTableModel`` provides immutable rows, locale-aware display and numeric
+sort values. ``MaterialsSortProxyModel`` is a reset-only ``QAbstractProxyModel``:
+it computes a row permutation with Python sorting, then remaps persistent Qt
+indexes across layout changes. Missing values remain last in either direction;
+equal values use the ascending exact key. It weakly observes the caller-owned
+source QObject, avoiding source destruction during proxy teardown. Do not
+replace this with a Python ``lessThan`` callback without repeating the large
+catalog benchmark: crossing the Qt/Python boundary per comparison dominates
+sorting time.
+
+``GlassMap`` owns its local figure, toolbar, retained artists and screen-space
+hit cache. Selection, current context and transient hover have separate visual
+states. Equal context updates skip rebuilding an established view. Filtered-out
+selection coordinates support only Locate and the selected outline; they never
+become matches, hit candidates or reset limits. Themes change local artists and
+toolbar palette without modifying global Matplotlib or application defaults.
+
+Meaningful tests are in ``tests/gui/test_materials_service.py``,
+``test_material_jobs.py``, ``test_material_browser.py``,
+``test_materials_panel.py``, ``test_materials_model.py``, ``test_glass_map.py``,
+``test_materials_dock_visibility.py`` and ``test_materials_delivery.py``. Apply
+coverage includes ``test_material_apply.py``, ``test_material_apply_tasks.py``,
+``test_materials_actions.py``, ``test_materials_workflow.py`` and
+``test_document_mutation_guards.py``.
+Keep native keyboard/persistent-selection, exact source generations,
+same-name/overlap, stale-result, source-lifecycle and actual-worker tests when
+changing these contracts. GUI coverage is supplementary to the core CI
+configuration, which omits GUI modules; do not silently combine the denominators.
 
 Running the GUI
 ---------------
@@ -248,13 +325,13 @@ Developing for the Optiland GUI generally involves the following:
 
     *   When creating a new panel that needs to display or modify optical data, it should take an `OptilandConnector` instance in its constructor.
     *   Connect to relevant signals from the `OptilandConnector` (e.g., `opticChanged`, `surfaceDataChanged`) to update the panel's display when the underlying data changes.
-    *   Use the connector's methods to fetch data (e.g., `get_optic()`, `get_surface_data()`) and to apply changes (e.g., `set_surface_data()`, or by directly modifying the `Optic` object obtained from `get_optic()` and then calling `connector.opticChanged.emit()` if the connector doesn't automatically detect the change for undo/redo purposes or specific signal emission).
+    *   Use the connector's methods to fetch data (e.g., `get_optic()`, `get_surface_data()`) and its owning editing services to change it. Directly changing an `Optic` and only emitting `opticChanged` does not provide document conflict checks or an undo transaction.
 3.  **Designing UI**:
 
     *   Use Qt Designer (optional) or create UI elements programmatically.
     *   Employ layouts (QVBoxLayout, QHBoxLayout, QGridLayout, QFormLayout) for responsive and well-organized UIs.
     *   Follow existing patterns for styling and theming. New widgets should respect the application's theme.
-4.  **Undo/Redo**: For actions that modify the optical system, ensure they are compatible with the `UndoRedoManager`. This usually involves capturing the state of the `Optic` object before a change and adding it to the undo stack via `OptilandConnector._undo_redo_manager.add_state(old_optic_state_dict)`.
+4.  **Undo/Redo**: Route changes through the established history transaction owned by the editing service. Whole-document restoration can complete asynchronously. Widgets should reflect that service's pending/accepted/failed state rather than pushing a dictionary onto history themselves.
 5.  **Modularity**: Aim to keep panels self-contained and focused on specific functionalities.
 
 **Example Workflow for Adding a New Panel:**

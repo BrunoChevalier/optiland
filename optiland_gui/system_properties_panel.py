@@ -189,6 +189,18 @@ class PropertyEditorBase(QWidget):
         self.connector.set_modified(True)
         self.connector.notify_change("optical")
 
+    def _can_edit(self):
+        """Reject reentrant edits before touching the live prescription."""
+        try:
+            self.connector.document_acceptance.assert_mutation_allowed()
+        except ValueError as exc:
+            manager = getattr(self.connector, "toast_manager", None)
+            if manager is not None:
+                manager.notify(str(exc), "warning")
+            self.load_data()
+            return False
+        return True
+
     def init_ui(self):
         """
         Initializes the user interface of the editor.
@@ -259,6 +271,8 @@ class ApertureEditor(PropertyEditorBase):
                 and optic.aperture.ap_type == ap_type
                 and optic.aperture.value == ap_value
             ):
+                return
+            if not self._can_edit():
                 return
             try:
                 optic.set_aperture(ap_type, ap_value)
@@ -356,6 +370,8 @@ class FieldsEditor(PropertyEditorBase):
                 type(optic.fields.field_definition)
             ):
                 return
+            if not self._can_edit():
+                return
             try:
                 optic.fields.set_type(new_type)
                 self._notify_optical_edit()
@@ -369,7 +385,7 @@ class FieldsEditor(PropertyEditorBase):
     def add_field(self):
         """Adds a new field point to the optical system."""
         optic = self.connector.get_optic()
-        if optic:
+        if optic and self._can_edit():
             y_val = (
                 optic.fields.max_y_field * 0.5
                 if optic.fields.num_fields > 0 and optic.fields.max_y_field > 0
@@ -388,6 +404,8 @@ class FieldsEditor(PropertyEditorBase):
         optic = self.connector.get_optic()
         current_row = self.tableFields.currentRow()
         if optic and current_row != -1 and optic.fields.num_fields > current_row:
+            if not self._can_edit():
+                return
             del optic.fields.fields[current_row]
             self._notify_optical_edit()
             print(f"Field at row {current_row} removed.")
@@ -429,6 +447,8 @@ class FieldsEditor(PropertyEditorBase):
             (field.x, field.y, field.vx, field.vy) == values
             for field, values in zip(fields, rows, strict=True)
         ):
+            return
+        if not self._can_edit():
             return
         for field, values in zip(fields, rows, strict=True):
             field.x, field.y, field.vx, field.vy = values
@@ -514,7 +534,7 @@ class WavelengthsEditor(PropertyEditorBase):
     def add_wavelength(self):
         """Adds a new wavelength to the optical system."""
         optic = self.connector.get_optic()
-        if optic:
+        if optic and self._can_edit():
             is_new_primary = optic.wavelengths.num_wavelengths == 0
             optic.wavelengths.add(0.6328, is_primary=is_new_primary, unit="um")
             self._notify_optical_edit()
@@ -534,6 +554,8 @@ class WavelengthsEditor(PropertyEditorBase):
                 print("Cannot remove the last wavelength.")
                 return
 
+            if not self._can_edit():
+                return
             was_primary = optic.wavelengths.wavelengths[current_row].is_primary
             del optic.wavelengths.wavelengths[current_row]
 
@@ -554,6 +576,8 @@ class WavelengthsEditor(PropertyEditorBase):
             and optic.wavelengths.num_wavelengths > current_row
         ):
             if optic.wavelengths.primary_index == current_row:
+                return
+            if not self._can_edit():
                 return
             for i, wl_obj in enumerate(optic.wavelengths.wavelengths):
                 wl_obj.is_primary = i == current_row
@@ -585,6 +609,8 @@ class WavelengthsEditor(PropertyEditorBase):
             wavelength.value == value
             for wavelength, value in zip(wavelengths, values, strict=True)
         ):
+            return
+        if not self._can_edit():
             return
         for wavelength, value in zip(wavelengths, values, strict=True):
             wavelength._value = value

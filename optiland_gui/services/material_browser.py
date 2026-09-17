@@ -102,6 +102,17 @@ class MaterialBrowserSources(QObject):
         self.labels.pop(source_id, None)
         self.service.remove_source(source_id)
 
+    def source_kind(self, source_id: str) -> str:
+        """Describe supported source formats without exposing Python class names."""
+        if source_id.startswith("design:"):
+            return "Current-design material occurrence"
+        return {
+            InstalledSource: "Installed glass catalogs",
+            RegistrySource: "Registered RII materials",
+            DirectorySource: "Local RII directory",
+            GlcSource: "OSLO GLC catalog",
+        }.get(type(self.requests.get(source_id)), "Captured source")
+
     def reload(self) -> None:
         """Refresh captured file requests and the current registered metadata."""
         if self._closed:

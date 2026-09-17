@@ -65,6 +65,13 @@ optical system, plus the reference pages you will keep coming back to.
 
       Explore and edit systems interactively with the Optiland desktop GUI.
 
+   .. grid-item-card:: Materials Workspace
+      :link: gui_materials
+      :link-type: doc
+
+      Browse exact glass records, inspect optical properties and follow a
+      reproducible desktop matching tutorial.
+
 .. toctree::
    :hidden:
    :maxdepth: 1
@@ -78,3 +85,4 @@ optical system, plus the reference pages you will keep coming back to.
    glossary
    gui_quickstart
    gui_materials
+   gui_materials_tutorial

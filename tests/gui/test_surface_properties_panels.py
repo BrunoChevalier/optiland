@@ -186,3 +186,251 @@ def test_new_document_drops_old_panels(editor):
     editor.connector.new_system()
     assert not editor.open_prop_source_rows
     assert editor.tableWidget.rowCount() == editor.connector.get_surface_count()
+
+
+def test_shape_applies_only_dirty_field_without_rounding_other_parameters(
+    editor, monkeypatch
+):
+    connector = editor.connector
+    connector.set_surface_geometry_params(1, {"Radius X": "50.123456789"})
+    editor.toggle_properties_widget(1)
+    properties = panel(editor, 1)
+    before = float(connector.get_optic().surfaces[1].geometry.Rx)
+    calls = []
+    setter = connector.set_surface_geometry_params
+
+    def record(row, changes):
+        calls.append((row, changes))
+        setter(row, changes)
+
+    monkeypatch.setattr(connector, "set_surface_geometry_params", record)
+    properties.input_widgets["Conic X"].setText("-0.75")
+    properties.input_widgets["Conic X"].editingFinished.emit()
+    assert calls == [(1, {"Conic X": "-0.75"})]
+    assert float(connector.get_optic().surfaces[1].geometry.Rx) == before
+    assert float(connector.get_optic().surfaces[1].geometry.kx) == -0.75
+    assert not properties.capture_shape_draft()["changes"]
+    properties.input_widgets["Radius X"].editingFinished.emit()
+    assert len(calls) == 1
+
+
+def test_unrelated_edit_stales_shape_draft_until_explicit_reload(editor):
+    connector = editor.connector
+    editor.toggle_properties_widget(1)
+    properties = panel(editor, 1)
+    properties.input_widgets["Conic X"].setText("-0.5")
+    original_token = properties.capture_shape_draft()["edit_token"]
+    connector.set_surface_data(2, connector.COL_COMMENT, "Other surface metadata")
+    assert original_token != connector.document_state.edit_token
+    assert "design changed" in properties.shape_status.text()
+    revision = connector._undo_redo_manager.revision
+    properties.apply_changes()
+    assert float(connector.get_optic().surfaces[1].geometry.kx) == 0
+    assert connector._undo_redo_manager.revision == revision
+    assert properties.input_widgets["Conic X"].text() == "-0.5"
+    properties.shape_reload.click()
+    assert not properties.capture_shape_draft()["changes"]
+    assert not properties.shape_status.text()
+    properties.input_widgets["Conic X"].setText("-0.25")
+    properties.apply_changes()
+    assert float(connector.get_optic().surfaces[1].geometry.kx) == -0.25
+
+
+def test_mouse_reload_discards_focused_fresh_draft_without_applying(
+    editor, qapp, monkeypatch
+):
+    connector = editor.connector
+    editor.toggle_properties_widget(1)
+    properties = panel(editor, 1)
+    properties.tabs.setCurrentIndex(1)
+    qapp.processEvents()
+    editor.activateWindow()
+    field = properties.input_widgets["Conic X"]
+    field.setFocus()
+    qapp.processEvents()
+    assert field.hasFocus()
+    field.selectAll()
+    QTest.keyClicks(field, "-0.375")
+    calls = []
+    setter = connector.set_surface_geometry_params
+
+    def record(row, changes):
+        calls.append((row, changes))
+        setter(row, changes)
+
+    monkeypatch.setattr(connector, "set_surface_geometry_params", record)
+    token = connector.document_state.edit_token
+    QTest.mouseClick(properties.shape_reload, Qt.LeftButton)
+    qapp.processEvents()
+    assert connector.document_state.edit_token == token
+    assert not calls
+    assert float(connector.get_optic().surfaces[1].geometry.kx) == 0
+    assert not properties.capture_shape_draft()["changes"]
+
+
+def test_shape_reload_and_apply_reject_deleted_exact_owner(editor):
+    connector = editor.connector
+    editor.toggle_properties_widget(1)
+    properties = panel(editor, 1)
+    initial = properties.input_widgets["Conic X"].text()
+    properties.input_widgets["Conic X"].setText("-0.5")
+    # Retain the widget without delivering a rebuild to probe a delayed callback.
+    connector.document_state.committed.disconnect(editor._on_document_change)
+    connector.remove_surface(1)
+    remaining = connector.get_optic().surfaces[1]
+    before = connector.document_state.edit_token
+    properties.apply_changes()
+    properties.input_widgets["Conic X"].setText(initial)
+    properties.refresh_values()
+    assert "unavailable" in properties.shape_status.text()
+    properties.reload_shape()
+    assert connector.document_state.edit_token == before
+    assert connector.get_optic().surfaces[1] is remaining
+    assert "unavailable" in properties.shape_status.text()
+
+
+def test_material_context_and_keyboard_actions_capture_retained_surface(
+    editor, monkeypatch
+):
+    connector = editor.connector
+    captured = []
+    connector.requestBrowseMaterials.connect(captured.append)
+    editor.toggle_properties_widget(0)
+    editor.toggle_properties_widget(1)
+    target = connector.get_optic().surfaces[2]
+    actions = []
+
+    class InspectMenu(QMenu):
+        def exec(self, position):
+            actions.extend(
+                action
+                for action in self.actions()
+                if action.text().startswith("Browse Materials")
+            )
+
+    monkeypatch.setattr("optiland_gui.lens_editor.QMenu", InspectMenu)
+    table = editor.tableWidget
+    row = editor.map_surface_index_to_ui_row(2)
+    item = table.item(row, connector.COL_MATERIAL)
+    table.scrollToItem(item)
+    editor.show_context_menu(table.visualItemRect(item).center())
+    assert len(actions) == 1 and not captured
+    table.setCurrentCell(editor.map_surface_index_to_ui_row(1), connector.COL_MATERIAL)
+    actions[0].trigger()
+    assert captured == [target]
+    # Subsequent selection does not retarget; a new explicit key action does.
+    table.setCurrentCell(editor.map_surface_index_to_ui_row(0), connector.COL_MATERIAL)
+    assert captured == [target]
+    QTest.keyClick(table, Qt.Key_M, Qt.ControlModifier)
+    assert captured[-1] is connector.get_optic().surfaces[0]
+    assert not table.currentItem().flags() & Qt.ItemIsEditable
+    table.setCurrentCell(editor.map_surface_index_to_ui_row(3), connector.COL_MATERIAL)
+    QTest.keyClick(table, Qt.Key_M, Qt.ControlModifier)
+    assert captured[-1] is connector.get_optic().surfaces[3]
+    table.setCurrentCell(editor.map_surface_index_to_ui_row(1), connector.COL_COMMENT)
+    QTest.keyClick(table, Qt.Key_M, Qt.ControlModifier)
+    assert len(captured) == 3
+
+
+def test_material_action_rejects_removed_owner_and_loading_rows(editor, monkeypatch):
+    connector = editor.connector
+    captured = []
+    connector.requestBrowseMaterials.connect(captured.append)
+    retained = connector.get_optic().surfaces[1]
+    connector.remove_surface(1)
+    editor._request_browse_materials(retained)
+    assert not captured
+    editor._table_loading = True
+    try:
+        menu = MagicMock(side_effect=AssertionError("A loading table has no actions"))
+        monkeypatch.setattr("optiland_gui.lens_editor.QMenu", menu)
+        editor.show_context_menu(editor.tableWidget.rect().center())
+        editor._request_browse_materials(connector.get_optic().surfaces[1])
+        assert not captured
+        menu.assert_not_called()
+    finally:
+        editor._table_loading = False
+
+
+def test_shape_guard_failure_keeps_draft_and_allows_fresh_retry(editor, monkeypatch):
+    connector = editor.connector
+    editor.toggle_properties_widget(1)
+    properties = panel(editor, 1)
+    properties.input_widgets["Conic X"].setText("-0.75")
+    token = connector.document_state.edit_token
+    with monkeypatch.context() as guard:
+        guard.setattr(
+            connector.document_acceptance,
+            "assert_mutation_allowed",
+            MagicMock(side_effect=ValueError("A prepared change is being applied.")),
+        )
+        properties.apply_changes()
+    assert "prepared change" in properties.shape_status.text()
+    assert connector.document_state.edit_token == token
+    assert float(properties.surface.geometry.kx) == 0
+    assert properties.capture_shape_draft()["changes"] == {"Conic X": "-0.75"}
+    properties.apply_changes()
+    assert float(properties.surface.geometry.kx) == -0.75
+    assert not properties.capture_shape_draft()["changes"]
+
+
+def test_shape_refresh_updates_clean_fields_but_keeps_dirty_text_stale(editor):
+    connector = editor.connector
+    editor.toggle_properties_widget(1)
+    properties = panel(editor, 1)
+    field = properties.input_widgets["Conic X"]
+    initial_text = field.text()
+    field.setText("-0.5")
+    field.setText(initial_text)
+    assert properties.capture_shape_draft()["surface"] is None
+    assert properties.capture_shape_draft()["edit_token"] is None
+    connector.set_surface_geometry_params(1, {"Conic X": "-0.25"})
+    assert float(field.text()) == -0.25
+    assert not properties.capture_shape_draft()["changes"]
+    field.setText("-0.75")
+    token = properties.capture_shape_draft()["edit_token"]
+    connector.set_surface_geometry_params(1, {"Radius X": "63.125"})
+    assert field.text() == "-0.75"
+    assert float(properties.input_widgets["Radius X"].text()) == 63.125
+    assert properties.capture_shape_draft()["edit_token"] == token
+    assert "design changed" in properties.shape_status.text()
+    properties.apply_changes()
+    assert float(properties.surface.geometry.kx) == -0.25
+    properties.reload_shape()
+    assert float(properties.input_widgets["Radius X"].text()) == 63.125
+    assert float(field.text()) == -0.25
+
+
+def test_material_shortcut_from_properties_row_does_not_capture_a_target(editor):
+    captured = []
+    editor.connector.requestBrowseMaterials.connect(captured.append)
+    editor.toggle_properties_widget(1)
+    row = editor.map_surface_index_to_ui_row(1) + 1
+    editor.tableWidget.setCurrentCell(row, editor.connector.COL_MATERIAL)
+    QTest.keyClick(editor.tableWidget, Qt.Key_M, Qt.ControlModifier)
+    assert not captured
+
+
+def test_geometry_change_drops_incompatible_shape_draft_authority(editor):
+    connector = editor.connector
+    editor.toggle_properties_widget(1)
+    original = panel(editor, 1)
+    original.input_widgets["Conic X"].setText("-0.5")
+    connector.set_surface_type(1, "toroidal")
+    properties = panel(editor, 1)
+    assert "Conic X" not in properties.input_widgets
+    assert not properties.capture_shape_draft()["changes"]
+    assert properties.capture_shape_draft()["edit_token"] is None
+    assert properties.capture_shape_draft()["surface"] is None
+    rotation = properties.input_widgets["Radius of Rotation (XZ)"]
+    rotation.setText("125")
+    assert (
+        properties.capture_shape_draft()["edit_token"]
+        == connector.document_state.edit_token
+    )
+    properties.apply_changes()
+    assert not properties.shape_status.text()
+    assert (
+        float(connector.get_surface_geometry_params(1)["Radius of Rotation (XZ)"])
+        == 125
+    )

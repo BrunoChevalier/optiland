@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import QObject, QSignalBlocker, Signal, Slot
+from PySide6.QtCore import QObject, Signal, Slot
 
 from optiland_gui.services.calculation_jobs import CalculationJobs
 from optiland_gui.services.job_records import BackendConfig, OpticSnapshot
@@ -115,6 +115,7 @@ class ScientificScripts(QObject):
     def can_apply(self):
         return bool(
             self.candidate is not None
+            and self.connector.document_acceptance.check_start("scientific").allowed
             and not getattr(self.connector, "_calculation_shutdown_started", False)
             and self.request is not None
             and self.jobs.is_current(self.request)
@@ -132,6 +133,9 @@ class ScientificScripts(QObject):
         try:
             request, owned = self.request, self.candidate
             generation = self._run_generation
+            optic = self.connector.get_optic()
+            token = self.connector.document_state.edit_token
+            revision = self.connector._undo_redo_manager.revision
             candidate = owned.restore()
             undo = self.connector._capture_optic_state()
             if (
@@ -140,23 +144,27 @@ class ScientificScripts(QObject):
                 or not self.can_apply()
             ):
                 return False
-            manager = self.connector._undo_redo_manager
-            # Availability listeners must observe the installed model and its
-            # matching history entry together, never an intermediate state.
-            with QSignalBlocker(manager):
-                manager.add_state(undo)
-            self.connector._optic = candidate
-            self.connector.set_modified(True)
-            self.candidate = None
-            self.connector.notify_change("replacement")
-            manager.undoStackAvailabilityChanged.emit(manager.can_undo())
-            manager.redoStackAvailabilityChanged.emit(manager.can_redo())
+            self.connector.document_acceptance.publish(
+                candidate,
+                owner="scientific",
+                expected_optic=optic,
+                expected_edit_token=token,
+                expected_history_revision=revision,
+                validate=lambda: (
+                    self.request is request
+                    and self.candidate is owned
+                    and self._run_generation == generation
+                    and self.jobs.is_current(request)
+                    and request.context == self.connector.document_state.edit_token
+                ),
+                undo=undo,
+            )
+            if self.candidate is owned:
+                self.candidate = None
             if self.request is request and self._run_generation == generation:
                 self.candidate_changed.emit(False)
             if self.request is request and self._run_generation == generation:
-                self.status_changed.emit(
-                    "Script result applied. Undo is available.", False
-                )
+                self.status_changed.emit("Script result applied. Undo is available.", False)
             return True
         except Exception as exc:
             self.status_changed.emit(f"Unable to apply script result: {exc}", False)

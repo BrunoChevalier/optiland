@@ -6,6 +6,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from optiland_gui.services.document_acceptance import DocumentAcceptance
 from optiland_gui.services.surface_service import SurfaceService
 
 
@@ -17,6 +18,7 @@ def mock_connector(minimal_optic):
     conn._capture_optic_state.return_value = {}
     conn._restore_optic_state.return_value = None
     conn._undo_redo_manager = MagicMock()
+    conn.document_acceptance = MagicMock(spec=DocumentAcceptance)
     conn.set_modified.return_value = None
     conn.opticChanged = MagicMock()
     conn.opticChanged.emit.return_value = None

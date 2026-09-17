@@ -80,6 +80,7 @@ class MemoryMaterials(QObject):
 
     def remove_source(self, source_id):
         self.accepted.pop(source_id, None)
+        self.errors.pop(source_id, None)
         self.source_removed.emit(source_id)
 
     def query(self, query):
@@ -106,11 +107,35 @@ class Jobs(QObject):
     stopped = Signal()
 
 
+class NoTargetApply(QObject):
+    """Keep browser-only fixtures detached from document mutation services."""
+
+    state_changed = Signal()
+    finished = Signal(object)
+    target = None
+    busy = False
+
+    def can_apply(self, key, stamp):
+        return SimpleNamespace(
+            allowed=False, message="Choose a medium from the editor."
+        )
+
+    def refresh_target(self):
+        return self.can_apply(None, None)
+
+    def cancel(self):
+        pass
+
+    def submit(self, key, stamp):
+        raise AssertionError("A browser without a captured target cannot apply")
+
+
 def make_connector(surfaces=()):
     optic = SimpleNamespace(surfaces=list(surfaces))
     return SimpleNamespace(
         document_state=DocumentState(),
         materials=MemoryMaterials(),
+        material_apply=NoTargetApply(),
         calculation_jobs=Jobs(),
         get_optic=lambda: optic,
     )

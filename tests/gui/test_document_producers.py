@@ -71,25 +71,48 @@ def test_system_property_actions_commit_once_and_refresh_their_tables(qapp):
         panel.deleteLater()
 
 
-def test_expanded_parameter_refresh_retains_focused_draft(qapp, minimal_optic):
+@pytest.mark.parametrize("has_focus", [True, False])
+def test_expanded_parameter_refresh_retains_focused_draft(
+    qapp, minimal_optic, has_focus
+):
     connector = OptilandConnector()
     connector.load_optic_from_object(minimal_optic)
     connector.set_surface_type(1, "biconic")
+    connector.set_surface_geometry_params(1, {"Radius X": "50.123456789"})
     editor = LensEditor(connector)
     editor.resize(1000, 500)
     editor.show()
     editor.toggle_properties_widget(1)
     try:
         properties = editor.tableWidget.cellWidget(2, 0)
+        properties.tabs.setCurrentIndex(1)
+        qapp.processEvents()
+        editor.activateWindow()
         focused = properties.input_widgets["Radius X"]
-        focused.setFocus()
+        (focused if has_focus else editor.tableWidget).setFocus()
         QTest.qWait(10)
+        assert focused.hasFocus() == has_focus
         focused.setText("Uncommitted radius draft")
+        draft = properties.capture_shape_draft()
         connector.set_surface_geometry_params(1, {"Conic X": "-0.25"})
-        assert focused.hasFocus()
+        assert focused.hasFocus() == has_focus
         assert focused.text() == "Uncommitted radius draft"
         assert float(properties.input_widgets["Conic X"].text()) == -0.25
         assert editor.tableWidget.cellWidget(2, 0) is properties
+        assert properties.capture_shape_draft() == draft
+        assert "design changed" in properties.shape_status.text()
+        assert float(properties.surface.geometry.Rx) == 50.123456789
+        token = connector.document_state.edit_token
+        revision = connector._undo_redo_manager.revision
+        properties.apply_changes()
+        assert connector.document_state.edit_token == token
+        assert connector._undo_redo_manager.revision == revision
+        properties.reload_shape()
+        assert not properties.capture_shape_draft()["changes"]
+        assert float(focused.text()) == 50.123456789
+        assert float(properties.surface.geometry.Rx) == 50.123456789
     finally:
         editor.close()
         editor.deleteLater()
+        connector.calculation_jobs.shutdown()
+        connector.deleteLater()

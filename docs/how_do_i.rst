@@ -88,6 +88,14 @@ Build a system
      - :doc:`gallery/miscellaneous/eye`
    * - pick a material, or use a specific glass catalog?
      - :doc:`Tutorial 1c <examples/Tutorial_1c_Material_Database_and_Catalogs>`
+   * - find and inspect an exact glass in the desktop GUI?
+     - :doc:`Materials workspace <gui_materials>` and
+       :doc:`the desktop Materials tutorial <gui_materials_tutorial>`
+   * - match a patent's refractive index and Abbe number with separate tolerances?
+     - :doc:`The desktop Materials tutorial <gui_materials_tutorial>`
+   * - apply a local catalog glass to a surface and save it with the lens?
+     - :doc:`Materials workspace <gui_materials>` and
+       :doc:`the desktop Materials tutorial <gui_materials_tutorial>`
    * - design an infrared or lithographic system?
      - :doc:`gallery/specialized_lenses/infrared`,
        :doc:`Tutorial 4e <examples/Tutorial_4e_Lithographic_Projection_System>`

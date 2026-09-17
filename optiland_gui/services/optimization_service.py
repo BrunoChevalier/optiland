@@ -784,6 +784,10 @@ class OptimizationService(QObject):
             return
 
         self._callbacks = (on_progress, on_finished, on_error)
+        check = self._connector.document_acceptance.check_start("optimization")
+        if not check.allowed:
+            self._emit_error(check.message)
+            return
         optic = self._connector._optic
         if optic is None:
             self._emit_error("Open an optical system before running optimization.")
@@ -882,12 +886,12 @@ class OptimizationService(QObject):
             if current and data["converged"]:
                 try:
                     candidate = data["candidate"].restore()
+                    self._commit(candidate, pickle.loads(request.snapshot.data))
                 except Exception as exc:
                     self._emit_error(
                         f"Could not restore the optimized candidate: {exc}"
                     )
                     return
-                self._commit(candidate, pickle.loads(request.snapshot.data))
                 outcome = "Optimization converged and was applied."
             else:
                 self._candidate = data
@@ -916,10 +920,19 @@ class OptimizationService(QObject):
             callback(summary)
 
     def _commit(self, candidate: Optic, previous: dict) -> None:
-        self._connector._optic = candidate
-        self._connector._undo_redo_manager.add_state(previous)
-        self._connector.set_modified(True)
-        self._connector.notify_change("replacement")
+        self._connector.document_acceptance.publish(
+            candidate,
+            owner="optimization",
+            expected_optic=self._connector.get_optic(),
+            expected_edit_token=self._request.context["edit_token"],
+            expected_history_revision=self._connector._undo_redo_manager.revision,
+            validate=lambda: (
+                self._request is not None
+                and self._connector.calculation_jobs.is_current(self._request)
+                and self._definitions_match(self._request)
+            ),
+            undo=previous,
+        )
 
     def _definitions_match(self, request: JobRequest) -> bool:
         return (

@@ -141,6 +141,7 @@ class SystemService:
             raise ValueError(f"Unknown polarization mode: {mode}")
         if self._same_polarization(optic.polarization, state):
             return
+        self._connector.document_acceptance.assert_mutation_allowed()
         old_state = optic.to_dict()
         optic.updater.set_polarization(state)
         self._connector._undo_redo_manager.add_state(old_state)

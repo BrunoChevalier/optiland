@@ -22,6 +22,10 @@ New to Optiland? Start with :ref:`start_here` to find the path that fits your go
    Tutorial 1d: Saving and Loading <examples/Tutorial_1d_Saving_and_Loading>
    Tutorial 1e: Design a Doublet, End to End <examples/Tutorial_1e_Design_a_Doublet_End_to_End>
 
+For an interactive desktop counterpart to the material catalog notebook, follow
+:doc:`gui_materials_tutorial`. It uses the native Materials workspace and includes
+downloadable sample files; it does not run inside the browser notebook viewer.
+
 
 2. Real Raytracing & Analysis
 -----------------------------

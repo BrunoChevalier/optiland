@@ -1,0 +1,11 @@
+# Synthetic teaching model; not a manufactured glass or supplier data.
+REFERENCE: Optiland Materials tutorial, synthetic RII example
+COMMENTS: Same display name as the GLC example; these are different optical models.
+DATA:
+  - type: formula 5
+    wavelength_range: 0.4 0.8
+    coefficients: 1.5 0.02 -2
+SPECS:
+  n_is_absolute: false
+  wavelength_is_vacuum: false
+  temperature: 20.0 °C

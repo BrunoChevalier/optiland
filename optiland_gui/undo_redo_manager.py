@@ -69,7 +69,7 @@ class UndoRedoManager(QObject):
             self.emit_availability()
         return state
 
-    def add_state(self, state_data: object) -> None:
+    def add_state(self, state_data: object, *, notify=True) -> None:
         """Push *state_data* onto the undo stack.
 
         Call this with the state of the object **before** a change is made.
@@ -82,13 +82,14 @@ class UndoRedoManager(QObject):
         self._undo_stack.append(state_data)
         self._redo_stack.clear()
         self.revision += 1
-        self.undoStackAvailabilityChanged.emit(self.can_undo())
-        self.redoStackAvailabilityChanged.emit(self.can_redo())
-        logger.debug(
-            "State added. Undo stack: %d, Redo stack: %d",
-            len(self._undo_stack),
-            len(self._redo_stack),
-        )
+        if notify:
+            self.emit_availability()
+        if notify:
+            logger.debug(
+                "State added. Undo stack: %d, Redo stack: %d",
+                len(self._undo_stack),
+                len(self._redo_stack),
+            )
 
     def undo(self, current_state_for_redo: object) -> object | None:
         """Perform an undo and return the state to restore.

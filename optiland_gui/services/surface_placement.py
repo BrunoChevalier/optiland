@@ -14,7 +14,6 @@ class SurfacePlacement(QObject):
     """Apply finite placement drafts only to the document that produced them."""
 
     state_changed = Signal()
-    about_to_apply = Signal(object)
     target = "surface-placement"
 
     def __init__(self, connector):
@@ -31,6 +30,7 @@ class SurfacePlacement(QObject):
         if getattr(self.connector, "_calculation_shutdown_started", False):
             return False
         try:
+            self.connector.document_acceptance.require_start("placement")
             if edit_token != self.connector.document_state.edit_token:
                 raise ValueError(
                     "The design changed. Reload placement before applying."
@@ -56,18 +56,25 @@ class SurfacePlacement(QObject):
                 return False
             snapshot = PreparedOptic.capture(self.connector.get_optic())
             undo = self.connector._capture_optic_state()
+            self.busy = True
             self.request = self.jobs.submit(
                 self.target,
                 "optiland_gui.services.placement_tasks:prepare_placement",
                 snapshot,
                 {"row": row, "frame": frame, "changes": changes},
-                context=(edit_token, undo),
+                context=(
+                    edit_token,
+                    undo,
+                    self.connector.get_optic(),
+                    self.connector._undo_redo_manager.revision,
+                ),
             )
             self.busy = True
             self.message = "Applying placement…"
             self.state_changed.emit()
             return True
         except Exception as exc:
+            self.busy = False
             self.message = str(exc)
             self.state_changed.emit()
             return False
@@ -90,7 +97,7 @@ class SurfacePlacement(QObject):
         self.busy = False
         self.message = "Placement cancelled. The design was preserved."
         if result.status == "succeeded":
-            token, undo = request.context
+            token, undo, optic, revision = request.context
             if (
                 not result.current
                 or not self.jobs.is_current(request)
@@ -107,12 +114,22 @@ class SurfacePlacement(QObject):
                         self.connector.get_optic().surfaces
                     ):
                         raise ValueError("Placement changed the surface structure.")
-                    self.about_to_apply.emit(candidate)
-                    self.connector._undo_redo_manager.add_state(undo)
-                    self.connector._optic = candidate
+                    self.connector.document_acceptance.publish(
+                        candidate,
+                        owner="placement",
+                        expected_optic=optic,
+                        expected_edit_token=token,
+                        expected_history_revision=revision,
+                        validate=lambda: (
+                            self.jobs.is_current(request)
+                            and token == self.connector.document_state.edit_token
+                        ),
+                        undo=undo,
+                        row_mapping=tuple(
+                            (i, i) for i in range(len(candidate.surfaces))
+                        ),
+                    )
                     self.message = "Placement applied. Undo is available."
-                    self.connector.set_modified(True)
-                    self.connector.notify_change("replacement")
                 except Exception as exc:
                     self.message = f"Placement failed: {exc}"
         elif result.status == "failed":

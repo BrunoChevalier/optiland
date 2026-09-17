@@ -123,6 +123,49 @@ def test_unchanged_context_skips_reindex_and_redraw_after_initial_view(
     np.testing.assert_array_equal(chart._diamonds.get_offsets(), [[50, 1.6]])
 
 
+def test_bounds_enter_applies_and_invalid_input_stays_open_until_close(chart, qapp):
+    a = point()
+    chart.set_points((a,))
+    chart.set_selected(a.key)
+    action = next(a for a in chart.toolbar.actions() if a.text().startswith("Bounds"))
+    QTest.mouseClick(chart.toolbar.widgetForAction(action), Qt.MouseButton.LeftButton)
+    dialog = chart._bounds_dialog
+    fields = [
+        dialog.findChild(QLineEdit, "material-map-" + name)
+        for name in ("x-minimum", "x-maximum", "y-minimum", "y-maximum")
+    ]
+    for field, value in zip(fields, (20.0, 80.0, 1.4, 1.9), strict=True):
+        field.setFocus()
+        QTest.keyClick(field, Qt.Key.Key_A, Qt.KeyboardModifier.ControlModifier)
+        QTest.keyClicks(field, field.locale().toString(value, "g", 8))
+    QTest.keyClick(fields[-1], Qt.Key.Key_Return)
+    assert dialog.isVisible()
+    assert chart.ax.get_xlim() == (80, 20)
+    assert chart.ax.get_ylim() == (1.4, 1.9)
+    assert chart._selected == a.key
+    fields[0].setFocus()
+    QTest.keyClick(fields[0], Qt.Key.Key_A, Qt.KeyboardModifier.ControlModifier)
+    QTest.keyClicks(fields[0], "invalid")
+    QTest.keyClick(fields[0], Qt.Key.Key_Return)
+    assert dialog.isVisible()
+    assert chart.ax.get_xlim() == (80, 20)
+    assert (
+        "Enter a number" in dialog.findChild(QLabel, "material-map-bounds-error").text()
+    )
+    QTest.keyClick(fields[0], Qt.Key.Key_Escape)
+    assert not dialog.isVisible()
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    assert chart._bounds_dialog is None
+    QTest.mouseClick(chart.toolbar.widgetForAction(action), Qt.MouseButton.LeftButton)
+    dialog = chart._bounds_dialog
+    buttons = dialog.findChild(QDialogButtonBox)
+    QTest.mouseClick(
+        buttons.button(QDialogButtonBox.StandardButton.Close), Qt.MouseButton.LeftButton
+    )
+    assert not dialog.isVisible()
+    assert chart._selected == a.key
+
+
 def test_filtering_preserves_view_and_hidden_selection_until_explicit_reset(chart):
     a, b = point(), point("B", 40, 1.7)
     chart.set_points((a, b))

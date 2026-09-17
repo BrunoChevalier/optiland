@@ -212,9 +212,15 @@ class PanelManager:
 
     def connect_signals(self) -> None:
         """Connect signals for the managed panels."""
+        self.connector.requestBrowseMaterials.connect(self._browse_materials)
         self.sidebar_content_widget.menuSelected.connect(self.on_sidebar_menu_selected)
         self.sidebar_content_widget.showWipMessage.connect(self._on_sidebar_wip_message)
         self.python_terminal.commandExecuted.connect(self.connector.opticChanged.emit)
+
+    def _browse_materials(self, surface: object) -> None:
+        self.connector.material_apply.set_target(surface)
+        self.materials_dock.show()
+        self.materials_dock.raise_()
 
     def _on_sidebar_wip_message(self, message: str) -> None:
         """Forward a WIP message from the sidebar to the toast manager.

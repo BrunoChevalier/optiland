@@ -134,15 +134,16 @@ class FileService:
         initialises a default 3-surface structure, and emits the appropriate
         signals.
         """
-        self.operations.cancel_load()
-        self._connector._undo_redo_manager.clear_stacks()
-        self._connector._optic = Optic("New Untitled System")
-        self._connector._initialize_optic_structure(
-            self._connector._optic, is_specific_new_system=True
-        )
-        self._current_filepath = None
-        self._connector.set_modified(False)
-        self._connector.notify_change("replacement")
+        try:
+            self._connector.document_acceptance.require_start("file")
+            self.operations.cancel_load()
+            candidate = Optic("New Untitled System")
+            self._connector._initialize_optic_structure(
+                candidate, is_specific_new_system=True
+            )
+            self._publish_candidate(candidate, None, modified=False, validated=True)
+        except Exception as exc:
+            self._toast(f"Unable to create a new system: {exc}", "error")
 
     def load(self, filepath: str) -> None:
         """Load an optical system from *filepath*.
@@ -154,8 +155,9 @@ class FileService:
         Args:
             filepath: Absolute path to the file to load.
         """
-        self.operations.cancel_load()
         try:
+            self._connector.document_acceptance.require_start("file")
+            self.operations.cancel_load()
             _name, extension = os.path.splitext(filepath)
             if extension.lower() == ".zmx":
                 candidate = load_zemax_file(filepath)
@@ -180,6 +182,7 @@ class FileService:
             filepath: Absolute path to write to.
         """
         try:
+            self._connector.document_acceptance.require_start("file")
             if self.operations.path_busy(filepath):
                 raise RuntimeError(
                     "An asynchronous save to this path is still running."
@@ -200,6 +203,7 @@ class FileService:
                 ) as f:
                     temporary = f.name
                     json.dump(data, f, indent=4, cls=SpecialFloatEncoder)
+                self._connector.document_acceptance.require_start("file")
                 os.replace(temporary, destination)
                 temporary = None
             finally:
@@ -221,6 +225,7 @@ class FileService:
             optic_instance: An instantiated :class:`~optiland.optic.Optic` to load.
         """
         try:
+            self._connector.document_acceptance.require_start("file")
             optic_data = optic_instance.to_dict()
             candidate = Optic.from_dict(optic_data)
             self._publish_candidate(candidate, None, modified=True)
@@ -237,6 +242,7 @@ class FileService:
             filepath: Path to the ``.zmx`` file to import.
         """
         try:
+            self._connector.document_acceptance.require_start("file")
             candidate = load_zemax_file(filepath)
             self._publish_candidate(candidate, None, modified=True)
         except Exception as e:
@@ -252,6 +258,7 @@ class FileService:
             filepath: Path to the ``.seq`` file to import.
         """
         try:
+            self._connector.document_acceptance.require_start("file")
             candidate = load_codev_file(filepath)
             self._publish_candidate(candidate, None, modified=True)
         except Exception as e:
@@ -271,8 +278,9 @@ class FileService:
         native filename, modified flag or undo history. Diagnostics use the
         notification service; the returned error lets import options stay open.
         """
-        self.operations.cancel_load()
         try:
+            self._connector.document_acceptance.require_start("file")
+            self.operations.cancel_load()
             with warnings.catch_warnings(record=True) as diagnostics:
                 warnings.simplefilter("always")
                 candidate = load_oslo_file(
@@ -284,16 +292,12 @@ class FileService:
                 self._connector._initialize_optic_structure(
                     candidate, is_specific_new_system=False
                 )
+            self._publish_candidate(candidate, None, modified=True, validated=True)
         except Exception as exc:
             error = str(exc) or type(exc).__name__
             self._toast(f"OSLO import failed: {error}", "error")
             return error
 
-        self._connector._optic = candidate
-        self._current_filepath = None
-        self._connector._undo_redo_manager.clear_stacks()
-        self._connector.set_modified(True)
-        self._connector.notify_change("replacement")
         for message in dict.fromkeys(str(item.message) for item in diagnostics):
             self._toast(message, "warning")
         self._toast(f"Imported OSLO lens — {os.path.basename(filepath)}", "success")
@@ -309,6 +313,7 @@ class FileService:
             filepath: Destination path for the ``.zmx`` file.
         """
         try:
+            self._connector.document_acceptance.require_start("file")
             if self.operations.path_busy(filepath):
                 raise RuntimeError(
                     "An asynchronous save to this path is still running."
@@ -331,6 +336,7 @@ class FileService:
             filepath: Destination path for the ``.seq`` file.
         """
         try:
+            self._connector.document_acceptance.require_start("file")
             if self.operations.path_busy(filepath):
                 raise RuntimeError(
                     "An asynchronous save to this path is still running."
@@ -354,8 +360,10 @@ class FileService:
 
     def _publish_candidate(self, candidate, filepath, *, modified, validated=False):
         """Validate before changing document ownership, history or path state."""
+        self._connector.document_acceptance.require_start("file")
         if not validated:
             self._connector._initialize_optic_structure(candidate)
+        self._connector.document_acceptance.require_start("file")
         self._connector._optic = candidate
         self._connector._undo_redo_manager.clear_stacks()
         self._current_filepath = filepath

@@ -18,6 +18,7 @@ from PySide6.QtCore import QObject, QTimer, Signal
 from optiland.optic import Optic
 from optiland_gui.services.analysis_runner import AnalysisRunner
 from optiland_gui.services.calculation_jobs import CalculationJobs, DocumentState
+from optiland_gui.services.document_acceptance import DocumentAcceptance
 from optiland_gui.services.file_service import (
     FileService,
     SpecialFloatEncoder,  # re-exported for backward compat
@@ -25,6 +26,7 @@ from optiland_gui.services.file_service import (
 )
 from optiland_gui.services.history_service import HistoryService
 from optiland_gui.services.job_records import BackendConfig
+from optiland_gui.services.material_apply import MaterialApplyService
 from optiland_gui.services.materials_service import MaterialsService
 from optiland_gui.services.optimization_service import OptimizationService
 from optiland_gui.services.surface_placement import SurfacePlacement
@@ -60,6 +62,7 @@ class OptilandConnector(QObject):
     redoStackAvailabilityChanged = Signal(bool)
     optimizationVariablesChanged = Signal()
     requestAddOptimizationVariable = Signal(int, str)  # surface_index, suggested_type
+    requestBrowseMaterials = Signal(object)
 
     # ------------------------------------------------------------------
     # Class-level constants (used by LensEditor and other panels)
@@ -104,6 +107,7 @@ class OptilandConnector(QObject):
 
         self._optic = Optic("Default System")
         self._undo_redo_manager = UndoRedoManager(self)
+        self.document_acceptance = DocumentAcceptance(self)
         self.history = HistoryService(self)
         self.placement = SurfacePlacement(self)
 
@@ -114,6 +118,7 @@ class OptilandConnector(QObject):
         self._system_service = SystemService(self)
         self._analysis_runner = AnalysisRunner(self)
         self._optimization_service = OptimizationService(self)
+        self.material_apply = MaterialApplyService(self)
 
         self._initialize_optic_structure(self._optic, is_specific_new_system=True)
         self._is_modified = False
@@ -295,6 +300,7 @@ class OptilandConnector(QObject):
         Args:
             state_data: A dict returned by :meth:`_capture_optic_state`.
         """
+        self.document_acceptance.require_start("history")
         candidate = Optic.from_dict(state_data)
         self._initialize_optic_structure(candidate, is_specific_new_system=False)
         self._optic = candidate
@@ -313,17 +319,25 @@ class OptilandConnector(QObject):
         self._apply_history("redo")
 
     def _apply_history(self, direction):
+        self.document_acceptance.require_start("history")
         state = self._undo_redo_manager.peek(direction)
         if state is None:
             return
         current = self._capture_optic_state()
+        optic = self._optic
+        token = self.document_state.edit_token
+        revision = self._undo_redo_manager.revision
         candidate = Optic.from_dict(state)
         self._initialize_optic_structure(candidate, is_specific_new_system=False)
-        self._undo_redo_manager.move(direction, current, notify=False)
-        self._optic = candidate
-        self.notify_change("replacement")
-        self.set_modified(True)
-        self._undo_redo_manager.emit_availability()
+        self.document_acceptance.publish(
+            candidate,
+            owner="history",
+            expected_optic=optic,
+            expected_edit_token=token,
+            expected_history_revision=revision,
+            validate=lambda: self._undo_redo_manager.peek(direction) is state,
+            history_move=(direction, state, current),
+        )
 
     def request_undo(self):
         """Prepare Undo asynchronously for an interactive GUI action."""

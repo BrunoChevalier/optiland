@@ -46,6 +46,26 @@ def transform(surface):
     return be.to_numpy(position).copy(), be.to_numpy(rotation).copy()
 
 
+def test_prepared_mapping_rejects_same_count_surface_reordering(
+    minimal_optic, monkeypatch
+):
+    from optiland.optic.optic_updater import OpticUpdater
+
+    snapshot = PreparedOptic.capture(minimal_optic)
+
+    def reorder(updater):
+        updater.optic.surfaces._surfaces.reverse()
+
+    monkeypatch.setattr(OpticUpdater, "update", reorder)
+    with pytest.raises(ValueError, match="identity or order"):
+        prepare_placement(
+            snapshot,
+            {"row": 1, "frame": "reference", "changes": {"x": 1}},
+            lambda *args: None,
+            Event(),
+        )
+
+
 def test_reference_global_rotation_and_single_surface_scope(backend, minimal_optic):
     optic = minimal_optic
     parent = CoordinateSystem(x=3, y=-7, z=14, rx=0.4, ry=-0.2, rz=0.3)

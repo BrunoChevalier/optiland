@@ -115,6 +115,7 @@ def prepare_placement(snapshot, parameters, progress, cancelled):
     check_cancelled(cancelled)
     progress("Preparing surface placement")
     optic = snapshot.restore()
+    original_surfaces = tuple(optic.surfaces)
     initially_finite = [
         [math.isfinite(float(getattr(surface.geometry.cs, key))) for key in COMPONENTS]
         for surface in optic.surfaces
@@ -127,6 +128,11 @@ def prepare_placement(snapshot, parameters, progress, cancelled):
         progress("Updating solves and pickups")
         optic.updater.update()
     check_cancelled(cancelled)
+    if len(optic.surfaces) != len(original_surfaces) or any(
+        before is not after
+        for before, after in zip(original_surfaces, optic.surfaces, strict=True)
+    ):
+        raise ValueError("Placement preparation changed surface identity or order.")
     for row, surface in enumerate(optic.surfaces):
         for key, was_finite in zip(COMPONENTS, initially_finite[row], strict=True):
             if (was_finite or row == parameters["row"]) and not math.isfinite(

@@ -569,6 +569,11 @@ class GlassMap(QWidget):
             | QDialogButtonBox.StandardButton.Close,
             parent=dialog,
         )
+        apply_button = buttons.button(QDialogButtonBox.StandardButton.Apply)
+        apply_button.setDefault(True)
+        close_button = buttons.button(QDialogButtonBox.StandardButton.Close)
+        close_button.setAutoDefault(False)
+        close_button.setDefault(False)
         buttons.rejected.connect(dialog.close)
         layout.addWidget(buttons)
 
@@ -586,7 +591,7 @@ class GlassMap(QWidget):
             else:
                 error.setText("View updated. Selection is unchanged.")
 
-        buttons.button(QDialogButtonBox.StandardButton.Apply).clicked.connect(apply)
+        apply_button.clicked.connect(apply)
         dialog.destroyed.connect(self._bounds_closed)
         self._bounds_dialog = dialog
         dialog.open()

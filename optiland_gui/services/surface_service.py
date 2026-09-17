@@ -489,6 +489,7 @@ class SurfaceService:
         """
         if not (0 <= row < self.get_surface_count()):
             return
+        self._connector.document_acceptance.assert_mutation_allowed()
         if col_idx == self._connector.COL_THICKNESS:
             self._check_thickness_origin()
         if col_idx == self._connector.COL_COMMENT and not (
@@ -551,6 +552,7 @@ class SurfaceService:
         if new_type not in self.AVAILABLE_SURFACE_TYPES:
             return
 
+        self._connector.document_acceptance.assert_mutation_allowed()
         old_state = self._connector._capture_optic_state()
         try:
             surface = self._connector._optic.surfaces.surfaces[row]
@@ -600,6 +602,7 @@ class SurfaceService:
             index: Insertion index in the surface list. ``-1`` (default) inserts
                 before the image surface.
         """
+        self._connector.document_acceptance.assert_mutation_allowed()
         old_state = self._connector._capture_optic_state()
         num_rows = self.get_surface_count()
         insert_idx = num_rows - 1 if index == -1 or index >= num_rows else index
@@ -631,6 +634,7 @@ class SurfaceService:
             logger.warning("SurfaceService: Cannot remove Object or Image surface.")
             return
 
+        self._connector.document_acceptance.assert_mutation_allowed()
         old_state = self._connector._capture_optic_state()
         try:
             self._connector._optic.surfaces.remove(lde_row_index)
@@ -653,6 +657,7 @@ class SurfaceService:
         if self._connector._optic.surfaces.stop_index == row:
             return
 
+        self._connector.document_acceptance.assert_mutation_allowed()
         old_state = self._connector._capture_optic_state()
         try:
             self._connector._optic.surfaces.stop_index = row
@@ -833,6 +838,7 @@ class SurfaceService:
         if not (0 < row < self.get_surface_count() - 1):
             return
 
+        self._connector.document_acceptance.assert_mutation_allowed()
         old_state = self._connector._capture_optic_state()
         try:
             surface = self._connector._optic.surfaces.surfaces[row]

@@ -57,6 +57,8 @@ from optiland_gui.models.materials_model import (
 )
 from optiland_gui.services.material_browser import MaterialBrowserSources
 from optiland_gui.widgets.glass_map import GlassMap, MapPoint
+from optiland_gui.widgets.material_apply_footer import MaterialApplyFooter
+from optiland_gui.widgets.material_source_controls import MaterialSourceControls
 
 if TYPE_CHECKING:
     from PySide6.QtGui import QHideEvent, QResizeEvent, QShowEvent
@@ -222,11 +224,8 @@ class MaterialsPanel(QWidget):
         )
         self.conditions_notice.setWordWrap(True)
         browse_layout.addWidget(self.conditions_notice)
-        self.footer = QWidget(self)
-        self.footer_layout = QHBoxLayout(self.footer)
-        self.footer_layout.setContentsMargins(0, 0, 0, 0)
+        self.footer = MaterialApplyFooter(self.connector.material_apply, self)
         layout.addWidget(self.footer)
-        self.footer.hide()
 
     def _make_filters(self) -> QScrollArea:
         content = QWidget(self)
@@ -250,6 +249,8 @@ class MaterialsPanel(QWidget):
         self.source_actions.addWidget(self.reload_button)
         self.source_actions.addWidget(self.stop_button)
         form.addLayout(self.source_actions)
+        self.source_controls = MaterialSourceControls(self.sources, self)
+        form.addWidget(self.source_controls)
         self.context_check = QCheckBox("Show current-design context", self)
         self.context_check.setChecked(True)
         form.addWidget(self.context_check)
@@ -317,6 +318,10 @@ class MaterialsPanel(QWidget):
     def _connect_signals(self) -> None:
         self.name_search.textChanged.connect(self.queue_query)
         self.catalogs.itemChanged.connect(self._catalog_changed)
+        self.catalogs.currentItemChanged.connect(self._selected_source_changed)
+        self.source_controls.message.connect(self.status.setText)
+        self.source_controls.changed.connect(self._rebuild_catalogs)
+        self.source_controls.selection_requested.connect(self._select_source)
         self.all_catalogs.clicked.connect(lambda: self._set_all_catalogs(True))
         self.no_catalogs.clicked.connect(lambda: self._set_all_catalogs(False))
         self.find_button.clicked.connect(self.find_matches)
@@ -395,12 +400,18 @@ class MaterialsPanel(QWidget):
         QApplication.clipboard().setText("\t".join(headers) + "\n" + "\t".join(values))
 
     def _rebuild_catalogs(self) -> None:
+        selected_source = self._selected_source_id()
         blocker = QSignalBlocker(self.catalogs)
         self.catalogs.clear()
+        self._diagnostic_sources = {
+            source_id
+            for source_id in self._diagnostic_sources
+            if self.service.source_error(source_id)
+        }
         source_ids = dict.fromkeys((*self.service.source_ids, *self.sources.requests))
+        visible_catalogs = set()
         for source_id in sorted(self._diagnostic_sources):
-            if self.service.source_error(source_id):
-                source_ids[source_id] = None
+            source_ids[source_id] = None
         for source_id in source_ids:
             if source_id.startswith("design:"):
                 continue
@@ -443,8 +454,11 @@ class MaterialsPanel(QWidget):
                 | Qt.ItemFlag.ItemIsUserCheckable
             )
             self.catalogs.addTopLevelItem(parent)
+            if source_id == selected_source:
+                self.catalogs.setCurrentItem(parent)
             for name in names:
                 key = (source_id, name)
+                visible_catalogs.add(key)
                 selected = self._catalog_choices.setdefault(
                     key, self._catalog_default_checked
                 )
@@ -455,7 +469,31 @@ class MaterialsPanel(QWidget):
                     0, Qt.CheckState.Checked if selected else Qt.CheckState.Unchecked
                 )
             parent.setExpanded(True)
+        self._catalog_choices = {
+            key: value
+            for key, value in self._catalog_choices.items()
+            if key in visible_catalogs
+        }
         del blocker
+        self._selected_source_changed()
+
+    def _selected_source_id(self) -> str | None:
+        item = self.catalogs.currentItem()
+        if item is None:
+            return None
+        parent = item.parent() or item
+        return parent.data(0, Qt.ItemDataRole.UserRole)
+
+    def _selected_source_changed(self, *args: object) -> None:
+        self.source_controls.set_selected_source(self._selected_source_id())
+
+    def _select_source(self, source_id: str) -> None:
+        for index in range(self.catalogs.topLevelItemCount()):
+            item = self.catalogs.topLevelItem(index)
+            if item.data(0, Qt.ItemDataRole.UserRole) == source_id:
+                self.catalogs.setCurrentItem(item)
+                self.catalogs.scrollToItem(item)
+                return
 
     def _catalog_changed(self, item: QTreeWidgetItem, column: int) -> None:
         for top in range(self.catalogs.topLevelItemCount()):
@@ -512,6 +550,8 @@ class MaterialsPanel(QWidget):
     def _jobs_stopped(self) -> None:
         self._closed = True
         self._plot_points.clear()
+        self.footer.close_service()
+        self.source_controls.close_service()
         self._query_timer.stop()
         self.setEnabled(False)
 
@@ -732,6 +772,9 @@ class MaterialsPanel(QWidget):
 
     def _show_inspector(self) -> None:
         record = self.selected_material
+        source = self.service.source_result(record.key.source_id) if record else None
+        stamp = source.snapshot.stamps[0] if source is not None else None
+        self.footer.set_selection(self._selected_key, stamp)
         available = record is not None
         if record is not None:
             self._selected_record = record
@@ -812,14 +855,7 @@ class MaterialsPanel(QWidget):
             error = self.service.source_error(record.key.source_id)
             if error:
                 lines.extend(("", "Source reload failed; using previous data", error))
-            request = self.sources.requests.get(record.key.source_id)
-            kind = (
-                "Current-design material occurrence"
-                if record.key.source_id.startswith("design:")
-                else type(request).__name__
-                if request is not None
-                else "Captured source"
-            )
+            kind = self.sources.source_kind(record.key.source_id)
             lines.append(f"Source kind: {kind}")
             lines.append(f"Source fingerprint: {source.snapshot.stamps[0].generation}")
             lines.extend(

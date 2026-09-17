@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from PySide6.QtCore import QSettings
+from PySide6.QtCore import QSettings, Signal
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import QMainWindow, QMenuBar, QWidget
 
@@ -31,6 +31,8 @@ def test_materials_managed_dock_view_palette_and_theme(
     import optiland_gui.panel_manager as module
 
     class Panel(QWidget):
+        commandExecuted = Signal()
+
         def __init__(self, *args, **kwargs):
             super().__init__()
             self.viewer2D = SimpleNamespace(set_interaction_state=lambda _: None)
@@ -59,6 +61,7 @@ def test_materials_managed_dock_view_palette_and_theme(
     manager = PanelManager(window, highlighting_connector)
     manager.create_all_panels(window)
     manager.materials_panel._autoload = False
+    manager.connect_signals()
     manager.setup_default_layout()
     window.show()
     assert manager.materials_dock in manager.get_all_docks()
@@ -89,5 +92,14 @@ def test_materials_managed_dock_view_palette_and_theme(
     manager.materials_dock.hide()
     command.callback()
     assert manager.materials_dock.isVisible()
+    manager.materials_dock.hide()
+    target = highlighting_connector.get_optic().surfaces[1]
+    highlighting_connector.requestBrowseMaterials.emit(target)
+    assert manager.materials_dock.isVisible()
+    assert highlighting_connector.material_apply.target.surface is target
+    assert "surface 1" in manager.materials_panel.footer.target_label.text().lower()
+    manager.on_sidebar_menu_selected("design")
+    manager.on_sidebar_menu_selected("materials")
+    assert highlighting_connector.material_apply.target.surface is target
     window.hide()
     window.deleteLater()

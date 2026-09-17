@@ -67,8 +67,25 @@ class FileOperations(QObject):
     def has_pending_writes(self):
         return any(operation.kind != "open" for operation in self._operations.values())
 
+    @property
+    def closing(self):
+        """Whether an accepted close intent is draining owned file operations."""
+        return self._closing
+
+    @property
+    def has_pending_load(self):
+        """Include a loaded candidate awaiting conflict resolution."""
+        return self._candidate is not None or any(
+            operation.kind == "open" for operation in self._operations.values()
+        )
+
     def request_load(self, path, file_format=None, *, snapshot=None, load_options=None):
         if self._closing:
+            return None
+        try:
+            self.connector.document_acceptance.require_start("file")
+        except ValueError as exc:
+            self._notify(str(exc), "warning")
             return None
         self._candidate = None
         if file_format is None:
@@ -84,7 +101,9 @@ class FileOperations(QObject):
         if self._closing:
             return None
         try:
+            self.connector.document_acceptance.require_start("file")
             snapshot = OpticSnapshot.capture(self.connector.get_optic())
+            self.connector.document_acceptance.require_start("file")
         except Exception as exc:
             self._notify(f"Unable to capture document: {exc}", "error")
             return None
@@ -200,6 +219,7 @@ class FileOperations(QObject):
 
     def begin_close(self):
         """Finish accepted writes before shutdown; cancel unrelated calculations."""
+        self.connector.material_apply.cancel()
         self._closing = True
         self._close_edit_token = self.connector.document_state.edit_token
         self._candidate = None
@@ -312,10 +332,20 @@ class FileOperations(QObject):
                     )
                 self._complete(operation)
         else:
-            operation.digest = result.data["digest"]
-            operation.staged_identity = tuple(result.data["staged_identity"])
-            operation.phase = "publishing"
-            self._queue(operation, "publish_output")
+            try:
+                # Already-owned writes must drain during close. File ownership
+                # excludes material preparation; the short publication guard
+                # still rejects a reentrant commit.
+                self.connector.document_acceptance.assert_mutation_allowed()
+            except ValueError as exc:
+                self._abort_close(str(exc))
+                self._notify(f"File publication was not started: {exc}", "error")
+                self._cleanup(operation)
+            else:
+                operation.digest = result.data["digest"]
+                operation.staged_identity = tuple(result.data["staged_identity"])
+                operation.phase = "publishing"
+                self._queue(operation, "publish_output")
 
     def resolve_candidate(self, identifier, accept, expected_edit_token):
         if self._candidate is None or self._candidate[0].identifier != identifier:
@@ -339,6 +369,7 @@ class FileOperations(QObject):
             )
             return False
         try:
+            self.connector.document_acceptance.require_start("file")
             snapshot = prepared["snapshot"]
             if not isinstance(snapshot, PreparedOptic):
                 raise ValueError("Invalid prepared optical document.")
@@ -363,10 +394,18 @@ class FileOperations(QObject):
             return False
 
     def _published(self, operation):
-        if operation.kind == "save":
-            self.confirm_saved_document(
-                operation.path, operation.edit_token, operation.save_sequence
+        try:
+            if operation.kind == "save":
+                self.confirm_saved_document(
+                    operation.path, operation.edit_token, operation.save_sequence
+                )
+        except ValueError as exc:
+            self._abort_close(str(exc))
+            self._notify(
+                f"File saved, but active document state was not updated: {exc}", "error"
             )
+            self._cleanup(operation)
+            return
         verb = "Saved" if operation.kind == "save" else "Exported"
         self._notify(f"{verb} — {Path(operation.path).name}", "success")
         self._cleanup(operation)
@@ -383,6 +422,7 @@ class FileOperations(QObject):
             token.document_id == edit_token.document_id
             and sequence > self._confirmed_save_sequence.get(token.document_id, -1)
         ):
+            self.connector.document_acceptance.assert_mutation_allowed()
             self._confirmed_save_sequence[token.document_id] = sequence
             self.service._current_filepath = path
             if token == edit_token:

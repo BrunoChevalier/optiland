@@ -5,7 +5,7 @@ from __future__ import annotations
 from unittest.mock import PropertyMock
 
 import pytest
-from PySide6.QtCore import QCoreApplication, QEvent, QTimer
+from PySide6.QtCore import QCoreApplication, QEvent, QItemSelectionModel, QTimer
 
 import optiland.backend as be
 from optiland.optic import Optic
@@ -344,3 +344,116 @@ def test_multiple_properties_and_drafts_survive_superseded_batches(qapp, monkeyp
     finally:
         editor.deleteLater()
         c.deleteLater()
+
+
+@pytest.mark.parametrize("during_batch", [False, True])
+def test_prepared_mapping_preserves_panels_selection_scroll_and_stale_drafts(
+    qapp, monkeypatch, during_batch
+):
+    from optiland_gui.services.prepared_optic import PreparedOptic
+
+    c = make_large_connector()
+    c.set_surface_type(20, "biconic")
+    c.set_surface_type(70, "biconic")
+    editor = LensEditor(c)
+    editor.resize(1000, 700)
+    editor.show()
+    try:
+        wait_for(qapp, lambda: not editor._table_loading)
+        editor.toggle_properties_widget(20)
+        editor.toggle_properties_widget(70)
+        qapp.processEvents()
+        shape = editor.tableWidget.cellWidget(21, 0)
+        placement = editor.tableWidget.cellWidget(72, 0).placement
+        shape.tabs.setCurrentIndex(1)
+        shape.input_widgets["Conic X"].setText("-0.375")
+        placement.frame.setCurrentIndex(1)
+        placement.inputs["x"].setText("0.75")
+        original = c.get_optic()
+        shape_token = shape.capture_shape_draft()["edit_token"]
+        placement_token = placement._edit_token
+        editor.tableWidget.setCurrentCell(
+            71, c.COL_MATERIAL, QItemSelectionModel.NoUpdate
+        )
+        editor.tableWidget.selectionModel().select(
+            editor.tableWidget.model().index(71, 0),
+            QItemSelectionModel.ClearAndSelect | QItemSelectionModel.Rows,
+        )
+        assert editor.interaction_state.selected_surfaces == (original.surfaces[70],)
+        editor.tableWidget.verticalScrollBar().setValue(600)
+        editor.interaction_state.set_hover(20, c.COL_MATERIAL)
+        scroll = editor.tableWidget.verticalScrollBar().value()
+        candidate = PreparedOptic.capture(original).restore()
+        monkeypatch.setattr(LensEditor, "_BATCH_SECONDS", 0)
+        if during_batch:
+            editor.load_data()
+            assert editor._table_loading
+        c.document_acceptance.publish(
+            candidate,
+            owner="material",
+            expected_optic=original,
+            expected_edit_token=c.document_state.edit_token,
+            expected_history_revision=c._undo_redo_manager.revision,
+            validate=lambda: True,
+            undo=c._capture_optic_state(),
+            row_mapping=tuple((i, i) for i in range(100)),
+            affected_rows=(20,),
+        )
+        wait_for(qapp, lambda: not editor._table_loading)
+        assert editor.open_prop_source_rows == {20, 70}
+        assert editor.interaction_state.selected_surfaces == (candidate.surfaces[70],)
+        assert editor.interaction_state.hovered_surface is candidate.surfaces[20]
+        assert editor.tableWidget.verticalScrollBar().value() == scroll
+        shape = editor.tableWidget.cellWidget(21, 0)
+        placement = editor.tableWidget.cellWidget(72, 0).placement
+        assert shape.surface is candidate.surfaces[20]
+        assert shape.tabs.currentIndex() == 1
+        assert shape.input_widgets["Conic X"].text() == "-0.375"
+        assert shape.capture_shape_draft()["edit_token"] == shape_token
+        assert "design changed" in shape.shape_status.text()
+        assert placement.surface is candidate.surfaces[70]
+        assert placement.frame.currentData() == "reference"
+        assert placement.inputs["x"].text() == "0.75"
+        assert placement._edit_token == placement_token
+        before = c.document_state.edit_token
+        revision = c._undo_redo_manager.revision
+        shape.apply_changes()
+        placement.apply()
+        assert c.document_state.edit_token == before
+        assert c._undo_redo_manager.revision == revision
+        assert float(candidate.surfaces[20].geometry.kx) == 0
+        assert float(candidate.surfaces[70].geometry.cs.x) == 0
+    finally:
+        editor.deleteLater()
+        c.calculation_jobs.shutdown()
+        c.deleteLater()
+        QCoreApplication.sendPostedEvents(None, QEvent.DeferredDelete)
+
+
+def test_unknown_prepared_mapping_drops_old_editor_authority(qapp):
+    from optiland_gui.services.prepared_optic import PreparedOptic
+
+    c = make_large_connector(10)
+    editor = LensEditor(c)
+    try:
+        editor.toggle_properties_widget(2)
+        editor.tableWidget.selectRow(2)
+        original = c.get_optic()
+        candidate = PreparedOptic.capture(original).restore()
+        c.document_acceptance.publish(
+            candidate,
+            owner="material",
+            expected_optic=original,
+            expected_edit_token=c.document_state.edit_token,
+            expected_history_revision=c._undo_redo_manager.revision,
+            validate=lambda: True,
+            undo=c._capture_optic_state(),
+        )
+        assert not editor.open_prop_source_rows
+        assert not editor.interaction_state.selected_surfaces
+        assert editor.interaction_state.hovered_surface is None
+    finally:
+        editor.deleteLater()
+        c.calculation_jobs.shutdown()
+        c.deleteLater()
+        QCoreApplication.sendPostedEvents(None, QEvent.DeferredDelete)

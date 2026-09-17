@@ -26,6 +26,10 @@ class HistoryService(QObject):
         self.jobs.finished.connect(self._finished)
 
     def submit(self, direction):
+        check = self.connector.document_acceptance.check_start("history")
+        if not check.allowed:
+            self.finished.emit("busy", check.message)
+            return None
         manager = self.connector._undo_redo_manager
         state = manager.peek(direction)
         if state is None:
@@ -39,7 +43,9 @@ class HistoryService(QObject):
                 state,
                 direction,
                 pickle.loads(current.data),
+                self.connector.get_optic(),
             )
+            self.busy = True
             self.request = self.jobs.submit(
                 self.target,
                 "optiland_gui.services.history_tasks:prepare_history",
@@ -48,6 +54,7 @@ class HistoryService(QObject):
                 context=context,
             )
         except Exception as exc:
+            self.busy = False
             self.finished.emit("failed", str(exc))
             self.state_changed.emit(self.busy, str(exc))
             return None
@@ -66,7 +73,9 @@ class HistoryService(QObject):
         self.request = None
         status, message = result.status, result.error
         if status == "succeeded":
-            token, revision, expected, direction, current = result.request.context
+            token, revision, expected, direction, current, optic = (
+                result.request.context
+            )
             manager = self.connector._undo_redo_manager
             if (
                 not result.current
@@ -84,11 +93,18 @@ class HistoryService(QObject):
                     candidate = result.data.restore()
                     # No signal dispatch or event processing occurs between the
                     # ownership check, stack move and owned model assignment.
-                    manager.move(direction, current, notify=False)
-                    self.connector._optic = candidate
-                    self.connector.notify_change("replacement")
-                    self.connector.set_modified(True)
-                    manager.emit_availability()
+                    self.connector.document_acceptance.publish(
+                        candidate,
+                        owner="history",
+                        expected_optic=optic,
+                        expected_edit_token=token,
+                        expected_history_revision=revision,
+                        validate=lambda: (
+                            self.jobs.is_current(result.request)
+                            and token == self.connector.document_state.edit_token
+                        ),
+                        history_move=(direction, expected, current),
+                    )
                     message = f"{direction.title()} applied"
                 except Exception as exc:
                     status, message = "failed", str(exc)

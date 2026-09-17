@@ -175,6 +175,17 @@ Styling and Resources
 *   **Resource Files (`resources.qrc`, `resources_rc.py`)**: Icons and other assets are managed using Qt's resource system. `resources.qrc` is an XML file defining resources, which is compiled into `resources_rc.py` using `pyside6-rcc`. This allows resources to be bundled with the application.
 *   **Plot Styling (`gui_plot_utils.py`)**: Contains utility functions to apply consistent Matplotlib styles that match the selected GUI theme.
 
+Material discovery service
+--------------------------
+
+``connector.materials`` exposes the shared ``MaterialsService`` for source
+loading and property queries. It uses ``connector.calculation_jobs`` to evaluate
+captured registry, GLC and current-design sources outside the Qt thread. Source
+publication is atomic, failed reloads retain previously accepted data, and query
+acceptance checks source generations and the relevant document/backend context.
+See :doc:`material_discovery` for the API contract and runnable core examples.
+This service does not yet add a Materials panel or a material Apply command.
+
 Running the GUI
 ---------------
 

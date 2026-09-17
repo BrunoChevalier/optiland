@@ -25,6 +25,7 @@ from optiland_gui.services.file_service import (
 )
 from optiland_gui.services.history_service import HistoryService
 from optiland_gui.services.job_records import BackendConfig
+from optiland_gui.services.materials_service import MaterialsService
 from optiland_gui.services.optimization_service import OptimizationService
 from optiland_gui.services.surface_placement import SurfacePlacement
 from optiland_gui.services.surface_service import SurfaceService
@@ -91,6 +92,10 @@ class OptilandConnector(QObject):
         self.opticChanged.connect(self._on_optic_changed)
         self.calculation_jobs = CalculationJobs(self.document_state, self)
         self.calculation_services = [self.calculation_jobs]
+        self.materials = MaterialsService(
+            self.calculation_jobs, self.document_state, self
+        )
+        self.calculation_jobs.stopped.connect(self.materials.close)
         self._calculation_backend = BackendConfig.capture()
         self._backend_timer = QTimer(self)
         self._backend_timer.setInterval(250)

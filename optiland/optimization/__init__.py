@@ -13,6 +13,22 @@ from .variable import (
 )
 from .operand import ParaxialOperand, AberrationOperand, RayOperand, Operand
 from .problem import OptimizationProblem
+from .material_candidates import (
+    MaterialCandidate,
+    MaterialPool,
+    MaterialReference,
+    prepare_material_candidate,
+    validate_material_spectrum,
+)
+from .glass_expert_records import (
+    ContinuousValue,
+    MaterialChoice,
+    GlassExpertState,
+    GlassExpertTrial,
+    GlassExpertProgress,
+    GlassExpertReport,
+    GlassExpertCancelled,
+)
 from .optimizer.scipy import (
     OptimizerGeneric,
     LeastSquares,

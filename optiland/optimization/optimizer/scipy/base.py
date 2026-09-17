@@ -48,10 +48,7 @@ class OptimizerGeneric(BaseOptimizer):
         super().__init__(problem)
         self._x = []
 
-        assert not any(isinstance(var.value, str) for var in self.problem.variables), (
-            "Glass material(s) have been declared as variable(s). "
-            "Please use GlassExpert or remove them."
-        )
+        self._require_continuous_variables()
 
         if self.problem.initial_value == 0.0:
             self.problem.initial_value = self.problem.sum_squared()

@@ -31,6 +31,7 @@ class OrthogonalDescent(BaseOptimizer):
 
     def __init__(self, problem: OptimizationProblem):
         super().__init__(problem)
+        self._require_continuous_variables()
 
     def optimize(self, max_iter=100, tol=1e-4, plot=False):
         """

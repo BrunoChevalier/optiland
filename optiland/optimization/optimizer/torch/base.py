@@ -43,6 +43,7 @@ class TorchBaseOptimizer(BaseOptimizer, ABC):
 
     def __init__(self, problem: OptimizationProblem):
         super().__init__(problem)
+        self._require_continuous_variables()
         if be.get_backend() != "torch":
             raise RuntimeError(
                 f"{self.__class__.__name__} requires the 'torch' backend."

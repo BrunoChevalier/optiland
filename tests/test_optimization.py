@@ -732,11 +732,9 @@ class TestGlassExpert:
             input_data=input_data,
         )
         optimizer = glass_expert.GlassExpert(problem)
-        # Since there is a single glass in glass_selection
-        # and num_neighbours=2, this should raise:
-        # AssertionError: "Cannot keep more glasses
-        # than available in the input dictionary".
-        with pytest.raises(AssertionError):
+        # Fixed singleton assignments alone need ordinary optimization, not a
+        # categorical search. This is validated before sampling or mutation.
+        with pytest.raises(ValueError, match="ordinary optimization"):
             result = optimizer.run(
                 num_neighbours=2,
                 maxiter=8,

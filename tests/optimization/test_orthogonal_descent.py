@@ -81,6 +81,7 @@ def test_orthogonal_descent_uses_scaled_variable_bounds():
     variable.min_val = 1.0
     variable.max_val = 10.0
     variable.bounds = (-0.9, 0.0)
+    problem.variables = [variable]
 
     def update(value):
         variable.value = np.array(value)

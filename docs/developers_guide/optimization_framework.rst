@@ -242,8 +242,12 @@ For a worked example, see :doc:`../examples/Tutorial_3c_User_Defined_Optimizatio
 Categorical Optimization with Glass Expert
 ------------------------------------------
 
-Optiland also includes a specialized optimizer called GlassExpert for handling problems that involve categorical variables, specifically lens materials. 
-This optimizer is designed to find an optimal combination of real glasses from a catalog while simultaneously optimizing continuous lens parameters.
+GlassExpert searches categorical material assignments while optimizing continuous
+lens parameters. Its search is bounded and heuristic; it does not prove a global
+optimum. The supported catalog-name API remains available. The typed
+``MaterialPool`` API additionally preserves exact source/catalog/record identities
+and owned native definitions, including same-name records and custom data.
+Follow :doc:`../typed_glass_expert` for a runnable, catalog-independent example.
 
 **Architecture**
 
@@ -276,21 +280,33 @@ The GlassExpert class inherits from `OptimizerGeneric` and extends its capabilit
 
 2.  **Global exploration**
 
-    - For each glass variable, a broad search is performed across the entire specified glass catalog.
-    - To manage the search space, the glass map (n_d vs. V_d) is often downsampled using K-Means clustering, retaining a diverse subset of materials (controlled by `pool_size`, which defaults to `num_neighbours` in the `run` method).
-    - Each glass in this downsampled pool is temporarily substituted into the design.
+    - A complete eligible seed is established separately from the untouched
+      reference baseline. A reference outside the eligible pool never acquires
+      membership through its name or nearby coordinates. Singleton pools are
+      fixed assignments and must also be present in every feasible candidate.
+    - Each nontrivial pool is sampled with deterministic, seeded farthest-point
+      selection in scaled n_d/V_d coordinates. ``global_samples`` defaults to
+      ``num_neighbours`` and must be between two and the size of every nontrivial
+      pool. Distinct identities remain distinct at coincident coordinates.
+    - This deliberately replaces GlassExpert's former internal K-Means sampling.
+      The public material-map K-Means helper is unchanged. A run-local RNG and
+      canonical exact-key tie breaks preserve discrete reproducibility without
+      changing the application's global random state.
 
     .. figure:: ../_static/glass_map_global_exploration_space.png
       :width: 60%
       :align: center
 
-      Map of the (nd,vd) glass space and selected candidates for global search.
+      Illustrative glass-map distribution from the earlier implementation;
+      current GlassExpert sampling uses the seeded farthest-point rule above.
 
 3.  **Local exploration**
 
     - After the global exploration, a focused search is conducted around the current best-performing glasses.
-    - For each glass variable, its `num_neighbours` nearest materials in the (n_d, V_d) space are identified.
-    - Each of these neighboring glasses is then trialed.
+    - For each glass variable, at most ``num_neighbours`` distinct alternatives
+      are trialed around its current assigned key. The metric is
+      ``hypot(Δn_d / nd_scale, ΔV_d / vd_scale)``; both scales must be finite and
+      positive. They affect search geometry, not merit-function weights.
 
     .. figure:: ../_static/glass_map_local_exploration_space.png
       :width: 60%
@@ -302,11 +318,17 @@ The GlassExpert class inherits from `OptimizerGeneric` and extends its capabilit
 
     - For every candidate glass tested (whether from global or local exploration), a continuous local optimization is performed on all continuous variables in the system (e.g., radii, thicknesses).
     - The merit function value achieved after this local optimization determines the performance of that particular glass choice.
-    - If substituting a new glass and re-optimizing continuous variables results in a lower merit function value, the new glass is kept. Otherwise, the system reverts to its previous state.
+    - Every trial starts from the same complete incumbent state, including all
+      material assignments. Actual final merit, continuous bounds and exact
+      pool membership are checked independently from the solver's success flag.
+      Failed or nonfinite trials cannot replace a validated incumbent.
 
 5.  **Final polish**
 
-    - After all glass variables have been processed through global and local exploration passes, a final local optimization is performed using only the continuous variables to fine-tune the design with the selected glass combination.
+    - A final continuous refinement holds the complete material assignment fixed.
+      A failed or worse refinement retains the prior validated best. A feasible
+      result can still be worse than the reference: ``no_improvement`` records
+      this explicitly, without rejecting eligibility or claiming improvement.
 
 
 The merit function value during a GlassExpert run can look as follows (for 7 neighbours):
@@ -315,7 +337,8 @@ The merit function value during a GlassExpert run can look as follows (for 7 nei
       :width: 60%
       :align: center
 
-      Evolution in log scale of the merit function during a GlassExpert run.
+      Historical illustrative merit trace, not a numeric reference for the
+      current sampler or a promise of convergence.
 
 The error function jumps are normal and correspond to the optic being restored to its previous best state, or the evaluation of glasses far from the current glass. 
 Also please note that the run duration scales with the number of lenses and the number of glass neighbours.
@@ -324,18 +347,38 @@ Also please note that the run duration scales with the number of lenses and the 
 **Key Code Aspects**
 
 *   **optiland.optimization.optimizer.scipy.glass_expert.GlassExpert**: The main class implementing the algorithm.
-*   **Material Representation**: Glasses are primarily identified by their names (strings), but their (n_d, V_d) properties are used for neighborhood searches and catalog downsampling. Functions like `get_nd_vd` and `get_neighbour_glasses` from `optiland.materials` are utilized.
-*   **Variable Handling**: GlassExpert temporarily separates continuous and categorical (glass) variables. Continuous optimizations are run only on the continuous set, while glass variables are iteratively substituted.
-*   **run() method**: The primary entry point, which orchestrates the global exploration, local exploration, and final optimization passes. It accepts parameters like `num_neighbours`, `maxiter` (for local optimizations), and `tol`.
+*   **Material representation**: ``MaterialCandidate`` stores a qualified key,
+    source stamp, owned native bytes, computed n_d/V_d and reference conditions.
+    Pool restoration uses the existing material codec, without catalog aliases
+    or approximate dispersion fitting. Candidate construction is structural;
+    ``prepare_material_candidate`` and run preflight verify native restoration,
+    computed coordinates and configured spectral support.
+*   **Variable handling**: Typed material variables preserve a reference-only
+    baseline without substitution during construction. The search temporarily
+    activates only continuous variables, retaining every original descriptor and
+    manager. All terminal paths restore that manager/order. Failure and
+    cancellation restore starting optical state; normal direct calls leave the
+    optic at the complete validated candidate.
+*   **Reports**: ``OptimizeResult.glass_expert`` is an immutable typed report with
+    baseline/candidate physical values, exact choices and bounded trial history.
+    Its merit is sum-squared, not RSS. Eligibility, improvement and convergence
+    are distinct. ``result.x`` retains the continuous solver coordinate system.
+*   **Cancellation/progress**: Explicit checkpoints can raise during setup,
+    sampling, trials and continuous evaluation. A truthy ordinary callback return
+    also requests cancellation. Typed progress contains counters and merit, not
+    live optics.
 
 **Use Case for Developers**
 
 Developers might interact with or extend the GlassExpert in several ways:
 
-*   **Customizing Search Strategy**: While GlassExpert uses a specific greedy nearest-neighbor approach combined with K-Means downsampling, alternative strategies for exploring the categorical glass space could be implemented by modifying or subclassing GlassExpert.
+*   **Customizing Search Strategy**: Preserve complete-state rollback, exact
+    membership checks, cancellation boundaries and deterministic tie rules when
+    changing global or local search. A low finite penalty returned by a solver
+    wrapper is not proof of a valid actual objective.
 *   **Integrating New Material Properties**: If optimization based on other material properties (beyond n_d and v_d) is desired, the underlying material property functions and distance metrics within GlassExpert would need to be adapted.
 *   **Performance Tuning**: The number of local optimizations can be significant. Developers might explore ways to reduce this, perhaps by more sophisticated candidate selection or by using surrogate models if the optimization landscape is complex.
 
-GlassExpert provides a powerful way to tackle mixed continuous-categorical optimization problems common in lens design, where selecting the right materials is as critical as defining the right shapes and distances. 
-
-Refer to :doc:`../examples/Tutorial_3e_Glass_Expert_Categorical_Optimization` for a practical example.
+Refer to :doc:`../examples/Tutorial_3e_Glass_Expert_Categorical_Optimization` for
+the supported list-of-names workflow, and :doc:`../typed_glass_expert` for exact
+owned pools, small-pool rules and terminal outcome interpretation.

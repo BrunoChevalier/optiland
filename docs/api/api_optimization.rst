@@ -23,6 +23,8 @@ Core Functionalities
    :caption: Optimization Modules
 
    optimization.problem
+   optimization.material_candidates
+   optimization.glass_expert_records
    optimization.optimizer.scipy.base
    optimization.optimizer.scipy.basin_hopping
    optimization.optimizer.scipy.differential_evolution

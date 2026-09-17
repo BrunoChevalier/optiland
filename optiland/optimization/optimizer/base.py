@@ -30,6 +30,18 @@ class BaseOptimizer(ABC):
         """
         self.problem = problem
 
+    def _require_continuous_variables(self):
+        """Reject categorical behaviors before any numerical parameter conversion."""
+        if any(
+            getattr(variable, "type", None) == "material"
+            or isinstance(variable.value, str)
+            for variable in self.problem.variables
+        ):
+            raise AssertionError(
+                "Glass material(s) have been declared as variable(s). "
+                "Please use GlassExpert or remove them."
+            )
+
     @abstractmethod
     def optimize(self, **kwargs):
         """

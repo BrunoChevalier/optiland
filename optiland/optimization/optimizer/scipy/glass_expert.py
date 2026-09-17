@@ -1,270 +1,633 @@
-"""Optiland Glass Expert Optimization Module
+"""Bounded greedy substitution of exact materials with continuous refinement.
 
-This module provides a class for defining and solving
-optimization problems that include categorical variables
-in the form of lens materials.
-For each glass variable, the goal is to choose the glass
-that yields the lowest merit function value.
-The glasses to choose from are specified in the form
-of a list of strings:
-glasses = ['N-BK7', 'S-BSM22', 'LF5G19', ...]
-
-The optimizer performs categorical optimization on
-glass variables encoded into their (n_d, V_d) properties.
-It systematically searches for better-performing glasses by
-exploring nearest neighbors in the material space,
-followed by continuous local refinement of lens parameters.
-
-drpaprika, 2025
+The original problem descriptors survive every run. Seeded farthest-point
+sampling and local neighbors explore complete eligible assignments; the baseline
+is a separate reference. This search does not guarantee a global optimum.
 """
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+import hashlib
+import json
+import math
+import random
+from dataclasses import dataclass, replace
+from typing import TYPE_CHECKING
 
-from optiland.materials import (
-    downsample_glass_map,
-    get_nd_vd,
-    get_neighbour_glasses,
-    plot_glass_map,
+import optiland.backend as be
+from optiland.materials import Material
+from optiland.materials.portability import capture_material
+from optiland.materials.properties import MaterialKey, SourceStamp, describe_material
+from optiland.optic.optic_updater import OpticUpdater
+from optiland.optimization.glass_expert_records import (
+    ContinuousValue,
+    GlassExpertCancelled,
+    GlassExpertProgress,
+    GlassExpertReport,
+    GlassExpertState,
+    GlassExpertTrial,
+    MaterialChoice,
 )
+from optiland.optimization.material_candidates import (
+    MaterialPool,
+    MaterialReference,
+    prepare_material_candidate,
+)
+from optiland.optimization.variable.material import MaterialVariable
+from optiland.optimization.variable.variable_manager import VariableManager
+from scipy.optimize import OptimizeResult, minimize
 
 from ..live_plotter import LiveOptimizationPlotter
 from .base import OptimizerGeneric
 
 if TYPE_CHECKING:
-    from ...problem import OptimizationProblem
-    from ...variable import Variable
+    from collections.abc import Callable
+
+    from optiland.optimization.problem import OptimizationProblem
+
+
+class _NonfiniteMerit(ValueError):
+    pass
+
+
+@dataclass
+class _Target:
+    variable: object
+    variable_id: str
+    pool: MaterialPool
+    reference: MaterialReference
+    original_material: object
+    original_value: object
+    key: MaterialKey | None = None
+
+
+@dataclass(frozen=True)
+class _State:
+    values: tuple[float, ...]
+    keys: tuple[MaterialKey, ...]
+    merit: float | None = None
+    converged: bool = False
+    message: str = ""
+    nit: int = 0
+
+
+def _scalar(value, label):
+    values = be.to_numpy(value).reshape(-1)
+    if (
+        values.size != 1
+        or values.dtype.kind not in "fiu"
+        or not math.isfinite(float(values[0]))
+    ):
+        raise ValueError(f"{label} must be one finite real scalar")
+    return float(values[0])
+
+
+def _integer(value, label, minimum, maximum=None):
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, int)
+        or value < minimum
+        or (maximum is not None and value > maximum)
+    ):
+        raise ValueError(
+            f"{label} must be an integer from {minimum}"
+            + (f" through {maximum}" if maximum is not None else " upwards")
+        )
+    return value
+
+
+def _distance(first, second, scales):
+    distance = math.hypot(
+        *((a - b) / s for a, b, s in zip(first, second, scales, strict=True))
+    )
+    if not math.isfinite(distance):
+        raise ValueError("Material coordinate distance overflowed; use suitable scales")
+    return distance
+
+
+def _sample(candidates, count, rng, scales, checkpoint):
+    """Select distinct identities even when reference coordinates coincide."""
+    remaining = sorted(candidates, key=lambda item: item.key)
+    chosen = [remaining.pop(rng.randrange(len(remaining)))]
+    nearest = {candidate.key: math.inf for candidate in remaining}
+    while remaining and len(chosen) < count:
+        checkpoint()
+        distances = []
+        center = chosen[-1]
+        for candidate in remaining:
+            checkpoint()
+            nearest[candidate.key] = min(
+                nearest[candidate.key],
+                _distance((candidate.nd, candidate.vd), (center.nd, center.vd), scales),
+            )
+            distances.append(nearest[candidate.key])
+        chosen.append(
+            remaining.pop(max(range(len(remaining)), key=distances.__getitem__))
+        )
+    checkpoint()
+    return tuple(chosen)
+
+
+def _neighbors(candidates, center, scales, checkpoint):
+    """Rank exact identities with a cancellation point for every distance."""
+    ranked = []
+    for candidate in candidates:
+        checkpoint()
+        ranked.append(
+            (
+                _distance((candidate.nd, candidate.vd), center, scales),
+                candidate.key,
+                candidate,
+            )
+        )
+    checkpoint()
+    return tuple(item[2] for item in sorted(ranked))
 
 
 class GlassExpert(OptimizerGeneric):
-    """
-    Greedy nearest-neighbour glass substitution strategy
-    inspired by CODE V's Glass Expert.
+    """Greedy exact-material search preserving original variable ownership.
 
-    This optimizer performs categorical optimization on glass variables
-    defined by their (n_d, V_d) properties. It systematically searches
-    for better-performing glasses by exploring nearest neighbors
-    in the material space, followed by continuous local refinement
-    of lens parameters.
-
-    Overview of the algorithm:
-
-    - Treat each glass choice as a discrete (categorical) variable
-      and perform a fixed number of greedy passes.
-    - First pass, for each variable:
-        - Perform a broad search over the entire glass catalogue.
-    - Second pass, for each variable:
-        - Retrieve the `num_neighbours` nearest materials in (n_d, V_d) space
-        - Perform a focused search around the current glass choices.
-    - For every candidate glass:
-        - Substitute it into the design.
-        - Run a continuous local optimization to evaluate performance.
-        - If the objective improves, keep the substitution; otherwise, roll back.
-    - Finally, perform one more local-only optimization
-      over all continuous variables to polish the solution.
+    Existing ``glass_selection=list[str]`` callers remain supported. A
+    :class:`~optiland.optimization.material_candidates.MaterialPool` supplies
+    qualified owned candidates without string lookup. Public callers receive
+    their complete candidate in place; GUI callers use detached worker optics.
     """
 
     def __init__(self, problem: OptimizationProblem):
         self.problem = problem
-        self._x = []
-        self._state = []
         self.verbose = True
         self.plot_glass_map = False
-        self.opt_params = dict()
-
-        self._nd_vd_cache: dict[str, tuple[float, float]] = {}
-
-        if self.problem.initial_value == 0.0:
-            self.problem.initial_value = self.problem.sum_squared()
+        self.last_report: GlassExpertReport | None = None
+        self._running = False
+        self._x = []
 
     def vprint(self, *args, **kwargs):
+        """Print progress only when the public verbose option is enabled."""
         if self.verbose:
             print(*args, **kwargs)
 
-    def _get_nd_vd(self, glasses: list[str]) -> dict[str, tuple[float, float]]:
-        """
-        Return (n_d, V_d) for all requested glasses.
+    def _check(self):
+        if self._checkpoint is not None:
+            try:
+                self._checkpoint()
+            except GlassExpertCancelled:
+                raise
+            except Exception as error:
+                raise GlassExpertCancelled(str(error)) from error
 
-        Already computed values are reused from memory.
-        Only unknown glasses are fetched from disk via get_nd_vd().
-        """
-        new_glasses = [g for g in glasses if g not in self._nd_vd_cache]
-        if new_glasses:
-            fetched = {g: get_nd_vd(g) for g in new_glasses}
-            self._nd_vd_cache.update(fetched)
-        return {g: self._nd_vd_cache[g] for g in glasses}
-
-    def _save_state(self):
-        # Store current values of all problem variables for later restoration
-        self._state = [var.value for var in self.problem.variables]
-
-    def _restore_state(self, old_state=None):
-        # Restore variables to a previous state and update the optical system
-        state = old_state or self._state
-        for variable, val in zip(self.problem.variables, state, strict=False):
-            variable.update(val)
+    def _update(self):
+        self._check()
         self.problem.update_optics()
-
-    def global_exploration(
-        self,
-        glass_variables: list[Variable],
-        pool_size: int,
-    ) -> None:
-        """
-        Perform a broad search over the entire glass catalogue.
-
-        For each glass variable, downsample the material map
-        to `pool_size` using K-Means clustering in the (n_d, V_d) space,
-        and evaluate all glasses. This step ensures diverse
-        initial sampling before focusing on nearest neighbours.
-
-        Args:
-            glass_variables (list[Variable]): Glass variables to optimize.
-            pool_size (int): Number of materials to keep after downsampling.
-        """
-
-        if glass_variables:
-            self.vprint(f"\n{'-' * 70}\nGlobal exploration\n")
-
-        for variable in glass_variables:
-            self.vprint(f"Selecting {variable}:")
-
-            # Retreive (nd, vd) information for all glasses
-            glass_dict = self._get_nd_vd(variable.glass_selection)
-
-            # Downsample to promote diversity and limit search size
-            glass_dict = downsample_glass_map(glass_dict, num_glasses_to_keep=pool_size)
-
-            # Plot the glass selection
-            if self.plot_glass_map:
-                plot_glass_map(
-                    glass_selection=variable.glass_selection,
-                    highlights=glass_dict.keys(),
-                    title=f"Map of global exploration space\n{variable}",
+        for optic, surfaces in self._optics:
+            if not any(variable.optic is optic for variable in self._continuous):
+                optic.updater.update()
+            current = tuple(optic.surfaces)
+            if len(current) != len(surfaces) or any(
+                before is not after
+                for before, after in zip(surfaces, current, strict=True)
+            ):
+                raise ValueError(
+                    "An updater changed surface identity/order during GlassExpert"
                 )
+        self._check()
 
-            # Evaluate each candidate material within the downsampled pool
-            self.explore_glasses(
-                glass_variables=glass_variables,
-                current_glass_variable=variable,
-                glasses=glass_dict.keys(),
+    def _merit(self, *, checkpoints=True):
+        if checkpoints:
+            self._check()
+        self._evaluations += 1
+        value = self.problem.sum_squared()
+        if checkpoints:
+            self._check()
+        try:
+            merit = _scalar(value, "Sum-squared merit")
+        except ValueError as error:
+            raise _NonfiniteMerit(str(error)) from error
+        if merit < 0:
+            raise _NonfiniteMerit("Sum-squared merit cannot be negative")
+        return merit
+
+    def _physical(self):
+        return tuple(
+            ContinuousValue(
+                identifier, _scalar(variable.variable.get_value(), "Continuous value")
             )
-
-    def local_exploration(
-        self,
-        glass_variables: list[Variable],
-        num_neighbours: int,
-    ) -> None:
-        """
-        Perform a focused search around the current glass choices.
-
-        For each glass variable, identify its nearest `num_neighbours`
-        in (n_d, V_d) space, then run `explore_glass_list` on those candidates.
-        This refines selections made during global exploration.
-
-        Args:
-            glass_variables (list[Variable]): Glass variables to refine.
-            num_neighbours (int): Number of nearest neighbours to consider.
-        """
-
-        if glass_variables:
-            self.vprint(f"\n{'-' * 70}\nLocal exploration\n")
-
-        for variable in glass_variables:
-            self.vprint(f"Selecting {variable}:")
-
-            # Retreive (nd, vd) information for all glasses
-            glass_dict = self._get_nd_vd(variable.glass_selection)
-
-            # Identify top candidates based on material proximity in (n_d, V_d) space
-            neighbours = get_neighbour_glasses(
-                glass=variable.value,
-                glass_dict=glass_dict,
-                num_neighbours=num_neighbours,
-                plot=self.plot_glass_map,
-            )
-
-            # Evaluate each neighbouring material
-            self.explore_glasses(
-                glass_variables=glass_variables,
-                current_glass_variable=variable,
-                glasses=neighbours,
-            )
-
-    def explore_glasses(
-        self,
-        glass_variables: list[Variable],
-        current_glass_variable: Variable,
-        glasses: list,
-    ) -> None:
-        """
-        Test a list of candidate glasses by performing local optimizations.
-
-        Saves the initial state, then for each candidate:
-
-        - Updates the glass variable
-        - Runs a continuous optimization to measure objective
-        - Restores the previous state before the next trial
-
-        After all trials, restores the best-performing configuration.
-        """
-        # Save state before testing new glasses
-        self._save_state()
-        current_glass = current_glass_variable.value
-        best_glass = current_glass
-        best_error = self.problem.sum_squared()
-        best_error_init = best_error
-        state_init = [var.value for var in (*self.problem.variables, *glass_variables)]
-        best_state = state_init
-
-        # Optimize locally on each neighbour glass
-        for neighbour in glasses:
-            self.vprint(
-                f"\tTrying {neighbour:<8} as {current_glass_variable}. ", end=""
-            )
-            current_glass_variable.update(neighbour)
-            self.problem.update_optics()
-            result = self.optimize(**self.opt_params)
-            error = result.fun
-            fmt = (
-                ".0f"
-                if error >= 100
-                else ".1f"
-                if error >= 10
-                else ".2f"
-                if error >= 1e-2
-                else ".2e"
-            )
-            self.vprint(f"Error function value: {format(error, fmt)}")
-            if error < best_error:
-                best_error = error
-                best_glass = neighbour
-                best_state = [
-                    var.value for var in (*self.problem.variables, *glass_variables)
-                ]
-
-            # Always restore to original state before next candidate
-            self._restore_state()
-
-        # Restore to the best state
-        current_glass_variable.update(best_glass)
-        self._restore_state(best_state)
-
-        if best_glass != current_glass and best_error < best_error_init:
-            self.vprint(f"\t-> Selected {best_glass} as {current_glass_variable}.")
-            self.vprint(f"\tNew combination: {[var.value for var in glass_variables]}")
-        else:
-            self.vprint(f"\tNo better glass found, keeping {current_glass}.")
-            self.vprint(f"\tCombination: {[var.value for var in glass_variables]}")
-
-        self.vprint(
-            f"\tBest error function value: {best_error:.2f} "
-            f"({(best_error / best_error_init - 1) * 100:.0f}%).\n"
+            for identifier, variable in self._continuous_entries
         )
 
-        # Ensure optics reflect the final selection
-        self.problem.update_optics()
+    def _state_report(self, merit, *, baseline=False):
+        choices = tuple(
+            MaterialChoice(
+                target.variable_id,
+                None if baseline else target.key,
+                hashlib.sha256(
+                    capture_material(target.variable.variable.surface.material_post)
+                ).hexdigest(),
+            )
+            for target in self._targets
+        )
+        return GlassExpertState(self._physical(), choices, merit, not baseline)
+
+    def _validate_candidate(self):
+        for variable in self._continuous:
+            value = _scalar(variable.value, "Continuous solver value")
+            lo, hi = variable.bounds
+            if (lo is not None and value < lo) or (hi is not None and value > hi):
+                raise ValueError(
+                    "A continuous result lies outside its configured bounds"
+                )
+            _scalar(variable.variable.get_value(), "Continuous physical value")
+        for target in self._targets:
+            candidate = target.pool.resolve(target.key)
+            material = target.variable.variable.surface.material_post
+            if capture_material(
+                material
+            ) != candidate.owned_data or material.to_dict() != json.loads(
+                candidate.owned_data
+            ):
+                raise ValueError(
+                    f"Material assignment for {target.variable_id} "
+                    "no longer matches its pool"
+                )
+
+    def _assign(self, target, key):
+        self._check()
+        candidate = target.pool.resolve(key)
+        behavior = target.variable.variable
+        if isinstance(behavior.glass_selection, MaterialPool):
+            target.variable.update(key)
+        else:
+            target.variable.optic.updater.set_material(
+                candidate.restore(), behavior.surface_number
+            )
+        target.key = key
+        self._check()
+
+    def _restore(self, state):
+        for target, key in zip(self._targets, state.keys, strict=True):
+            self._assign(target, key)
+        for variable, value in zip(self._continuous, state.values, strict=True):
+            variable.update(be.array(value))
+        self._update()
+
+    def _restore_original(self):
+        # Rollback deliberately does not call a cancelled checkpoint.
+        for target in self._targets:
+            behavior = target.variable.variable
+            target.variable.optic.updater.set_material(
+                target.original_material, behavior.surface_number
+            )
+            if isinstance(behavior.glass_selection, MaterialPool):
+                behavior._assigned_key = (
+                    target.original_value
+                    if isinstance(target.original_value, MaterialKey)
+                    else None
+                )
+            target.key = None
+        for variable, value in zip(self._continuous, self._initial_values, strict=True):
+            variable.update(be.array(value))
+        for optic, _surfaces in self._optics:
+            optic.updater.update()
+
+    def _notify(self):
+        self._check()
+        if self._progress is not None:
+            self._progress(
+                GlassExpertProgress(
+                    self._phase,
+                    self._total_trials,
+                    self._evaluations,
+                    self._baseline.merit,
+                    self._best.merit if self._best is not None else None,
+                    self._current_target.variable_id
+                    if self._current_target is not None
+                    else None,
+                    self._current_key,
+                )
+            )
+        self._check()
+
+    def _fun(self, x):
+        self._check()
+        try:
+            for variable, value in zip(self._continuous, x, strict=True):
+                variable.update(be.array(value))
+            self._update()
+            value = self._merit()
+        except (ValueError, ArithmeticError):
+            # Invalid intermediate steps can be penalized. Final native state
+            # still requires an independent finite evaluation, never this penalty.
+            value = 1e100
+        self._notify()
+        return value
+
+    def _callback(self, *args, **kwargs):
+        self._check()
+        if self._user_callback is not None and self._user_callback(*args, **kwargs):
+            raise GlassExpertCancelled(
+                "The optimization callback requested cancellation"
+            )
+        self._check()
+        if self._plotter is not None:
+            self._plotter.update()
+        self._notify()
+
+    def _optimize_continuous(self):
+        result = minimize(
+            self._fun,
+            [
+                _scalar(variable.value, "Continuous value")
+                for variable in self._continuous
+            ],
+            bounds=tuple(variable.bounds for variable in self._continuous),
+            options={"maxiter": self._maxiter},
+            tol=self._tol,
+            callback=self._callback,
+        )
+        self._check()
+        for variable, value in zip(self._continuous, result.x, strict=True):
+            variable.update(be.array(value))
+        self._update()
+        return result
+
+    def _trial(self, phase, base, target=None, candidate=None):
+        self._phase, self._current_target = phase, target
+        self._current_key = candidate.key if candidate is not None else None
+        self._check()
+        self._total_trials += 1
+        start = self._evaluations
+        status, merit, converged, improved, message = "failed", None, False, False, ""
+        try:
+            self._restore(base)
+            if target is not None:
+                self._assign(target, candidate.key)
+                self._update()
+            self._notify()
+            result = self._optimize_continuous()
+            self._check()
+            self._validate_candidate()
+            merit = self._merit()
+            self._validate_candidate()
+            self._check()
+            status, converged, message = (
+                "evaluated",
+                bool(result.success),
+                str(result.message),
+            )
+            if self._best is None or merit < self._best.merit:
+                self._best = _State(
+                    tuple(
+                        _scalar(variable.value, "Continuous value")
+                        for variable in self._continuous
+                    ),
+                    tuple(item.key for item in self._targets),
+                    merit,
+                    converged,
+                    message,
+                    int(result.nit),
+                )
+                improved = True
+        except GlassExpertCancelled:
+            status, message = "cancelled", "GlassExpert was cancelled"
+            raise
+        except _NonfiniteMerit as error:
+            status, message = "nonfinite", str(error)
+        except (ValueError, ArithmeticError) as error:
+            message = f"{type(error).__name__}: {error}"
+        finally:
+            record = GlassExpertTrial(
+                self._total_trials,
+                phase,
+                target.variable_id if target is not None else None,
+                self._current_key,
+                status,
+                merit,
+                self._evaluations - start,
+                converged,
+                improved,
+                message[:2048],
+            )
+            if len(self._trials) < self._report_limit:
+                self._trials.append(record)
+        self._check()
+        self._notify()
+
+    def _legacy_pool(self, behavior):
+        selection = behavior.glass_selection
+        if (
+            not isinstance(selection, list | tuple)
+            or not selection
+            or any(not isinstance(name, str) for name in selection)
+        ):
+            raise ValueError(
+                "Glass selection requires a nonempty list of names or a MaterialPool"
+            )
+        records = []
+        for name in selection:
+            self._check()
+            material = Material(name)
+            summary = describe_material(
+                material, MaterialKey("legacy:string", "", name)
+            )
+            records.append(replace(summary, owned_data=capture_material(material)))
+        generation = hashlib.sha256(
+            b"".join(record.owned_data for record in records)
+        ).hexdigest()
+        stamp = SourceStamp("legacy:string", generation)
+        return MaterialPool(
+            tuple(
+                prepare_material_candidate(
+                    record, stamp, wavelengths_um=(), checkpoint=self._check
+                )
+                for record in records
+            )
+        )
+
+    def _prepare(self, variables, variable_ids, global_samples):
+        identifiers = (
+            tuple(variable_ids)
+            if variable_ids is not None
+            else tuple(f"variable:{index}" for index in range(len(variables)))
+        )
+        if (
+            len(identifiers) != len(variables)
+            or any(
+                not isinstance(identifier, str) or not identifier
+                for identifier in identifiers
+            )
+            or len(set(identifiers)) != len(identifiers)
+        ):
+            raise ValueError(
+                "Variable IDs must be distinct and match the original descriptor order"
+            )
+        entries = tuple(zip(identifiers, variables, strict=True))
+        self._continuous_entries = tuple(
+            (identifier, variable)
+            for identifier, variable in entries
+            if not isinstance(variable.variable, MaterialVariable)
+        )
+        self._continuous = tuple(variable for _, variable in self._continuous_entries)
+        if not self._continuous:
+            raise ValueError("GlassExpert requires at least one continuous variable")
+        self._initial_values = tuple(
+            _scalar(variable.value, "Initial continuous value")
+            for variable in self._continuous
+        )
+        for variable in self._continuous:
+            _scalar(variable.variable.get_value(), "Initial physical value")
+            lo, hi = variable.bounds
+            if any(
+                value is not None and not math.isfinite(value) for value in (lo, hi)
+            ) or (lo is not None and hi is not None and lo > hi):
+                raise ValueError("Continuous bounds must be finite and ordered")
+        optics = []
+        for variable in variables:
+            if not any(optic is variable.optic for optic, _ in optics):
+                updater = variable.optic.updater
+                if type(updater) is not OpticUpdater or any(
+                    callable(value) for value in vars(updater).values()
+                ):
+                    raise ValueError("GlassExpert requires the built-in optic updater")
+                optics.append((variable.optic, tuple(variable.optic.surfaces)))
+        self._optics = tuple(optics)
+        exact_payloads, source_stamps, validated = {}, {}, set()
+        targets = set()
+        for identifier, variable in entries:
+            behavior = variable.variable
+            if not isinstance(behavior, MaterialVariable):
+                continue
+            self._check()
+            row = behavior.surface_number
+            if not 0 <= row < len(variable.optic.surfaces) - 1 or (
+                variable.optic.surfaces[row] is not behavior.surface
+                or getattr(behavior.surface.interaction_model, "is_reflective", False)
+            ):
+                raise ValueError(
+                    "A material target must retain an editable outgoing medium"
+                )
+            target_id = (id(variable.optic), row)
+            if target_id in targets or any(
+                continuous.type == "index"
+                and continuous.optic is variable.optic
+                and continuous.surface_number == row
+                for continuous in self._continuous
+            ):
+                raise ValueError(
+                    "Material targets must be distinct and cannot overlap "
+                    "index variables"
+                )
+            targets.add(target_id)
+            pool = (
+                behavior.glass_selection
+                if isinstance(behavior.glass_selection, MaterialPool)
+                else self._legacy_pool(behavior)
+            )
+            if len(pool.candidates) > 1 and global_samples > len(pool.candidates):
+                raise ValueError(
+                    f"Global sample count exceeds pool size for {identifier}"
+                )
+            wavelengths = tuple(
+                float(w.value) for w in variable.optic.wavelengths.wavelengths
+            )
+            if not wavelengths:
+                raise ValueError("Configure wavelengths before a material search")
+            for candidate in pool.candidates:
+                self._check()
+                previous = exact_payloads.setdefault(
+                    candidate.key, candidate.owned_data
+                )
+                if previous != candidate.owned_data:
+                    raise ValueError(
+                        "The same exact material key has conflicting payloads"
+                    )
+                if isinstance(behavior.glass_selection, MaterialPool):
+                    previous_stamp = source_stamps.setdefault(
+                        candidate.stamp.source_id, candidate.stamp
+                    )
+                    if previous_stamp != candidate.stamp:
+                        raise ValueError(
+                            "Material pools contain conflicting source generations"
+                        )
+                cache_key = (candidate, wavelengths)
+                if cache_key not in validated:
+                    self._warnings.extend(
+                        candidate.validate(wavelengths, checkpoint=self._check)
+                    )
+                    validated.add(cache_key)
+            self._targets.append(
+                _Target(
+                    variable,
+                    identifier,
+                    pool,
+                    MaterialReference.capture(behavior.surface.material_post),
+                    behavior.surface.material_post,
+                    variable.value,
+                )
+            )
+        if not self._targets or all(
+            len(target.pool.candidates) == 1 for target in self._targets
+        ):
+            raise ValueError(
+                "GlassExpert needs a variable material pool; "
+                "use ordinary optimization for fixed assignments"
+            )
+
+    def _finish_report(self, outcome, candidate=None):
+        improved = (
+            candidate is not None
+            and self._baseline is not None
+            and candidate.merit < self._baseline.merit
+        )
+        percent = None
+        if (
+            candidate is not None
+            and self._baseline is not None
+            and self._baseline.merit > 0
+        ):
+            value = (
+                (self._baseline.merit - candidate.merit) / self._baseline.merit * 100
+            )
+            if math.isfinite(value):
+                percent = value
+            else:
+                self._warnings.append(
+                    "Percentage improvement is not representable; "
+                    "compare the finite merits directly."
+                )
+        self.last_report = GlassExpertReport(
+            outcome,
+            self._baseline,
+            candidate,
+            improved,
+            percent,
+            tuple(self._trials),
+            self._total_trials,
+            self._evaluations,
+            self._total_trials - len(self._trials),
+            tuple(dict.fromkeys(self._warnings)),
+        )
+        return self.last_report
+
+    def _plot_pool(self, target, candidates):
+        import matplotlib.pyplot as plt
+
+        figure, axes = plt.subplots()
+        axes.scatter(
+            [c.vd for c in target.pool.candidates],
+            [c.nd for c in target.pool.candidates],
+            marker=".",
+        )
+        axes.scatter(
+            [c.vd for c in candidates],
+            [c.nd for c in candidates],
+            facecolors="none",
+            edgecolors="black",
+            marker="s",
+        )
+        axes.set(
+            xlabel="V_d", ylabel="n_d", title=f"Global candidates: {target.variable_id}"
+        )
+        axes.invert_xaxis()
+        figure.show()
 
     def run(
         self,
@@ -273,116 +636,230 @@ class GlassExpert(OptimizerGeneric):
         tol: float = 1e-3,
         disp: bool = True,
         plot: bool = False,
-        callback: Any = None,
+        callback=None,
         verbose: bool = True,
         plot_glass_map=False,
-    ):
+        *,
+        global_samples: int | None = None,
+        seed: int = 1234,
+        nd_scale: float = 1.0,
+        vd_scale: float = 1.0,
+        variable_ids: tuple[str, ...] | None = None,
+        checkpoint: Callable[[], None] | None = None,
+        progress: Callable[[GlassExpertProgress], None] | None = None,
+        report_limit: int = 1000,
+    ) -> OptimizeResult:
+        """Search exact pools and return continuous solver values plus a report.
+
+        ``global_samples`` defaults to ``num_neighbours`` and must be at least
+        two and no larger than every nontrivial pool. Singletons are fixed; at
+        least one nontrivial pool and one continuous variable are required. The
+        local neighbor count excludes the currently assigned key. Positive
+        ``nd_scale``/``vd_scale`` define the reference-coordinate distance.
+
+        ``seed`` affects only a run-local diversity sampler. ``variable_ids``
+        names original descriptors, in original order. ``progress`` receives
+        immutable counters; ``checkpoint`` raises to cancel. A truthy ordinary
+        callback return also cancels. Cancellation restores the starting state
+        and raises :class:`GlassExpertCancelled` with its bounded report.
+
+        The result's ``glass_expert`` report distinguishes eligibility, solver
+        convergence and improvement. Merit is sum_squared. A complete eligible
+        result may be worse than the reference (``no_improvement``). Zero
+        baseline returns ``already_reached`` without a fabricated candidate.
+        Both plotting flags default off for worker use; no GUI is required.
+        Custom optic updater types or instance-patched updater methods are not
+        supported: their mutations cannot be guaranteed to roll back safely.
         """
-        Execute the full glass optimization workflow.
-
-        This includes:
-
-        1. Global exploration of diverse materials.
-        2. Local refinement around current selections.
-        3. Final continuous optimization on remaining variables.
-
-        This method performs a greedy, cyclic optimization over all
-        glass variables by iteratively substituting each one with its
-        neighbors in refractive index (n_d) and Abbe  number (V_d) space.
-        For each neighbor, a local optimization is performed over the
-        continuous variables only to evaluate merit.
-        If a substitution improves the objective function, it is retained.
-        After completing the greedy passes, a final local optimization
-        is performed over all continuous variables only.
-
-        Args:
-            num_neighbours (int, optional): Number of nearest neighbors to try
-                for each categorical variable during each pass.
-                Default is 7.
-            maxiter (int, optional): Maximum number of iterations for each
-                local optimization run.
-                Default is 1000.
-            tol (float, optional): Tolerance for convergence in local
-                optimization. Default is 1e-3.
-            disp (bool, optional): Whether to display internal messages from
-                the optimizer. Default is True.
-            plot: If True, update live plots during optimization.
-            callback (callable, optional): Optional function called at each
-                iteration of the optimizer.
-            verbose (bool, optional): Whether to print informative messages
-                from this method. Default is True.
-            plot_glass_map (bool, optional): Whether to plot the glass
-                selection on a (nd, vd) glass map. Default is False.
-
-        Returns:
-            result (OptimizeResult): Result of the final local optimization
-                containing fields such as:
-
-                - x: optimized continuous variable values
-                - fun: final objective function value
-                - nfev: number of function evaluations, etc.
-        """
-
-        self.verbose = verbose
-        self.plot_glass_map = plot_glass_map
-
-        live_plotter: LiveOptimizationPlotter | None = None
-        if plot:
-            live_plotter = LiveOptimizationPlotter(self)
-            live_plotter.initialize()
-
-        def _wrapped_callback(*args: Any, **kwargs: Any) -> None:
-            if callback is not None:
-                callback(*args, **kwargs)
-
-            if live_plotter is not None:
-                live_plotter.update()
-
-        # Local optimizer params
-        self.opt_params = dict(
-            maxiter=maxiter, tol=tol, disp=disp, callback=_wrapped_callback
-        )
-
-        # Identify variables
-        continuous_variables = [
-            var for var in self.problem.variables if isinstance(var.value, float)
-        ]
-        glass_variables = [
-            var for var in self.problem.variables if isinstance(var.value, str)
-        ]
-
-        if not glass_variables:
-            self.vprint("No glass variables — skipping GlassExpert.")
-        else:
-            self.vprint(
-                f"Initial glasses combination: {[var.value for var in glass_variables]}"
+        if self._running:
+            raise RuntimeError("This GlassExpert instance is already running")
+        _integer(num_neighbours, "Neighbor count", 1)
+        global_samples = num_neighbours if global_samples is None else global_samples
+        _integer(global_samples, "Global sample count", 2)
+        _integer(maxiter, "Maximum iterations", 1)
+        _integer(seed, "Seed", 0, 2**64 - 1)
+        _integer(report_limit, "Report limit", 1, 10000)
+        if any(
+            isinstance(value, bool)
+            or not isinstance(value, int | float)
+            or not math.isfinite(value)
+            or value <= 0
+            for value in (tol, nd_scale, vd_scale)
+        ):
+            raise ValueError(
+                "Tolerance and material distance scales must be finite and positive"
             )
-
-        # Remove the categorical variables for the local optimization
-        self.problem.variables = continuous_variables
-
-        # Broad search across the glass catalogue
-        self.global_exploration(
-            glass_variables=glass_variables,
-            pool_size=num_neighbours,
+        self.verbose, self.plot_glass_map = verbose, plot_glass_map
+        self._checkpoint, self._progress, self._user_callback = (
+            checkpoint,
+            progress,
+            callback,
         )
-
-        # Focused search around chosen materials
-        self.local_exploration(
-            glass_variables=glass_variables,
-            num_neighbours=num_neighbours,
-        )
-
-        # Final local-only optimization (on continuous variables only)
-        result = self.optimize(**self.opt_params)
-
-        # Update all continuous variables to final values
-        for var, val in zip(self.problem.variables, result.x, strict=False):
-            var.update(val)
-        self.problem.update_optics()
-
-        if live_plotter is not None:
-            live_plotter.update()
-            live_plotter.finalize()
-
-        return result
+        self._report_limit, self._maxiter, self._tol = report_limit, maxiter, tol
+        self._phase, self._current_target, self._current_key = "seed", None, None
+        self._evaluations, self._total_trials = 0, 0
+        self._trials, self._warnings, self._targets = [], [], []
+        self._optics, self._continuous, self._initial_values = (), (), ()
+        self._best, self._baseline, self._plotter = None, None, None
+        self.last_report = None
+        self._running = True
+        original_manager = self.problem.variables
+        variables = tuple(original_manager)
+        mutated, keep = False, False
+        try:
+            self._check()
+            self._prepare(variables, variable_ids, global_samples)
+            baseline_merit = self._merit()
+            self._baseline = self._state_report(baseline_merit, baseline=True)
+            self.problem.initial_value = baseline_merit
+            if baseline_merit == 0:
+                report = self._finish_report("already_reached")
+                return OptimizeResult(
+                    x=be.to_numpy(self._initial_values),
+                    fun=0.0,
+                    success=True,
+                    message="Baseline objective already reached",
+                    nfev=self._evaluations,
+                    nit=0,
+                    glass_expert=report,
+                )
+            active = VariableManager()
+            active.variables = list(self._continuous)
+            self.problem.variables = active
+            if plot:
+                self._plotter = LiveOptimizationPlotter(self)
+                self._plotter.initialize()
+            scales, rng = (nd_scale, vd_scale), random.Random(seed)
+            keys = []
+            for target in self._targets:
+                self._check()
+                candidates = sorted(target.pool.candidates, key=lambda item: item.key)
+                if (
+                    target.reference.nd.status
+                    == target.reference.vd.status
+                    == "available"
+                ):
+                    center = (target.reference.nd.value, target.reference.vd.value)
+                    candidate = _neighbors(candidates, center, scales, self._check)[0]
+                else:
+                    candidate = candidates[0]
+                    self._warnings.append(
+                        f"Baseline coordinates unavailable for {target.variable_id}; "
+                        "using a deterministic eligible seed."
+                    )
+                keys.append(candidate.key)
+            seed_state = _State(self._initial_values, tuple(keys))
+            mutated = True
+            self._trial("seed", seed_state)
+            for phase in ("global", "local"):
+                self._phase = phase
+                self._check()
+                for target in self._targets:
+                    if len(target.pool.candidates) == 1:
+                        continue
+                    self._check()
+                    base = self._best or seed_state
+                    if phase == "global":
+                        candidates = _sample(
+                            target.pool.candidates,
+                            global_samples,
+                            rng,
+                            scales,
+                            self._check,
+                        )
+                        if plot_glass_map:
+                            self._plot_pool(target, candidates)
+                    else:
+                        center_candidate = target.pool.resolve(
+                            base.keys[self._targets.index(target)]
+                        )
+                        center = (center_candidate.nd, center_candidate.vd)
+                        candidates = _neighbors(
+                            (
+                                item
+                                for item in target.pool.candidates
+                                if item.key != center_candidate.key
+                            ),
+                            center,
+                            scales,
+                            self._check,
+                        )[:num_neighbours]
+                    for candidate in candidates:
+                        self._trial(phase, base, target, candidate)
+                    self._check()
+            self._phase = "final"
+            self._check()
+            if self._best is not None:
+                self._trial("final", self._best)
+                self._restore(self._best)
+                self._validate_candidate()
+                merit = self._merit()
+                self._validate_candidate()
+                if merit != self._best.merit:
+                    raise ValueError(
+                        "The restored best candidate does not reproduce "
+                        "its evaluated merit"
+                    )
+                candidate_report = self._state_report(merit)
+                self._check()
+                report = self._finish_report(
+                    "completed" if merit < baseline_merit else "no_improvement",
+                    candidate_report,
+                )
+                result = OptimizeResult(
+                    x=be.to_numpy(self._best.values),
+                    fun=merit,
+                    success=self._best.converged,
+                    message=self._best.message,
+                    nit=self._best.nit,
+                    nfev=self._evaluations,
+                    glass_expert=report,
+                )
+                if disp:
+                    self.vprint(
+                        f"GlassExpert {report.outcome}: {baseline_merit:g} → {merit:g}"
+                    )
+                if self._plotter is not None:
+                    self._plotter.update()
+                    self._plotter.finalize()
+                self._check()
+                # User checkpoints, progress and plotting are callbacks. None
+                # can run after this final proof and invalidate the returned
+                # prescription while leaving an earlier report authoritative.
+                self._validate_candidate()
+                final_merit = self._merit(checkpoints=False)
+                self._validate_candidate()
+                if (
+                    final_merit != merit
+                    or self._physical() != candidate_report.continuous
+                ):
+                    raise ValueError("The candidate changed during final notification")
+                result.nfev = self._evaluations
+                result.glass_expert = self._finish_report(
+                    report.outcome, candidate_report
+                )
+                keep = True
+                return result
+            report = self._finish_report("no_candidate")
+            return OptimizeResult(
+                x=be.to_numpy(self._initial_values),
+                fun=baseline_merit,
+                success=False,
+                message="No valid candidate found in the bounded search",
+                nfev=self._evaluations,
+                nit=0,
+                glass_expert=report,
+            )
+        except GlassExpertCancelled as error:
+            error.report = self._finish_report("cancelled")
+            raise
+        except Exception:
+            self._finish_report("failed")
+            raise
+        finally:
+            self.problem.variables = original_manager
+            try:
+                if mutated and not keep:
+                    self._restore_original()
+            finally:
+                self._running = False

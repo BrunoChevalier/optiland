@@ -91,6 +91,21 @@ User YAML files must follow the `refractiveindex.info <https://refractiveindex.i
 format.  Files placed under ``~/.optiland/catalogs/<catalog_name>/`` are
 auto-discovered on the first registry access.
 
+Exact Discovery and Property Queries
+------------------------------------
+
+``MaterialRegistry.entries()`` returns immutable, source-qualified records for
+built-in and registered user materials. Unlike a name list, it retains separate
+references and repeated registrations. ``RegistryEntry.open_material()`` reads
+that entry's exact local file without fuzzy matching. Entries describe local
+discovery; they do not freeze file contents or provide portable worker payloads.
+
+:mod:`optiland.materials.properties` supplies immutable optical summaries and
+independently bounded index/Abbe queries without importing Qt. It distinguishes
+supported values, unknown support and unavailable values, and preserves the
+material's bounds policy. See :ref:`material_discovery_queries` for executable
+examples, the reference-line convention and ownership limits.
+
 Evaluation and Caching
 ----------------------
 
@@ -144,4 +159,10 @@ lookup when an input or tracked parameter requires a fresh gradient graph.
    materials.material_spec
    materials.material_utils
    materials.catalog
-   materials.registry
+
+.. toctree::
+   :maxdepth: 1
+   :caption: Discovery and Property Query APIs
+
+   materials/materials.registry
+   materials/materials.properties

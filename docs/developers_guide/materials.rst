@@ -73,6 +73,15 @@ instances: an existing material is accepted directly, and a dictionary there
 continues to describe a lookup specification. Restore an inline native object
 with ``BaseMaterial.from_dict`` before passing it to a surface.
 
+For exact catalog entry discovery, immutable optical-property summaries and
+index/Abbe queries, see :doc:`material_discovery`. These services operate on core
+material objects and do not depend on Qt.
+
+.. toctree::
+   :hidden:
+
+   material_discovery
+
 Owned data and persistence
 --------------------------
 

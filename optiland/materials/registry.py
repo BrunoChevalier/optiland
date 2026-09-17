@@ -11,10 +11,14 @@ Kramer Harrison, 2025
 
 from __future__ import annotations
 
+import hashlib
+import json
 import pathlib
 import tempfile
 import warnings
+from dataclasses import dataclass
 from importlib import resources
+from typing import TYPE_CHECKING
 
 import pandas as pd
 import yaml
@@ -24,11 +28,49 @@ from optiland.materials._catalog_parsing import (
     _catalog_dir_from_filename,
     _extract_wavelength_range,
 )
-from optiland.materials._material_matching import resolve_with_row
+from optiland.materials._material_matching import _row_to_path, resolve_with_row
 from optiland.materials.material_spec import MatchPolicy
 from optiland.materials.warnings import OptilandMaterialWarning
 
+if TYPE_CHECKING:
+    from optiland.materials.material_file import MaterialFile
+    from optiland.materials.spectral import BoundsPolicy
+
 _CATALOG_CSV = str(resources.files("optiland.database").joinpath("catalog_nk.csv"))
+
+
+def _discovery_text(value: object) -> str:
+    """Normalize optional scalar CSV fields without exposing pandas missing data."""
+    return "" if value is None or pd.isna(value) else str(value)
+
+
+@dataclass(frozen=True, slots=True)
+class RegistryEntry:
+    """Exact local catalog discovery record, independent of fuzzy name lookup.
+
+    ``record_id`` identifies a row within ``source_id``. Equal names and repeated
+    rows remain separate records. The path is a local locator, not portable
+    optical data: file changes require a new source snapshot before worker use.
+    """
+
+    source_id: str
+    record_id: str
+    catalog: str
+    group: str
+    name: str
+    reference: str | None
+    path: str
+
+    def open_material(self, *, bounds: BoundsPolicy = "clamp") -> MaterialFile:
+        """Read this exact file with the requested table bounds policy.
+
+        No registry lookup or name matching occurs. This performs I/O and
+        material parsing; desktop callers must run it outside the Qt thread.
+        The result reflects file contents at the time of this call.
+        """
+        from optiland.materials.material_file import MaterialFile
+
+        return MaterialFile(self.path, bounds=bounds)
 
 
 class MaterialRegistry:
@@ -266,6 +308,73 @@ class MaterialRegistry:
     # ------------------------------------------------------------------
     # Discovery
     # ------------------------------------------------------------------
+
+    def entries(
+        self, *, group: str | None = None, catalog: str | None = None
+    ) -> tuple[RegistryEntry, ...]:
+        """Return immutable exact records, retaining duplicate names/references.
+
+        Discovery retains installed rows even when a user record shadows them
+        for ordinary name lookup. Filters compare complete names case-insensitively,
+        never as regular expressions. Row IDs remain stable when unrelated rows are
+        appended or the view is filtered. Repeated identical rows receive an
+        occurrence suffix. IDs describe local discovery, not content revisions;
+        capture file contents separately for a portable, immutable query source.
+
+        Args:
+            group: Optional exact group, such as ``glass`` or ``user``.
+            catalog: Optional exact catalog directory name, such as ``schott``.
+        """
+        plugins.load_plugins(plugins.MATERIALS_GROUP)
+        occurrences: dict[str, int] = {}
+        result = []
+        records = [
+            (
+                "rii:installed",
+                {
+                    **row,
+                    "catalog_dir": _catalog_dir_from_filename(
+                        row["filename"], row.get("group", "")
+                    ),
+                },
+            )
+            for row in self.built_in_df.to_dict("records")
+        ]
+        records.extend(("rii:user", row) for row in self._user_entries)
+        for source_id, row in records:
+            row_group = _discovery_text(row.get("group"))
+            row_catalog = _discovery_text(row.get("catalog_dir"))
+            name = _discovery_text(row.get("filename_no_ext"))
+            reference = _discovery_text(row.get("reference")) or None
+            filename = pathlib.Path(row["filename"])
+            path = str(pathlib.Path(_row_to_path(row)).resolve())
+            # Built-in IDs use their package-relative locator, so installing
+            # Optiland elsewhere does not rename every built-in record.
+            locator = filename.as_posix() if not filename.is_absolute() else path
+            identity = json.dumps(
+                [source_id, row_group, row_catalog, name, reference, locator],
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
+            digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()
+            occurrence = occurrences.get(digest, 0)
+            occurrences[digest] = occurrence + 1
+            if group is not None and row_group.casefold() != group.casefold():
+                continue
+            if catalog is not None and row_catalog.casefold() != catalog.casefold():
+                continue
+            result.append(
+                RegistryEntry(
+                    source_id,
+                    f"{digest}:{occurrence}",
+                    row_catalog,
+                    row_group,
+                    name,
+                    reference,
+                    path,
+                )
+            )
+        return tuple(result)
 
     def list_groups(self) -> list[str]:
         """Return sorted unique group names (built-in + user-registered)."""

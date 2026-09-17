@@ -12,7 +12,8 @@ None of these operations edits an optical system.
 These APIs and the background service support the desktop Materials workspace,
 including its linked catalog table, interactive map and property inspector.
 See :doc:`../gui_materials` for browsing and keyboard controls. The examples here
-exercise the core APIs. Target-surface Apply/Undo integration is subsequent work.
+exercise the core APIs. Target-surface Apply and Undo use the separate GUI
+document-acceptance boundary described in the Materials user guide.
 
 Discover exact entries
 ----------------------
@@ -579,7 +580,119 @@ teardown. It does not wait synchronously on the GUI thread; revoked results
 remain ineligible for publication even if a worker finishes during cancellation.
 
 These are data-service contracts. The desktop Materials panel separately owns
-linked selection, hover and the dock's visibility lifecycle. Comparison pins,
-target-surface routing and Apply are subsequent work. An Apply command must
-independently verify its target and material freshness and use the established
-undoable document mutation path.
+linked selection, hover, comparison pins and the dock's visibility lifecycle.
+Apply independently verifies its target and material freshness and uses the
+established undoable document-acceptance path.
+
+.. _material_comparison_api:
+
+Cached map views and spectral comparison
+----------------------------------------
+
+``describe_material`` computes native indices at d = 0.5875618 µm,
+F = 0.4861327 µm, C = 0.6562725 µm and g = 0.4358343 µm once during source
+ingestion. ``MaterialSummary.nd``, ``n_f``, ``n_c`` and ``n_g`` are explicit
+``PropertyValue`` records, including missing, unsupported and invalid states.
+No temperature or wavelength/index convention conversion is implied. Source
+conditions remain attached to each summary.
+
+``map_coordinates(snapshot, view)`` derives one of these views without restoring
+owned data or evaluating optical formulas:
+
+.. list-table:: Native map coordinates
+   :header-rows: 1
+
+   * - View identifier
+     - Horizontal axis
+     - Vertical axis
+   * - ``nd-vd``
+     - ``V_d`` (descending)
+     - ``n_d``
+   * - ``nd-dispersion``
+     - ``n_F - n_C``
+     - ``n_d``
+   * - ``partial-fd``
+     - ``V_d`` (descending)
+     - ``(n_F - n_d)/(n_F - n_C)``
+   * - ``partial-gf``
+     - ``V_d`` (descending)
+     - ``(n_g - n_F)/(n_F - n_C)``
+   * - ``partial-dc``
+     - ``V_d`` (descending)
+     - ``(n_d - n_C)/(n_F - n_C)``
+
+Each ``MapViewResult`` carries its source stamps, labels, axis direction and
+qualified coordinates. Missing reference values and zero partial-dispersion
+denominators remain unavailable. Finite negative dispersion is retained.
+
+For spectra, ``compare_materials(snapshot, SpectralRequest(...))`` restores only
+the requested owned records, at most four distinct keys, and returns one shared
+wavelength grid with ordered ``SpectralSeries.values``. The plot and numeric
+table must consume this same result. Each value has a status/reason; unavailable
+points are gaps and must never be connected through a fabricated numeric value.
+
+.. code-block:: python
+
+   from optiland.materials import DataMaterial
+   from optiland.materials.comparison import (
+       SpectralRequest, compare_materials, map_coordinates,
+   )
+   from optiland.materials.properties import (
+       MaterialKey, MaterialSnapshot, SourceStamp, describe_material,
+   )
+
+   glass = DataMaterial.from_coefficients(
+       "formula 5", [1.5, 0.005, -2], name="Synthetic crown",
+       wavelength_range=(0.4, 0.8),
+   )
+   key = MaterialKey("example:owned", "Synthetic", "crown-1")
+   record = describe_material(glass, key)
+   snapshot = MaterialSnapshot(
+       (SourceStamp(key.source_id, "example-generation-1"),), (record,),
+   )
+   partial_map = map_coordinates(snapshot, "partial-gf")
+   spectrum = compare_materials(
+       snapshot, SpectralRequest((key,), quantity="n", sample_count=201),
+   )
+   assert spectrum.interval_um == (0.4, 0.8)
+   assert len(spectrum.series[0].values) == 201
+
+The default interval is the intersection of declared support of eligible pins
+for the requested quantity: n support for index, independent k/transmission
+support for internal transmission. Unknown domains do not establish validity
+and are excluded by default. Disjoint or wholly unknown domains return no grid
+and an actionable explanation. An explicit positive increasing interval permits
+unknown-domain index models with a warning. Every known out-of-domain sample is
+unsupported, even when the native material's table policy is ``clamp``.
+Requested missing identities remain in the ordered result with an unavailable
+reason; they are never resolved by display name.
+
+``quantity="transmission"`` calls
+:meth:`~optiland.materials.data.DataMaterial.internal_transmittance` directly,
+after checking that actual extinction or transmission data exist. Missing k
+data are unavailable, including at zero requested thickness; the native zero-k
+fallback is not measured 100% transmission. Native transmission tables
+interpolate transmission before thickness scaling. Measured zero and unity
+remain representable, including the native zero-thickness result. Requested
+``thickness_mm`` is finite and nonnegative; internal transmission excludes
+interface and scattering losses. The sample count is bounded to 2–2001.
+
+``material_details(summary)`` returns bounded exact formula/coefficient or table
+details from the owned native definition. Raw source metadata is explicitly
+descriptive. Long definitions are labeled as truncated at 64 fields or 8192
+text characters; full native data remain in the source snapshot. Details do not
+introduce new formula evaluators, catalog lookups or unsupported property filters.
+
+``nearby_materials(snapshot, target_key, nd_scale=..., vd_scale=..., limit=10)``
+uses candidate-minus-target signed deltas and normalized Euclidean distance:
+``hypot(delta_nd / nd_scale, delta_vd / vd_scale)``. Scales must be finite and
+positive. The target is excluded, ties use qualified identity, and unavailable
+coordinates are counted explicitly. This is geometric proximity, not optical
+equivalence or optimizer merit. Original conditions must remain visible when
+presenting nearby candidates.
+
+The desktop worker adapters consume the existing serialized summary cache for
+map and nearby jobs; those bytes contain no owned optical payloads. Spectral
+jobs receive at most four owned records. Each job installs the requested backend
+and checks cancellation during decoding/evaluation. The GUI coordinator retains
+source/backend/request ownership and rejects stale results before presentation.

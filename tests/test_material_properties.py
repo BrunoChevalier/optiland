@@ -25,6 +25,7 @@ from optiland.materials.properties import (
     C_LINE_UM,
     D_LINE_UM,
     F_LINE_UM,
+    G_LINE_UM,
     MaterialKey,
     MaterialQuery,
     MaterialSnapshot,
@@ -384,7 +385,7 @@ def test_index_evaluation_failure_is_explicit(error, status):
 
 def test_overflowing_abbe_ratio_is_unavailable():
     material = IdealMaterial(1.5)
-    values = {D_LINE_UM: 1e308, F_LINE_UM: 2e-308, C_LINE_UM: 1e-308}
+    values = {D_LINE_UM: 1e308, F_LINE_UM: 2e-308, C_LINE_UM: 1e-308, G_LINE_UM: 3e-308}
     material.n = lambda wavelength: values[wavelength]
     result = describe_material(material, KEY)
     assert result.nd.status == "available"
@@ -642,12 +643,19 @@ class BlockOptional(importlib.abc.MetaPathFinder):
 sys.meta_path.insert(0, BlockOptional())
 from optiland.materials import DataMaterial
 from optiland.materials.properties import *
+from optiland.materials.comparison import (
+    SpectralRequest, compare_materials, map_coordinates)
 record = describe_material(
     DataMaterial.from_samples([.4,.8], [1.6,1.5]), MaterialKey('owned', '', 'one'))
 result = query_materials(
     MaterialSnapshot((SourceStamp('owned','1'),), (record,)), MaterialQuery())
 assert len(result.matches) == 1
 assert record.nd.status == 'available'
+snapshot = MaterialSnapshot((SourceStamp('owned','1'),), (record,))
+assert map_coordinates(snapshot, 'partial-gf').coordinates[0].y.status == 'available'
+curves = compare_materials(snapshot, SpectralRequest((record.key,), sample_count=3))
+assert len(curves.series[0].values) == 3
+assert all(value.status == 'available' for value in curves.series[0].values)
 blocked = {'torch','PySide6','PyQt5','PyQt6'}
 assert not any(name.split('.')[0] in blocked for name in sys.modules)
 """

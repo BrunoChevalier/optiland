@@ -27,6 +27,7 @@ if TYPE_CHECKING:
 D_LINE_UM = 0.5875618
 F_LINE_UM = 0.4861327
 C_LINE_UM = 0.6562725
+G_LINE_UM = 0.4358343
 PropertyStatus = Literal["available", "missing", "unsupported", "invalid"]
 
 
@@ -118,6 +119,10 @@ def _missing_declared() -> PropertyValue:
     return PropertyValue(None, "missing", origin="declared", reason="Not declared")
 
 
+def _missing_reference() -> PropertyValue:
+    return PropertyValue(None, "missing", reason="Reference index was not evaluated")
+
+
 @dataclass(frozen=True)
 class MaterialSummary:
     """Reference coordinates, support and optional self-contained owned data.
@@ -140,6 +145,9 @@ class MaterialSummary:
     conditions: ReferenceConditions = field(default_factory=ReferenceConditions)
     declared_nd: PropertyValue = field(default_factory=_missing_declared)
     declared_vd: PropertyValue = field(default_factory=_missing_declared)
+    n_f: PropertyValue = field(default_factory=_missing_reference)
+    n_c: PropertyValue = field(default_factory=_missing_reference)
+    n_g: PropertyValue = field(default_factory=_missing_reference)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "n_range_um", _range(self.n_range_um))
@@ -311,12 +319,13 @@ def _attribution(
 
 
 def describe_material(material: BaseMaterial, key: MaterialKey) -> MaterialSummary:
-    """Evaluate native d-line index and Abbe coordinates without changing a material.
+    """Evaluate native d/F/C/g indices and Abbe coordinates without changing a material.
 
     A finite negative Abbe coordinate is retained. Zero dispersion has no Abbe
     coordinate and is still inspectable. Each line is checked against declared
     support before calling ``n``; an out-of-support clamp is never a match.
     Unknown support permits model evaluation but remains unknown to range filters.
+    Cached reference indices also support alternate maps without re-evaluation.
 
     Only an exact built-in ``DataMaterial`` with ordinary homogeneous propagation
     receives an owned reconstruction payload in this initial adapter. File-backed
@@ -327,6 +336,7 @@ def describe_material(material: BaseMaterial, key: MaterialKey) -> MaterialSumma
     nd = _index_at(material, D_LINE_UM, support)
     nf = _index_at(material, F_LINE_UM, support)
     nc = _index_at(material, C_LINE_UM, support)
+    ng = _index_at(material, G_LINE_UM, support)
     unavailable = next(
         (value for value in (nd, nf, nc) if value.status != "available"), None
     )
@@ -372,6 +382,9 @@ def describe_material(material: BaseMaterial, key: MaterialKey) -> MaterialSumma
         transmission,
         owned_data,
         *_attribution(material),
+        nf,
+        nc,
+        ng,
     )
 
 

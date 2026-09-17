@@ -170,5 +170,6 @@ lookup when an input or tracked parameter requires a fresh gradient graph.
 
    materials/materials.registry
    materials/materials.properties
+   materials/materials.comparison
    materials/materials.portability
    materials/materials.sources

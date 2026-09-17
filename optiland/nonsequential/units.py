@@ -21,9 +21,9 @@ from typing import TYPE_CHECKING, Literal
 import numpy as np
 
 if TYPE_CHECKING:
+    import optiland.nonsequential.results.spectral_result
     from optiland.nonsequential.results.far_field_pattern import FarFieldPattern
     from optiland.nonsequential.results.irradiance_map import IrradianceMap
-    from optiland.nonsequential.results.spectral_result import SpectralResult
     from optiland.nonsequential.sources.base import Spectrum
 
 Weighting = Literal["photopic", "scotopic"]
@@ -396,7 +396,9 @@ class PhotometricScalar:
 
 
 def to_photometric(
-    result: IrradianceMap | SpectralResult | FarFieldPattern,
+    result: IrradianceMap
+    | optiland.nonsequential.results.spectral_result.SpectralResult
+    | FarFieldPattern,
     quantity: Literal["illuminance", "luminous_flux"] = "illuminance",
     weighting: Weighting = "photopic",
     wavelength_um: float | None = None,

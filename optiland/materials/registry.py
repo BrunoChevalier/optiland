@@ -159,7 +159,7 @@ class MaterialRegistry:
             "category_name_full": catalog,
             "reference": reference,
             "name": name,
-            "filename": tmp.name,
+            "filename": str(pathlib.Path(tmp.name).resolve()),
             "min_wavelength": min_wl,
             "max_wavelength": max_wl,
             "filename_no_ext": name,
@@ -230,7 +230,7 @@ class MaterialRegistry:
             # Resolve relative filenames against the directory
             def _resolve_fn(fn: str) -> str:
                 if pathlib.Path(fn).is_absolute():
-                    return fn
+                    return str(pathlib.Path(fn).resolve())
                 return str((d / fn).resolve())
 
             extra_df["filename"] = extra_df["filename"].apply(_resolve_fn)
@@ -326,8 +326,6 @@ class MaterialRegistry:
             catalog: Optional exact catalog directory name, such as ``schott``.
         """
         plugins.load_plugins(plugins.MATERIALS_GROUP)
-        occurrences: dict[str, int] = {}
-        result = []
         records = [
             (
                 "rii:installed",
@@ -341,13 +339,57 @@ class MaterialRegistry:
             for row in self.built_in_df.to_dict("records")
         ]
         records.extend(("rii:user", row) for row in self._user_entries)
+        return self._discovery_entries(records, group=group, catalog=catalog)
+
+    def registered_entries(
+        self, *, group: str | None = None, catalog: str | None = None
+    ) -> tuple[RegistryEntry, ...]:
+        """Copy already registered user metadata without filesystem or plugin work.
+
+        Unlike :meth:`entries`, this does not load the installed CSV, discover
+        directories, run plugins or open material files. Registration has already
+        resolved user file locators. It is suitable for capturing GUI process
+        registration state before sending exact records to a calculation worker.
+        The returned IDs equal those in :meth:`entries` for the same records.
+
+        Args:
+            group: Optional exact group, matched case-insensitively.
+            catalog: Optional exact catalog, matched case-insensitively.
+        """
+        return self._discovery_entries(
+            (("rii:user", row) for row in tuple(self._user_entries)),
+            group=group,
+            catalog=catalog,
+        )
+
+    @classmethod
+    def registered_snapshot(cls) -> tuple[RegistryEntry, ...]:
+        """Copy singleton user metadata without creating or discovering a registry.
+
+        Returns an empty tuple before the singleton has been initialized. Desktop
+        callers can use this method without triggering first-use catalog I/O.
+        """
+        return () if cls._instance is None else cls._instance.registered_entries()
+
+    @staticmethod
+    def _discovery_entries(records, *, group=None, catalog=None):
+        """Build discovery identities from one authoritative registry row stream."""
+        occurrences: dict[str, int] = {}
+        result = []
         for source_id, row in records:
             row_group = _discovery_text(row.get("group"))
             row_catalog = _discovery_text(row.get("catalog_dir"))
             name = _discovery_text(row.get("filename_no_ext"))
             reference = _discovery_text(row.get("reference")) or None
             filename = pathlib.Path(row["filename"])
-            path = str(pathlib.Path(_row_to_path(row)).resolve())
+            # Registration resolves user locators while it already performs I/O.
+            # Resolving them again here would stat files on the GUI thread and
+            # could silently change identity when a registered symlink changes.
+            path = (
+                str(pathlib.Path(_row_to_path(row)).resolve())
+                if source_id == "rii:installed"
+                else str(filename)
+            )
             # Built-in IDs use their package-relative locator, so installing
             # Optiland elsewhere does not rename every built-in record.
             locator = filename.as_posix() if not filename.is_absolute() else path

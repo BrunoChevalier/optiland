@@ -13,7 +13,14 @@ import numpy as np
 import pytest
 
 import optiland.backend as be
-from optiland.materials import AbbeMaterial, DataMaterial, IdealMaterial, Material
+from optiland.materials import (
+    AbbeMaterial,
+    AbbeMaterialE,
+    DataMaterial,
+    IdealMaterial,
+    Material,
+    MaterialFile,
+)
 from optiland.materials.properties import (
     C_LINE_UM,
     D_LINE_UM,
@@ -23,6 +30,7 @@ from optiland.materials.properties import (
     MaterialSnapshot,
     MaterialSummary,
     PropertyValue,
+    ReferenceConditions,
     SourceStamp,
     describe_material,
     query_materials,
@@ -31,6 +39,228 @@ from optiland.materials.properties import (
 
 KEY = MaterialKey("catalog:synthetic", "Synthetic", "glass-a")
 STAMP = SourceStamp(KEY.source_id, "revision-1")
+
+
+def test_native_conditions_and_declared_coordinates_survive_lightweight_transport(
+    set_test_backend,
+):
+    material = MaterialFile.from_data(
+        {
+            "DATA": [{"type": "formula 5", "coefficients": "1.5 0.02 -2"}],
+            "SPECS": {
+                "n_is_absolute": False,
+                "wavelength_is_vacuum": False,
+                "temperature": "20.0 °C",
+                "nd": 1.55,
+                "Vd": -60,
+            },
+        },
+        name="Example",
+    )
+    result = describe_material(material, KEY)
+    assert result.nd.origin == result.vd.origin == "computed"
+    assert result.nd.value != result.declared_nd.value
+    assert result.vd.value != result.declared_vd.value
+    assert result.declared_nd == PropertyValue(
+        1.55, "available", origin="declared", source="RII SPECS.nd"
+    )
+    assert result.declared_vd.value == -60
+    assert result.declared_vd.source == "RII SPECS.Vd (d/F/C)"
+    conditions = result.conditions
+    assert conditions.index_convention == "air-relative"
+    assert conditions.wavelength_convention == "air"
+    assert conditions.temperature_c == 20
+    assert conditions.pressure_atm is None
+    assert "RII SPECS.temperature" in conditions.sources
+    owned = describe_material(material.to_owned_material(), KEY)
+    assert owned.conditions == conditions
+    lightweight = replace(owned, owned_data=None)
+    assert lightweight.conditions == conditions
+    assert lightweight.declared_nd == result.declared_nd
+    assert lightweight.declared_vd == result.declared_vd
+
+
+def test_absolute_vacuum_metadata_does_not_become_air_relative(set_test_backend):
+    result = describe_material(
+        analytic_material(
+            metadata={
+                "rii": {
+                    "SPECS": {
+                        "n_is_absolute": True,
+                        "wavelength_is_vacuum": True,
+                        "temperature": "25 C",
+                    }
+                }
+            }
+        ),
+        KEY,
+    )
+    assert result.conditions.index_convention == "absolute"
+    assert result.conditions.wavelength_convention == "vacuum"
+    assert result.conditions.temperature_c == 25
+    assert result.declared_nd.status == result.declared_vd.status == "missing"
+
+
+def test_glc_declared_values_are_separate_from_computed_coordinates(set_test_backend):
+    material = analytic_material(metadata={"oslo": {"nd": 1.9, "vd": 80}})
+    result = describe_material(material, KEY)
+    assert result.declared_nd.value == 1.9 and result.declared_vd.value == 80
+    assert result.declared_nd.source == "GLC oslo.nd"
+    assert result.declared_vd.source == "GLC oslo.vd (d/F/C)"
+    assert result.conditions == ReferenceConditions()
+    assert not query_materials(
+        snapshot(result), MaterialQuery(target_nd=1.9, nd_tolerance=0.001)
+    ).matches
+
+
+@pytest.mark.parametrize("value", [True, [], {}, "nan", "inf", "garbage", 0, -2])
+def test_invalid_declared_index_never_overrides_valid_model(value, set_test_backend):
+    result = describe_material(
+        analytic_material(metadata={"oslo": {"nd": value, "vd": value}}), KEY
+    )
+    assert result.nd.status == result.vd.status == "available"
+    assert result.declared_nd.status == "invalid"
+    assert result.declared_nd.source == "GLC oslo.nd"
+    if value == -2:
+        assert result.declared_vd.value == -2
+    else:
+        assert result.declared_vd.status == "invalid"
+
+
+@pytest.mark.parametrize(
+    "metadata",
+    [
+        {},
+        {"rii": []},
+        {"rii": {"SPECS": []}},
+        {"oslo": []},
+        {"oslo": {"nd": None}},
+        {"conventions": {"index": "absolute"}},
+    ],
+)
+def test_unknown_metadata_does_not_invent_conditions(metadata, set_test_backend):
+    result = describe_material(analytic_material(metadata=metadata), KEY)
+    assert result.conditions == ReferenceConditions()
+    assert result.declared_nd.status == result.declared_vd.status == "missing"
+    abbe_e = describe_material(AbbeMaterialE(1.6, 55), KEY)
+    assert abbe_e.declared_nd.status == abbe_e.declared_vd.status == "missing"
+
+
+@pytest.mark.parametrize("temperature", ["293 K", 20, "-273.15 °C", "1e999 C"])
+def test_invalid_or_unknown_conditions_are_explained(temperature, set_test_backend):
+    result = describe_material(
+        analytic_material(
+            metadata={
+                "rii": {
+                    "SPECS": {
+                        "n_is_absolute": "false",
+                        "wavelength_is_vacuum": 0,
+                        "temperature": temperature,
+                    }
+                }
+            }
+        ),
+        KEY,
+    )
+    assert result.conditions.index_convention == "unknown"
+    assert result.conditions.wavelength_convention == "unknown"
+    assert result.conditions.temperature_c is None
+    assert len(result.conditions.notes) == 3
+
+
+@pytest.mark.parametrize("absolute", [None, False, True])
+def test_native_thermal_reference_is_attributed_without_normalizing(
+    absolute, set_test_backend
+):
+    specs = {"temperature": "20 °C"}
+    if absolute is not None:
+        specs["n_is_absolute"] = absolute
+    result = describe_material(
+        analytic_material(
+            thermal={
+                "kind": "schott",
+                "coefficients": [1e-6, 0, 0, 0, 0, 0],
+                "reference_temperature_c": 40,
+            },
+            metadata={"rii": {"SPECS": specs}},
+        ),
+        KEY,
+    )
+    assert result.conditions.temperature_c == 40
+    assert result.conditions.pressure_atm == 1
+    assert result.conditions.wavelength_convention == "unknown"
+    assert result.conditions.index_convention == (
+        "absolute" if absolute else "air-relative"
+    )
+    assert "Live thermal reference temperature differs" in result.conditions.notes[0]
+    if absolute:
+        assert "conflicts" in result.conditions.notes[1]
+    assert result.nd.value == pytest.approx(1.5 + 0.02 / D_LINE_UM**2)
+
+
+def test_file_active_thermal_conditions_retain_live_temperature(set_test_backend):
+    material = Material("N-BK7", catalog="schott")
+    material._t0 = 40
+    result = describe_material(material, KEY)
+    assert result.conditions.temperature_c == 40
+    assert result.conditions.pressure_atm == 1
+    assert (
+        result.conditions
+        == describe_material(material.to_owned_material(), KEY).conditions
+    )
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"index_convention": "relative"},
+        {"wavelength_convention": "relative"},
+        {"temperature_c": float("nan")},
+        {"temperature_c": -273.15},
+        {"pressure_atm": -1},
+        {"pressure_atm": float("inf")},
+    ],
+)
+def test_reference_conditions_validate_quantities(kwargs):
+    with pytest.raises(ValueError):
+        ReferenceConditions(**kwargs)
+
+
+def test_reference_conditions_are_immutable():
+    sources, notes = ["RII SPECS.temperature"], ["Example"]
+    conditions = ReferenceConditions(sources=sources, notes=notes, pressure_atm=0)
+    sources.clear()
+    notes.clear()
+    assert conditions.sources == ("RII SPECS.temperature",)
+    assert conditions.notes == ("Example",)
+    with pytest.raises(FrozenInstanceError):
+        conditions.temperature_c = 20
+
+
+def test_qualified_catalog_filter_separates_same_catalog_names():
+    a = summary()
+    b = replace(a, key=MaterialKey("other", a.key.catalog, a.key.record_id))
+    data = MaterialSnapshot((STAMP, SourceStamp("other", "1")), (a, b))
+    keys = [["other", "Synthetic"]]
+    query = MaterialQuery(catalog_keys=keys)
+    keys[0][0] = "changed"
+    assert query.catalog_keys == (("other", "Synthetic"),)
+    assert tuple(m.key for m in query_materials(data, query).matches) == (b.key,)
+    assert len(query_materials(data, MaterialQuery(catalog_keys=None)).matches) == 2
+    assert not query_materials(data, MaterialQuery(catalog_keys=())).matches
+    # Exact qualified identity does not case-fold; legacy catalog labels still do.
+    assert not query_materials(
+        data, MaterialQuery(catalog_keys=(("other", "synthetic"),))
+    ).matches
+    assert (
+        len(query_materials(data, MaterialQuery(catalogs=("synthetic",))).matches) == 2
+    )
+
+
+@pytest.mark.parametrize("keys", [("ab",), (("a",),), (("a", "b", "c"),), ((1, "b"),)])
+def test_invalid_qualified_catalog_filter_is_rejected(keys):
+    with pytest.raises(ValueError, match="exact source/catalog"):
+        MaterialQuery(catalog_keys=keys)
 
 
 def analytic_material(**kwargs):

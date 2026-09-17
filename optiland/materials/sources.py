@@ -1,7 +1,8 @@
 """Captured material sources and atomic, Qt-free ingestion for material browsers.
 
-File requests are local locators. Ingestion reads each selected file once, hashes
-those bytes and produces self-contained summaries. Subsequent queries never
+File requests are local locators. Record ingestion hashes the exact bytes it
+parses and produces self-contained summaries. Directory discovery may first read
+YAML metadata through the existing registration parser. Subsequent queries never
 reopen files or resolve material names. Source identifiers are caller-owned;
 content generations describe the data actually read, not filesystem timestamps.
 """
@@ -10,6 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import warnings
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -26,7 +28,8 @@ from optiland.materials.properties import (
     SourceStamp,
     describe_material,
 )
-from optiland.materials.registry import RegistryEntry
+from optiland.materials.registry import MaterialRegistry, RegistryEntry
+from optiland.materials.warnings import OptilandMaterialWarning
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable
@@ -64,6 +67,40 @@ class RegistrySource:
         _entries(self, self.entries, RegistryEntry)
         if any(entry.source_id != self.source_id for entry in self.entries):
             raise ValueError("Registry entries must belong to the requested source")
+
+
+@dataclass(frozen=True)
+class InstalledSource:
+    """Discover and load installed records entirely in the calculation worker.
+
+    Construction performs no catalog discovery or filesystem access. The fixed
+    source identity matches installed :meth:`MaterialRegistry.entries` records.
+    """
+
+    source_id: str = "rii:installed"
+    group: str = "glass"
+
+    def __post_init__(self) -> None:
+        if self.source_id != "rii:installed":
+            raise ValueError("Installed source identity must be rii:installed")
+        _text(self.group)
+
+
+@dataclass(frozen=True)
+class DirectorySource:
+    """Stage a local RII directory using an isolated worker-owned registry.
+
+    The existing catalog parser supports an optional ``catalog.csv`` or the
+    directory's ``.yml`` files. Accepted records belong to the supplied source ID;
+    no entries are added to either process's global material registry.
+    """
+
+    source_id: str
+    path: str
+
+    def __post_init__(self) -> None:
+        _text(self.source_id)
+        _text(self.path)
 
 
 @dataclass(frozen=True)
@@ -190,7 +227,11 @@ def _read(path: str, limit: int) -> bytes:
 
 
 def load_source(
-    request: RegistrySource | GlcSource | OwnedSource,
+    request: RegistrySource
+    | InstalledSource
+    | DirectorySource
+    | GlcSource
+    | OwnedSource,
     *,
     checkpoint: Callable[[], None] | None = None,
 ) -> SourceResult:
@@ -201,11 +242,26 @@ def load_source(
     fail as a whole, following the existing decoder. RII read/parse failures
     produce inspectable diagnostic rows; an entirely unreadable nonempty RII
     source is marked failed, allowing a coordinator to retain its prior version.
+    Explicit directory imports are stricter: any failed or unsupported record
+    marks the whole staged replacement failed and preserves the prior catalog.
     """
-    if not isinstance(request, RegistrySource | GlcSource | OwnedSource):
+    if not isinstance(
+        request,
+        RegistrySource | InstalledSource | DirectorySource | GlcSource | OwnedSource,
+    ):
         raise TypeError("Unknown material source request")
     check = checkpoint or (lambda: None)
     check()
+    if isinstance(request, InstalledSource):
+        entries = tuple(
+            entry
+            for entry in MaterialRegistry().entries(group=request.group)
+            if entry.source_id == request.source_id
+        )
+        check()
+        request = RegistrySource(request.source_id, entries)
+    if isinstance(request, DirectorySource):
+        return _load_directory(request, check)
     if isinstance(request, GlcSource):
         return _load_glc(request, check)
     records, diagnostics, parts = [], [], []
@@ -292,6 +348,42 @@ def load_source(
     return SourceResult(
         MaterialSnapshot((stamp,), tuple(records)), tuple(diagnostics), failed
     )
+
+
+def _load_directory(
+    request: DirectorySource, check: Callable[[], None]
+) -> SourceResult:
+    registry = MaterialRegistry()
+    try:
+        if not Path(request.path).is_dir():
+            raise ValueError("RII catalog directory does not exist")
+        with warnings.catch_warnings(record=True) as notices:
+            warnings.simplefilter("always", OptilandMaterialWarning)
+            registry.load_catalog(request.path)
+        failures = [
+            str(notice.message)
+            for notice in notices
+            if str(notice.message).startswith("Failed to load material file")
+        ]
+        if failures:
+            raise ValueError("; ".join(failures))
+        entries = tuple(
+            replace(entry, source_id=request.source_id)
+            for entry in registry.registered_entries()
+        )
+        if not entries:
+            raise ValueError(
+                "RII catalog directory contains no indexed material records"
+            )
+    except (OSError, ValueError, TypeError, KeyError, AttributeError) as error:
+        diagnostic = SourceDiagnostic(request.source_id, None, str(error))
+        stamp = SourceStamp(request.source_id, _hash_parts((_json(str(error)),)))
+        return SourceResult(MaterialSnapshot((stamp,), ()), (diagnostic,), True)
+    check()
+    result = load_source(RegistrySource(request.source_id, entries), checkpoint=check)
+    # A directory import is an explicit staged replacement. Do not replace an
+    # accepted catalog with a partial parse or silently omit unsupported records.
+    return replace(result, failed=result.failed or bool(result.diagnostics))
 
 
 def _load_glc(request: GlcSource, check: Callable[[], None]) -> SourceResult:

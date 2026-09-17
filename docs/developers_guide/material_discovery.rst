@@ -92,10 +92,34 @@ can evaluate to zero as a modeling assumption. That is different from measured
 zero absorption or a measured transmission sample of zero. For an unsupported
 custom material family, availability can be unknown rather than guessed.
 
-Summaries use the material's default evaluation conditions. They do not introduce
-a common temperature or air/absolute-index conversion, and do not change the
-environment of an ``Optic``. A caller combining sources must retain and explain
-their conventions before interpreting small numerical differences.
+Summaries use the material's default evaluation conditions. Their immutable
+``conditions`` record preserves the native ``index_convention`` (``absolute``,
+``air-relative`` or ``unknown``), ``wavelength_convention`` (``vacuum``, ``air``
+or ``unknown``), ``temperature_c`` and ``pressure_atm``. ``sources`` attributes
+recognized metadata and model contracts; ``notes`` explains invalid or
+conflicting metadata. Missing numeric conditions are ``None``.
+
+The adapter recognizes explicit RII ``SPECS.n_is_absolute`` and
+``SPECS.wavelength_is_vacuum`` booleans, plus temperature strings explicitly in
+Celsius. A native thermal model supplies its live reference temperature and
+one-atmosphere reference pressure; this takes precedence over an older source
+temperature and records any disagreement. An explicit absolute-index source
+combined with a relative thermal model is retained with a conflict note. Catalog
+names and arbitrary descriptive metadata do not establish a convention.
+
+``declared_nd`` and ``declared_vd`` preserve separate, attributed RII
+``SPECS.nd``/``SPECS.Vd`` or GLC ``oslo.nd``/``oslo.vd`` values. They never replace
+the computed ``nd``/``vd`` used by queries. Declared indices must be finite and
+positive; declared Abbe values must be finite and nonzero, with negative values
+permitted. Invalid declarations remain explicit ``invalid`` property records;
+missing declarations remain ``missing``. An e-line Abbe model's parameters are
+not mislabeled as declared d-line coordinates.
+
+These lightweight fields survive removal of ``owned_data`` for query transport.
+They do not introduce a common temperature or air/absolute-index conversion and
+do not change the environment of an ``Optic``. A UI combining sources must show
+their conditions, unknowns and conflicts, and disclose when unlike native
+conditions share a view before interpreting small numerical differences.
 
 Snapshot ownership
 ------------------
@@ -418,9 +442,18 @@ This ranking does not replace the separate pass/fail bounds.
 ``MaterialQuery`` also accepts source identifiers, catalog names and a
 case-insensitive substring filter for display names or record identifiers.
 Catalog names compare without case sensitivity; source identifiers compare
-exactly. Empty filter tuples impose no restriction. With no coordinate targets,
+exactly. Empty ``source_ids`` or ``catalogs`` tuples impose no restriction.
+With no coordinate targets,
 records with unavailable coordinates remain inspectable and ties follow the
 identity order.
+
+For independently checked catalogs with equal names in different sources, use
+``catalog_keys=(("source-a", "SCHOTT"), ("source-b", "Other"))``. Each pair
+matches the exact source and catalog identity, including case. ``catalog_keys``
+defaults to ``None`` (all catalogs); an empty tuple explicitly selects none.
+This prevents source and catalog filters from accidentally selecting their
+Cartesian product. Existing ``source_ids`` and ``catalogs`` filters still apply
+when supplied alongside qualified keys.
 
 An optional ``wavelength_range_um`` requires the entire interval to lie within
 known n support. By default, records with unknown support are excluded when that
@@ -453,6 +486,23 @@ existing document state. Code constructing an isolated service supplies those
 queue; it does not create a competing process manager. Its worker handlers perform source
 reads, parsing, property evaluation and query filtering. Only copying already
 live optical parameters with ``capture_design`` belongs on the GUI thread.
+
+Use ``InstalledSource()`` to defer installed glass discovery as well as ingestion
+to that worker. Its source ID is ``rii:installed``; an explicit ``group`` selects
+another installed group. Do not call ``MaterialRegistry.entries()`` on Qt merely
+to prepare this request: first discovery can read catalogs and load plugins.
+``MaterialRegistry.registered_snapshot()`` safely copies already registered user
+metadata without creating the singleton, reading files or running plugins. Wrap
+those entries in ``RegistrySource("rii:user", entries)`` for worker ingestion.
+It returns an empty tuple if no process registry has been initialized.
+
+``DirectorySource(source_id, path)`` loads a selected local RII directory in an
+isolated worker registry, using the existing optional ``catalog.csv`` or ``.yml``
+parser. It changes neither process's global registry. A malformed or unsupported
+record fails that staged directory replacement as a whole, keeping any accepted
+earlier source intact. ``GlcSource`` provides the corresponding atomic GLC path.
+Assign distinct source IDs to independent user directories/files, even when
+their catalog or file names coincide.
 
 .. list-table:: Service integration points
    :header-rows: 1
@@ -500,8 +550,13 @@ the old records.
 
 Each new query supersedes its predecessor. Acceptance checks the request serial,
 captured source generations, current accepted sources, backend and any relevant
-document token. Successful source replacement or removal invalidates cached
-query results; connect ``query_invalidated`` to clear obsolete result state.
+document token. Successful source publication or removal invalidates pending and
+cached queries only when their ``source_ids`` and ``catalog_keys`` could include
+that source; connect ``query_invalidated`` to clear obsolete result state. A
+catalog-only query therefore survives publication of a refreshed current-design
+source. An unrestricted query is invalidated when any source is added, including
+a source that was absent from its captured snapshot. An explicitly empty
+``catalog_keys`` selection has no source generations and remains empty.
 ``state_changed`` exposes source transitions such as loading, ready, failed and
 cancelled, and ``busy`` reports pending source/query work.
 

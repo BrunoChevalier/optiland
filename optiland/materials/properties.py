@@ -9,8 +9,9 @@ evaluation even when a material's table policy permits clamping.
 from __future__ import annotations
 
 import math
+import re
 from contextlib import suppress
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Literal
 
 import optiland.backend as be
@@ -66,6 +67,7 @@ class PropertyValue:
     origin: str = "computed"
     unit: str = "1"
     reason: str | None = None
+    source: str | None = None
 
     def __post_init__(self) -> None:
         if self.status not in {"available", "missing", "unsupported", "invalid"}:
@@ -76,6 +78,44 @@ class PropertyValue:
             object.__setattr__(self, "value", float(self.value))
         elif self.value is not None:
             raise ValueError("Unavailable properties must not contain a value")
+
+
+@dataclass(frozen=True)
+class ReferenceConditions:
+    """Native coordinate conventions, without implicit optical normalization.
+
+    Unknown fields are not inferred from a catalog name. ``sources`` attributes
+    recognized metadata/model contracts; ``notes`` explains invalid/conflicting
+    metadata. A thermal model's live reference temperature takes precedence over
+    descriptive source metadata.
+    """
+
+    index_convention: Literal["air-relative", "absolute", "unknown"] = "unknown"
+    wavelength_convention: Literal["air", "vacuum", "unknown"] = "unknown"
+    temperature_c: float | None = None
+    pressure_atm: float | None = None
+    sources: tuple[str, ...] = ()
+    notes: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        if self.index_convention not in {"air-relative", "absolute", "unknown"}:
+            raise ValueError("Unknown index convention")
+        if self.wavelength_convention not in {"air", "vacuum", "unknown"}:
+            raise ValueError("Unknown wavelength convention")
+        if self.temperature_c is not None and (
+            not math.isfinite(self.temperature_c) or self.temperature_c <= -273.15
+        ):
+            raise ValueError("Reference temperature must be finite and above zero K")
+        if self.pressure_atm is not None and (
+            not math.isfinite(self.pressure_atm) or self.pressure_atm < 0
+        ):
+            raise ValueError("Reference pressure must be finite and nonnegative")
+        object.__setattr__(self, "sources", tuple(self.sources))
+        object.__setattr__(self, "notes", tuple(self.notes))
+
+
+def _missing_declared() -> PropertyValue:
+    return PropertyValue(None, "missing", origin="declared", reason="Not declared")
 
 
 @dataclass(frozen=True)
@@ -97,6 +137,9 @@ class MaterialSummary:
     has_extinction_data: bool | None
     has_transmission_data: bool | None
     owned_data: bytes | None = None
+    conditions: ReferenceConditions = field(default_factory=ReferenceConditions)
+    declared_nd: PropertyValue = field(default_factory=_missing_declared)
+    declared_vd: PropertyValue = field(default_factory=_missing_declared)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "n_range_um", _range(self.n_range_um))
@@ -172,6 +215,101 @@ def _index_at(
         )
 
 
+def _declared(data: dict, name: str, source: str, *, index: bool) -> PropertyValue:
+    if name not in data or data[name] is None:
+        return _missing_declared()
+    try:
+        raw = data[name]
+        if isinstance(raw, bool) or not isinstance(raw, int | float | str):
+            raise ValueError("Declared coordinate is not a scalar number")
+        value = float(raw)
+        if not math.isfinite(value) or (value <= 0 if index else value == 0):
+            raise ValueError("Declared coordinate is not physically interpretable")
+        return PropertyValue(value, "available", origin="declared", source=source)
+    except (ValueError, TypeError, OverflowError) as error:
+        return PropertyValue(
+            None, "invalid", origin="declared", reason=str(error), source=source
+        )
+
+
+def _attribution(
+    material: BaseMaterial,
+) -> tuple[ReferenceConditions, PropertyValue, PropertyValue]:
+    """Read recognized descriptive fields without promoting them to model values."""
+    specs, oslo, thermal = {}, {}, None
+    if isinstance(material, MaterialFile):
+        specs = material._source_metadata.get("SPECS", {})
+        if material._t0 is not None and be.any(material.thermdispcoef):
+            thermal = material._t0
+    elif isinstance(material, DataMaterial):
+        metadata = material.metadata
+        rii = metadata.get("rii", {})
+        specs = rii.get("SPECS", {}) if isinstance(rii, dict) else {}
+        oslo = metadata.get("oslo", {})
+        if material.definition.thermal is not None:
+            thermal = material.definition.thermal.reference_temperature_c
+    specs = specs if isinstance(specs, dict) else {}
+    oslo = oslo if isinstance(oslo, dict) else {}
+    index: Literal["air-relative", "absolute", "unknown"] = "unknown"
+    wave: Literal["air", "vacuum", "unknown"] = "unknown"
+    temperature, pressure = None, None
+    sources, notes = [], []
+    for name in ("n_is_absolute", "wavelength_is_vacuum"):
+        flag = specs.get(name)
+        if type(flag) is bool:
+            if name == "n_is_absolute":
+                index = "absolute" if flag else "air-relative"
+            else:
+                wave = "vacuum" if flag else "air"
+            sources.append(f"RII SPECS.{name}")
+        elif name in specs:
+            notes.append(f"Invalid RII SPECS.{name}; convention remains unknown")
+    if "temperature" in specs:
+        raw = specs["temperature"]
+        match = (
+            re.fullmatch(
+                r"\s*([+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?)\s*°?C\s*", raw
+            )
+            if isinstance(raw, str)
+            else None
+        )
+        if match and math.isfinite(float(match[1])) and float(match[1]) > -273.15:
+            temperature = float(match[1])
+            sources.append("RII SPECS.temperature")
+        else:
+            notes.append(
+                "Unrecognized RII SPECS.temperature; Celsius value unavailable"
+            )
+    if thermal is not None:
+        if temperature is not None and temperature != float(thermal):
+            notes.append(
+                "Live thermal reference temperature differs from source metadata"
+            )
+        temperature, pressure = float(thermal), 1.0
+        if index == "unknown":
+            index = "air-relative"
+        elif index == "absolute":
+            notes.append(
+                "Absolute source index conflicts with the relative thermal model"
+            )
+        sources.append("Native thermal-model reference (air at 1 atm)")
+    conditions = ReferenceConditions(
+        index, wave, temperature, pressure, tuple(sources), tuple(notes)
+    )
+    declared = (
+        (
+            _declared(specs, "nd", "RII SPECS.nd", index=True),
+            _declared(specs, "Vd", "RII SPECS.Vd (d/F/C)", index=False),
+        )
+        if specs
+        else (
+            _declared(oslo, "nd", "GLC oslo.nd", index=True),
+            _declared(oslo, "vd", "GLC oslo.vd (d/F/C)", index=False),
+        )
+    )
+    return conditions, *declared
+
+
 def describe_material(material: BaseMaterial, key: MaterialKey) -> MaterialSummary:
     """Evaluate native d-line index and Abbe coordinates without changing a material.
 
@@ -233,6 +371,7 @@ def describe_material(material: BaseMaterial, key: MaterialKey) -> MaterialSumma
         extinction,
         transmission,
         owned_data,
+        *_attribution(material),
     )
 
 
@@ -252,6 +391,8 @@ class MaterialQuery:
     Each requested coordinate requires its own positive finite tolerance. Both
     bounds must pass; normalized Euclidean distance only ranks passing records.
     Unknown wavelength support is excluded by default when a range is requested.
+    ``catalog_keys`` selects exact source/catalog pairs: ``None`` means all,
+    while an empty tuple explicitly selects none.
     """
 
     source_ids: tuple[str, ...] = ()
@@ -263,10 +404,22 @@ class MaterialQuery:
     vd_tolerance: float | None = None
     wavelength_range_um: tuple[float, float] | None = None
     unknown_policy: Literal["include", "exclude"] = "exclude"
+    catalog_keys: tuple[tuple[str, str], ...] | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "source_ids", tuple(self.source_ids))
         object.__setattr__(self, "catalogs", tuple(self.catalogs))
+        if self.catalog_keys is not None:
+            values = tuple(self.catalog_keys)
+            if any(not isinstance(key, tuple | list) for key in values):
+                raise ValueError("Catalog keys require exact source/catalog pairs")
+            keys = tuple(tuple(key) for key in values)
+            if any(
+                len(key) != 2 or any(not isinstance(part, str) for part in key)
+                for key in keys
+            ):
+                raise ValueError("Catalog keys require exact source/catalog pairs")
+            object.__setattr__(self, "catalog_keys", keys)
         if not isinstance(self.name, str) or not all(
             isinstance(value, str) for value in (*self.source_ids, *self.catalogs)
         ):
@@ -322,6 +475,11 @@ def _match(
 ) -> tuple[MaterialMatch | None, str | None]:
     if query.source_ids and material.key.source_id not in query.source_ids:
         return None, "source"
+    if (
+        query.catalog_keys is not None
+        and (material.key.source_id, material.key.catalog) not in query.catalog_keys
+    ):
+        return None, "catalog"
     if query.catalogs and material.key.catalog.casefold() not in {
         catalog.casefold() for catalog in query.catalogs
     }:

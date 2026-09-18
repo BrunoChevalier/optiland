@@ -323,6 +323,35 @@ lies outside known index support and preserves the current design and history.
 Remove the added wavelength before continuing. Changing the Materials search
 interval would only change the search; it would not repair this design condition.
 
+Review open surface-property drafts
+-----------------------------------
+
+Keep any experimental edits in your downloaded sample. In the Lens Data Editor,
+use **Toggle Surface Properties** from each surface's context menu to open the
+properties for surfaces 1 and 2 simultaneously. Their rows stay attached to their
+own surfaces; expanding another row does not retarget Materials.
+
+1. In surface 2's **Placement** tab, type ``0.1`` in the global X position but
+   do not press Enter or **Apply Placement**. This is an unapplied draft.
+2. From surface 1's Material cell, use ``Ctrl+M`` and apply the intended GLC
+   record. Return to the open Placement draft. Its typed value is retained,
+   but the changed document requires **Reload** before a placement can be
+   accepted. Choose Reload to discard the experiment and inspect current values.
+3. Shape fields normally commit a valid edit on Enter or focus loss. If an
+   unfinished **Shape** draft survives a document replacement, inspect its
+   status and choose **Reload Shape** before committing it. To demonstrate this
+   on a disposable aspheric sample, enter incomplete numeric text such as ``-``
+   in an exposed scalar coefficient. Leaving the field reports invalid input
+   and keeps the geometry unchanged. Replace the material, then use Reload Shape
+   to discard that retained text. A surface without additional shape parameters
+   has no editable Shape draft.
+4. Undo/Redo replaces the accepted document. Recapture the intended Material
+   cell explicitly, and reopen or reload property drafts as their status asks.
+   A preserved draft is not permission to apply old values to a different lens.
+
+This exercise demonstrates draft recovery, not a reason to add a decenter or
+aspheric coefficient to the singlet. Save only the material change you intend.
+
 Save and reopen without the catalog
 -----------------------------------
 

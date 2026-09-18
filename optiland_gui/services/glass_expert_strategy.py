@@ -6,11 +6,13 @@ queue events here, retaining complete frozen results without publishing them.
 
 from __future__ import annotations
 
+import json
 import pickle
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from .document_acceptance import AcceptanceCheck
+from .glass_expert_proof import native_fingerprint, verify_proof
 from .glass_expert_records import (
     FrozenDefinition,
     GlassExpertJobResult,
@@ -35,6 +37,8 @@ class _Owner:
     definitions: bytes = b""
     undo: dict | None = None
     request: object = None
+    checked_sources: dict = field(default_factory=dict)
+    prepared: object = None
 
 
 @dataclass
@@ -63,6 +67,9 @@ class GlassExpertStrategy:
         self._closed = False
         self._stopping = False
         self._cancelled = False
+        self._applying = False
+        self._accepted = False
+        self._verified_result = None
         self.prepared = None
         self.result = None
         self.message = "Configure material pools and prepare the frozen problem."
@@ -70,7 +77,7 @@ class GlassExpertStrategy:
 
     @property
     def busy(self):
-        return self._pending is not None or self._delivering
+        return self._pending is not None or self._delivering or self._applying
 
     def _definitions(self):
         return pickle.dumps(
@@ -129,6 +136,7 @@ class GlassExpertStrategy:
             raise ValueError("GlassExpert is closed.")
         if (
             self._delivering
+            or self._applying
             or self._stopping
             or self.service._request is not None
             or (self._pending is not None and self._pending.kind == "run")
@@ -155,6 +163,8 @@ class GlassExpertStrategy:
         self._captured = None
         self._owner = owner
         self.prepared = self.result = None
+        self._accepted = False
+        self._verified_result = None
         self._cancelled = False
         return self._submit(owner, "prepare", setup)
 
@@ -170,6 +180,9 @@ class GlassExpertStrategy:
                 "Prepare this exact frozen setup before running GlassExpert."
             )
         self.result = None
+        self._owner.prepared = prepared
+        self._accepted = False
+        self._verified_result = None
         self._cancelled = False
         return self._submit(self._owner, "run", prepared)
 
@@ -316,13 +329,17 @@ class GlassExpertStrategy:
         if self.busy:
             raise ValueError("Wait for the current GlassExpert operation to finish.")
         self._owner = self._captured = self.prepared = self.result = None
+        self._verified_result = None
         self.state, self.message = "empty", "GlassExpert setup and result discarded."
         self.service.glassExpertChanged.emit()
 
     def close(self):
+        if self._closed:
+            return
         self._closed = True
         self._pending = None
         self._captured = self._owner = self.prepared = self.result = None
+        self._verified_result = None
         self.state, self.message = "closed", "GlassExpert is closed."
         self.service.glassExpertChanged.emit()
 
@@ -336,6 +353,7 @@ class GlassExpertStrategy:
         connector = self.connector
         if owner.setup.baseline.backend != BackendConfig.capture():
             return AcceptanceCheck(False, "backend", "The calculation backend changed.")
+        definitions = self._definitions()
         current_optic = connector.get_optic()
         surfaces = () if current_optic is None else tuple(current_optic.surfaces)
         if (
@@ -347,7 +365,7 @@ class GlassExpertStrategy:
             or connector._undo_redo_manager.revision != owner.history_revision
         ):
             return AcceptanceCheck(False, "stale", "The design or history changed.")
-        if self._definitions() != owner.definitions:
+        if definitions != owner.definitions:
             return AcceptanceCheck(
                 False, "definitions", "Optimization definitions changed."
             )
@@ -357,8 +375,184 @@ class GlassExpertStrategy:
                 return AcceptanceCheck(
                     False, "source", "A frozen material source changed."
                 )
+            if owner.checked_sources.get(stamp.source_id) is source:
+                continue
+            # SourceResult and its records are immutable. Cache only by that
+            # exact object; a same-stamp reload must prove its payloads again.
+            records = {record.key: record for record in source.snapshot.materials}
+            try:
+                for target in owner.setup.targets:
+                    for candidate in target.pool.candidates:
+                        if candidate.key.source_id != stamp.source_id:
+                            continue
+                        record = records.get(candidate.key)
+                        if (
+                            record is None
+                            or record.owned_data is None
+                            or (
+                                canonical_json(json.loads(record.owned_data))
+                                != candidate.owned_data
+                            )
+                        ):
+                            raise ValueError("Exact source payload changed")
+            except (TypeError, ValueError, RecursionError):
+                return AcceptanceCheck(
+                    False, "source", "A frozen exact material payload changed."
+                )
+            owner.checked_sources[stamp.source_id] = source
         return AcceptanceCheck(True, "current", "Frozen inputs still match the design.")
 
     def freshness(self):
         """Presentation diagnostic, never an instruction to publish a candidate."""
         return self._freshness(self._owner)
+
+    def _acceptance(self, owner, result, *, applying=False, verify=False):
+        if self._closed:
+            return AcceptanceCheck(False, "closed", "GlassExpert is closed.")
+        if self._accepted:
+            return AcceptanceCheck(
+                False, "accepted", "This candidate was already accepted."
+            )
+        if (
+            self._pending is not None
+            or self._delivering
+            or self._stopping
+            or (self._applying and not applying)
+        ):
+            return AcceptanceCheck(
+                False, "busy", "Wait for the current GlassExpert operation."
+            )
+        if (
+            owner is None
+            or owner is not self._owner
+            or result is None
+            or result is not self.result
+            or self.prepared is None
+            or self.prepared is not owner.prepared
+            or self._cancelled
+        ):
+            return AcceptanceCheck(
+                False,
+                "no-candidate",
+                "Run GlassExpert and review a complete candidate first.",
+            )
+        check = self._freshness(owner)
+        if not check.allowed:
+            return check
+        if owner.request is None or not self.jobs.is_current(owner.request):
+            return AcceptanceCheck(
+                False,
+                "generation",
+                "A newer optimization or cancellation superseded this result.",
+            )
+        if not applying:
+            check = self.connector.document_acceptance.check_start("glass-expert")
+            if not check.allowed:
+                return check
+        if (
+            verify
+            or self._verified_result is None
+            or (
+                self._verified_result[0] is not result
+                or self._verified_result[1] is not self.prepared
+            )
+        ):
+            try:
+                verify_proof(result, self.prepared)
+                expected_mapping = tuple((i, i) for i in range(len(owner.surfaces)))
+                if result.row_mapping != expected_mapping:
+                    raise ValueError(
+                        "Candidate surface mapping is incomplete or changed order."
+                    )
+                if native_fingerprint(owner.undo) != result.proof.baseline_fingerprint:
+                    raise ValueError(
+                        "Candidate proof differs from the captured native baseline."
+                    )
+            except (TypeError, ValueError, AttributeError, KeyError) as error:
+                return AcceptanceCheck(False, "proof", str(error)[:2048])
+            self._verified_result = (result, self.prepared)
+        return AcceptanceCheck(
+            True, "ready", "Apply the reviewed whole candidate to this design."
+        )
+
+    def acceptance(self):
+        return self._acceptance(self._owner, self.result)
+
+    def apply(self):
+        if self._applying or self._delivering or self._closed:
+            return False
+        owner, result = self._owner, self.result
+        check = self._acceptance(owner, result, verify=True)
+        if not check.allowed:
+            self.message = check.message
+            self._delivering = True
+            try:
+                self.service.glassExpertChanged.emit()
+            finally:
+                self._delivering = False
+            return False
+        self._applying = True
+        self.state, self.message = "applying", "Applying the reviewed whole candidate…"
+        accepted = False
+        try:
+            self.service.stateChanged.emit(self.state)
+            if self._closed:
+                return False
+            self.service.glassExpertChanged.emit()
+            if not self._acceptance(owner, result, applying=True).allowed:
+                raise ValueError("Candidate ownership changed before restoration.")
+            candidate = result.candidate.restore()
+            if native_fingerprint(candidate) != result.proof.native_fingerprint:
+                raise ValueError(
+                    "Restored candidate differs from its native worker proof."
+                )
+            check = self._acceptance(owner, result, applying=True, verify=True)
+            if not check.allowed:
+                raise ValueError(check.message)
+            # This admission includes operations started by restore callbacks;
+            # the strategy's own short Apply flag is explicitly exempted.
+            self.connector.document_acceptance.require_start("glass-expert")
+            if result.proof.native_fingerprint == result.proof.baseline_fingerprint:
+                self._accepted = True
+                self.state, self.message = (
+                    "unchanged",
+                    "The exact native prescription is already assigned.",
+                )
+            else:
+                self.connector.document_acceptance.publish(
+                    candidate,
+                    owner="glass-expert",
+                    expected_optic=owner.optic,
+                    expected_edit_token=owner.edit_token,
+                    expected_history_revision=owner.history_revision,
+                    validate=lambda: (
+                        self._acceptance(owner, result, applying=True).allowed
+                    ),
+                    undo=owner.undo,
+                    row_mapping=result.row_mapping,
+                    affected_rows=tuple(range(len(owner.surfaces))),
+                )
+                accepted = True
+                if (
+                    self._closed
+                    or self._owner is not owner
+                    or self.result is not result
+                ):
+                    return accepted
+                self._accepted = True
+                self.state, self.message = (
+                    "applied",
+                    "The complete GlassExpert candidate was applied.",
+                )
+            self.service.stateChanged.emit(self.state)
+        except Exception as error:
+            if not self._closed:
+                self.state, self.message = "acceptance-failed", str(error)[:2048]
+                self.service.failed.emit(self.message)
+                if not self._closed:
+                    self.service.stateChanged.emit(self.state)
+        finally:
+            self._applying = False
+            if not self._closed:
+                self.service.glassExpertChanged.emit()
+        return accepted

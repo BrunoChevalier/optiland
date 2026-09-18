@@ -72,6 +72,7 @@ from optiland_gui.services.material_presets import (
     MaterialPresetStore,
     MaterialViewPreset,
 )
+from optiland_gui.widgets.glass_expert_panel import GlassExpertPanel
 from optiland_gui.widgets.glass_map import GlassMap, MapPoint
 from optiland_gui.widgets.material_apply_footer import MaterialApplyFooter
 from optiland_gui.widgets.material_compare_panel import (
@@ -98,6 +99,7 @@ class MaterialsPanel(QWidget):
     """
 
     selection_changed = Signal(object)
+    edit_objective_requested = Signal()
 
     def __init__(
         self,
@@ -109,6 +111,7 @@ class MaterialsPanel(QWidget):
     ) -> None:
         super().__init__(parent)
         self.setObjectName("MaterialsPanel")
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground)
         self.setAccessibleName("Materials workspace")
         self.connector = connector
         self.service = connector.materials
@@ -178,6 +181,14 @@ class MaterialsPanel(QWidget):
         self.tabs.addTab(self.browse, "&Browse")
         self.compare = MaterialComparePanel(self)
         self.tabs.addTab(self.compare, "&Compare")
+        self.expert = GlassExpertPanel(self.connector, self._expert_entries, self)
+        self.expert.edit_objective_requested.connect(self.edit_objective_requested)
+        self.expert.help_requested.connect(
+            lambda: QDesktopServices.openUrl(
+                QUrl("https://www.optiland.org/docs/gui_glass_expert_tutorial.html")
+            )
+        )
+        self.tabs.addTab(self.expert, "&GlassExpert")
         browse_layout = QVBoxLayout(self.browse)
         browse_layout.setContentsMargins(0, 4, 0, 0)
         tools = QHBoxLayout()
@@ -318,6 +329,39 @@ class MaterialsPanel(QWidget):
             label.setSizePolicy(policy)
         self.footer = MaterialApplyFooter(self.connector.material_apply, self)
         layout.addWidget(self.footer)
+        self.tabs.currentChanged.connect(self._task_changed)
+
+    def _task_changed(self, *args):
+        self.footer.setVisible(self.tabs.currentWidget() is not self.expert)
+
+    def _expert_entries(self, mode):
+        """Capture explicit identities; query edits never alter an existing pool."""
+        if mode == "selection":
+            keys = () if self.selected_key is None else (self.selected_key,)
+        elif mode == "pins":
+            keys = self.compare.pin_keys
+        elif mode == "results":
+            if (
+                not self._results_current
+                or self._accepted_query != self.make_query()
+                or self.service.last_query_result is not self._accepted_result
+            ):
+                raise ValueError(
+                    "Wait for the current Browse results before creating a pool."
+                )
+            keys = tuple(record.key for record in self._records)
+        else:
+            raise ValueError("Choose Selection, Pins or Current results.")
+        entries = []
+        for key in keys:
+            record = self.service.material(key)
+            source = self.service.source_result(key.source_id)
+            if record is None or source is None:
+                raise ValueError(
+                    "A chosen material is unavailable. Refresh its source first."
+                )
+            entries.append((record, source.snapshot.stamps[0]))
+        return tuple(entries)
 
     def _make_filters(self) -> QScrollArea:
         content = QWidget(self)
@@ -670,9 +714,13 @@ class MaterialsPanel(QWidget):
             self._query_timer.start()
 
     def _jobs_stopped(self) -> None:
+        if self._closed:
+            return
+        self._save_splitters()
         self._closed = True
         self.computations.close()
         self.export_dialog.close()
+        self.expert.close_service()
         self._plot_points.clear()
         self.footer.close_service()
         self.source_controls.close_service()
@@ -1555,6 +1603,8 @@ class MaterialsPanel(QWidget):
     def set_dock_visible(self, visible: bool) -> None:
         """Follow dock-tab visibility, distinct from child QWidget visibility."""
         self._dock_visible = visible
+        if self._closed:
+            return
         if visible:
             # Native layout can announce transient visibility while restoring
             # a dock stack. Start discovery only after that layout settles.
@@ -1567,11 +1617,19 @@ class MaterialsPanel(QWidget):
             self._cancel_computations()
 
     def hideEvent(self, event: QHideEvent) -> None:
+        if self._closed:
+            super().hideEvent(event)
+            return
         self._activation_timer.stop()
         self.sources.set_active(False)
         self._query_timer.stop()
         self.service.cancel_query()
         self._cancel_computations()
+        self._save_splitters()
+        super().hideEvent(event)
+
+    def _save_splitters(self) -> None:
+        """Persist while the settings owner is alive, before shutdown hides docks."""
         if self.settings is not None:
             self.settings.setValue(
                 "Materials/browseSplitter", self.browse_splitter.saveState()
@@ -1579,7 +1637,6 @@ class MaterialsPanel(QWidget):
             self.settings.setValue(
                 "Materials/mapSplitter", self.map_splitter.saveState()
             )
-        super().hideEvent(event)
 
     def resizeEvent(self, event: QResizeEvent) -> None:
         super().resizeEvent(event)

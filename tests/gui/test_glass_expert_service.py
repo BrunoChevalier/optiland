@@ -95,6 +95,7 @@ def prepare(fixture):
         None,
         "fixture",
         (),
+        (0.55,),
     )
     complete(fixture, request, prepared)
     return prepared
@@ -334,7 +335,9 @@ def test_old_preflight_cannot_publish_into_replacement(frozen):
     service = frozen.service
     old = service.prepare_glass_expert(frozen.setup)
     newer = service.prepare_glass_expert(frozen.setup)
-    prepared = PreparedGlassExpertSetup(frozen.setup, (), (), 9.0, (), None, None, ())
+    prepared = PreparedGlassExpertSetup(
+        frozen.setup, (), (), 9.0, (), None, None, (), (0.55,)
+    )
     complete(frozen, old, prepared)
     assert service.is_running and service.glass_expert_prepared() is None
     complete(frozen, newer, prepared)
@@ -364,7 +367,15 @@ def test_wrong_worker_identity_fails_without_mutation(frozen, kind):
     if kind == "prepare":
         request = service.prepare_glass_expert(frozen.setup)
         bad = PreparedGlassExpertSetup(
-            replace(frozen.setup, run_id="wrong"), (), (), 1, (), None, None, ()
+            replace(frozen.setup, run_id="wrong"),
+            (),
+            (),
+            1,
+            (),
+            None,
+            None,
+            (),
+            (0.55,),
         )
     else:
         request = service.run_glass_expert(prepare(frozen))

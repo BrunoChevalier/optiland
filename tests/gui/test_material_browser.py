@@ -117,6 +117,8 @@ class Surface:
 class Jobs(QObject):
     stopped = Signal()
     finished = Signal(object)
+    progress = Signal(object, dict)
+    state_changed = Signal(object, str)
 
     def cancel_target(self, target):
         pass
@@ -148,13 +150,44 @@ class NoTargetApply(QObject):
         raise AssertionError("A browser without a captured target cannot apply")
 
 
-class MemoryArtifacts:
+class MemoryArtifacts(QObject):
+    state_changed = Signal(str, bool, bool)
+
     def __init__(self):
+        super().__init__()
         self.requests = []
 
     def request_artifact(self, path, artifact):
         self.requests.append((path, artifact))
         return SimpleNamespace(path=path, artifact=artifact)
+
+
+class NoOptimization(QObject):
+    """An idle optimizer boundary for browsing-only presentation tests."""
+
+    glassExpertChanged = Signal()
+    glassExpertProgress = Signal(object)
+    stateChanged = Signal(str)
+    is_running = False
+
+    def glass_expert_prepared(self):
+        return None
+
+    def glass_expert_result(self):
+        return None
+
+    def glass_expert_status(self):
+        return "empty", "Configure an optimization problem."
+
+    def glass_expert_acceptance(self):
+        return SimpleNamespace(allowed=False, message="No candidate.")
+
+    def glass_expert_freshness(self):
+        return self.glass_expert_acceptance()
+
+
+class NoAcceptance(QObject):
+    state_changed = Signal()
 
 
 def make_connector(surfaces=()):
@@ -165,6 +198,10 @@ def make_connector(surfaces=()):
         material_apply=NoTargetApply(),
         file_operations=MemoryArtifacts(),
         calculation_jobs=Jobs(),
+        _optimization_service=NoOptimization(),
+        document_acceptance=NoAcceptance(),
+        history=NoAcceptance(),
+        placement=NoAcceptance(),
         get_optic=lambda: optic,
     )
 

@@ -280,6 +280,63 @@ an already identical owned definition produces an unchanged outcome without a
 new undo entry. Converting an equivalent file lookup into an owned definition
 is a real persistence change.
 
+GlassExpert: search, review and accept a complete design
+--------------------------------------------------------
+
+The **GlassExpert** tab combines discrete exact-material choices with the
+continuous variables and operands configured in the existing Optimization
+editor. **Edit objective and continuous variables** opens that editor. Follow
+:doc:`gui_glass_expert_tutorial` for a complete synthetic example.
+
+In **Setup**, add each intended medium after a surface and explicitly set its
+pool from the inspected **Selection**, comparison **Pins** or Browse **Current
+results**. Eligible and excluded records retain their qualified source/catalog/
+record identifiers and reasons. The starting material is a separate reference;
+it is not automatically included in a pool. One candidate fixes a target, while
+at least one pool must contain more than one candidate. Pool creation runs in
+the shared worker and does not silently truncate the chosen entries.
+
+Set the global sample count, local neighbours, iteration limit, tolerance, seed
+and positive ``n_d``/``V_d`` distance scales. The sample count must fit the
+smallest nontrivial pool. These scales describe sampling geometry, independently
+of optical merit weights. The seeded farthest-point search is bounded and does
+not guarantee a global optimum.
+
+**Prepare current design** freezes the baseline, exact owned definitions,
+objective, bounds, source generations and backend. Review that summary before
+**Run frozen setup**. Preparation and Run leave the current document unchanged;
+**Stop** cancels the pending work. Setup controls and later Browse filtering do
+not silently replace the inputs of a retained frozen result.
+
+**Review** separates sum-squared merit, improvement, convergence and candidate
+eligibility. Its Changes, Operands, Trials and Warnings pages use the worker's
+frozen values. Every continuous value and exact material assignment belongs to
+the same candidate. Operand bounds remain objective terms; their displayed
+within/outside state is not an additional hard-constraint guarantee. A complete
+valid candidate can be explicitly accepted without improvement or convergence;
+failed, cancelled, incomplete or stale candidates cannot be applied.
+
+**Apply complete candidate** is the only in-place acceptance action. Freshness
+and conflict checks run again before one whole-document transaction and one Undo
+entry. It preserves the lens path and marks a changed prescription modified.
+An exactly unchanged native prescription does not create an Undo entry. Editing
+the lens or objective, replacing a source, changing the backend or superseding
+the run can revoke acceptance while retaining supported inspection/export.
+
+**Open candidate separately** validates the portable complete prescription in
+the worker and opens a new, modified, untitled lens window for ordinary optical
+analysis. The original document remains unchanged. This action is unavailable
+when the native components cannot be exported without losing behavior.
+
+Choose **Save run setup**, **Export script** or **Export native candidate** in
+the output control and click **Export…**. A run setup contains bounded embedded
+data and provenance. The script uses public core replay APIs and is not executed
+by export. Loading a setup is detached inspection/replay: files never carry live
+document authority. Missing or changed sources stay explicit, and same-name
+records are never substituted. Prepare the current design explicitly to acquire
+fresh authority. Output files leave the open lens path, dirty flag and history
+unchanged; ordinary File Save stores a lens after acceptance.
+
 Keyboard, focus and compact docks
 ---------------------------------
 

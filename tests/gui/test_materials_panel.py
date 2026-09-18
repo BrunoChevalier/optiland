@@ -80,6 +80,45 @@ def finish(panel):
     return panel.service.complete()
 
 
+def test_expert_pool_entries_use_exact_selection_pins_or_current_results(panel):
+    widget, connector, (a, b, missing) = panel
+    widget.select_key(a.key)
+    assert [r.key for r, _ in widget._expert_entries("selection")] == [a.key]
+    for record in (b, a):
+        widget.compare.pin(
+            record,
+            connector.materials.source_result(record.key.source_id).snapshot.stamps[0],
+        )
+    assert [r.key for r, _ in widget._expert_entries("pins")] == [b.key, a.key]
+    assert {r.key for r, _ in widget._expert_entries("results")} == {
+        a.key,
+        b.key,
+        missing.key,
+    }
+    widget.name_search.setText("no matches")
+    with pytest.raises(ValueError, match="current Browse"):
+        widget._expert_entries("results")
+    finish(widget)
+    assert widget._expert_entries("results") == ()
+    connector.materials.accepted.pop("catalog:b")
+    with pytest.raises(ValueError, match="unavailable"):
+        widget._expert_entries("pins")
+    with pytest.raises(ValueError, match="Choose"):
+        widget._expert_entries("implicit catalog")
+
+
+def test_expert_tab_has_distinct_apply_and_objective_handoff(panel):
+    widget, _, _ = panel
+    events = []
+    widget.edit_objective_requested.connect(lambda: events.append("objective"))
+    widget.tabs.setCurrentWidget(widget.expert)
+    assert widget.footer.isHidden()
+    QTest.mouseClick(widget.expert.objective_button, Qt.MouseButton.LeftButton)
+    assert events == ["objective"]
+    widget.tabs.setCurrentIndex(0)
+    assert not widget.footer.isHidden()
+
+
 def test_proxy_sort_and_keyboard_selection_keep_exact_same_name_identity(panel, qapp):
     widget, connector, records = panel
     original_token = connector.document_state.token

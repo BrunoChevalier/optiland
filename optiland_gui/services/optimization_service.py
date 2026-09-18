@@ -789,7 +789,7 @@ class OptimizationService(QObject):
 
     @Slot()
     def _glass_inputs_changed(self):
-        if self._glass_expert is not None:
+        if self._glass_expert is not None and not self._glass_expert._closed:
             self.glassExpertChanged.emit()
 
     def capture_glass_expert_setup(self, targets, settings=None):
@@ -818,6 +818,14 @@ class OptimizationService(QObject):
     def glass_expert_freshness(self):
         """Report input freshness; this diagnostic grants no Apply permission."""
         return self._glass_expert_strategy().freshness()
+
+    def glass_expert_acceptance(self):
+        """Check authority for the complete reviewed worker candidate."""
+        return self._glass_expert_strategy().acceptance()
+
+    def apply_glass_expert_candidate(self) -> bool:
+        """Explicitly publish one proven whole candidate as one Undoable change."""
+        return self._glass_expert_strategy().apply()
 
     def discard_glass_expert_candidate(self):
         self._glass_expert_strategy().discard()

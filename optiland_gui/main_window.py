@@ -983,6 +983,12 @@ class MainWindow(FramelessWindow):
                     jobs.shutdown()
             return
         logger.debug("Closing application.")
+        if hasattr(self, "panel_manager"):
+            # Floating docks are separate native windows. Hide them while Python
+            # and their settings/services are alive, before Qt tears down parents.
+            for dock in self.panel_manager.all_docks:
+                if dock.isFloating():
+                    dock.hide()
         if hasattr(self, "panel_manager") and self.panel_manager.python_terminal:
             self.panel_manager.python_terminal.shutdown_kernel()
         event.accept()

@@ -10,6 +10,7 @@ class MaterialExportDialog(QObject):
     """Retain detached output while choosing a path; borrow the shared writer."""
 
     message = Signal(str)
+    state_changed = Signal()
 
     def __init__(self, operations, parent):
         super().__init__(parent)
@@ -25,7 +26,7 @@ class MaterialExportDialog(QObject):
     def choose(self, artifact, extension, name):
         if self._closed:
             return
-        if extension not in ("csv", "png"):
+        if extension not in ("csv", "png", "json", "py"):
             raise ValueError("Unsupported material export format")
         if self._dialog is not None:
             self._dialog.raise_()
@@ -42,6 +43,7 @@ class MaterialExportDialog(QObject):
         dialog.selectFile(f"{name}.{extension}")
         dialog.finished.connect(self._chosen)
         dialog.open()
+        self.state_changed.emit()
 
     @Slot(int)
     def _chosen(self, result):
@@ -51,6 +53,7 @@ class MaterialExportDialog(QObject):
             return
         paths = dialog.selectedFiles()
         dialog.deleteLater()
+        self.state_changed.emit()
         if self._closed or result != QDialog.DialogCode.Accepted or not paths:
             return
         request = self.operations.request_artifact(paths[0], artifact)

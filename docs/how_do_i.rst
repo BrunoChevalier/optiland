@@ -231,6 +231,11 @@ Optimize a system
    * - let the optimizer choose the glasses?
      - :doc:`Tutorial 3e <examples/Tutorial_3e_Glass_Expert_Categorical_Optimization>`,
        :doc:`gallery/optimization/glass_expert_example`
+   * - optimize exact glass pools and review a whole candidate in the desktop GUI?
+     - :doc:`gui_glass_expert_tutorial`, :doc:`gui_materials`
+   * - replay a frozen GlassExpert setup without the GUI or original catalogs?
+     - :doc:`gui_glass_expert_tutorial`,
+       :doc:`api/optimization/optimization.glass_expert_replay`
    * - add my own operand (merit function term)?
      - :doc:`Tutorial 3c <examples/Tutorial_3c_User_Defined_Optimization>`
    * - scale variables so the optimizer behaves?

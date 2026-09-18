@@ -275,6 +275,10 @@ Follow :doc:`gui_materials_tutorial` for a worked catalog lookup, strict matchin
 criteria, same-name local RII/GLC records and an explicit Apply/Undo/save workflow
 using a self-contained sample lens. The walkthrough also compares spectral
 curves and measured transmission, saves named views and exports CSV/PNG evidence.
+Continue with :doc:`gui_glass_expert_tutorial` to freeze exact material pools,
+optimize a continuous variable, review a complete candidate and explicitly
+accept it with one Undo step. The **Help** button in Materials opens its guide;
+the GlassExpert page's **Help** opens the optimization walkthrough.
 
 This quickstart covered only the very basics. The Optiland GUI has many more features for detailed optical design and analysis. We encourage you to explore the menus, right-click options in different panels, and consult the other sections of the Optiland documentation for more in-depth information on specific functionalities.
 

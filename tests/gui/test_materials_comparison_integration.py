@@ -27,6 +27,8 @@ class ManualQueue(QObject):
     """Hold the shared worker boundary while testing native presentation."""
 
     finished = Signal(object)
+    progress = Signal(object, dict)
+    state_changed = Signal()
     stopped = Signal()
 
     def __init__(self, document):

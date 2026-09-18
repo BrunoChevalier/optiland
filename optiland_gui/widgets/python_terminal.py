@@ -17,8 +17,12 @@ Author: Manuel Fragata Mendes, 2025
 
 from __future__ import annotations
 
+import atexit
 import os
+import sys
+from contextlib import contextmanager
 
+from ipykernel.inprocess.ipkernel import InProcessInteractiveShell, InProcessKernel
 from PySide6.QtCore import QRegularExpression, QSize, Qt, Signal
 from PySide6.QtGui import (
     QAction,
@@ -47,6 +51,70 @@ from PySide6.QtWidgets import (
 )
 from qtconsole.inprocess import QtInProcessKernelManager
 from qtconsole.rich_jupyter_widget import RichJupyterWidget
+
+
+class _DocumentShell(InProcessInteractiveShell):
+    """Keep each embedded console's namespace and events out of the singleton."""
+
+    @classmethod
+    def instance(cls, *args, **kwargs):
+        return cls(*args, **kwargs)
+
+    def init_sys_modules(self):
+        # Like IPython's embedded shell, construction must not replace the
+        # application's __main__ module. Requests install their own module below.
+        pass
+
+
+@contextmanager
+def _active_document_shell(shell):
+    """Scope IPython's process-global lookup to one synchronous Qt request.
+
+    IPython's embedding implementation also saves/restores these singleton
+    slots. In-process dispatch is synchronous on the Qt thread; nested requests
+    restore their caller's shell, and exceptions restore the application state.
+    """
+    classes = tuple(type(shell)._walk_mro())
+    previous = tuple(cls._instance for cls in classes)
+    main_name = shell.user_module.__name__
+    absent = object()
+    main = sys.modules.get(main_name, absent)
+    for cls in classes:
+        cls._instance = shell
+    sys.modules[main_name] = shell.user_module
+    try:
+        yield
+    finally:
+        for cls, instance in zip(classes, previous, strict=True):
+            cls._instance = instance
+        if main is absent:
+            sys.modules.pop(main_name, None)
+        else:
+            sys.modules[main_name] = main
+
+
+class _DocumentKernel(InProcessKernel):
+    async def dispatch_shell(self, *args, **kwargs):
+        with _active_document_shell(self.shell):
+            return await super().dispatch_shell(*args, **kwargs)
+
+
+class _DocumentKernelManager(QtInProcessKernelManager):
+    def start_kernel(self, **kwargs):
+        self.kernel = _DocumentKernel(
+            parent=self, session=self.session, shell_class=_DocumentShell
+        )
+
+    def shutdown_kernel(self):
+        if self.kernel is None:
+            return
+        shell = self.kernel.shell
+        super().shutdown_kernel()
+        # Release the owned user objects and history thread now, rather than
+        # leaving closed document namespaces retained by Python's atexit list.
+        atexit.unregister(shell.atexit_operations)
+        with _active_document_shell(shell):
+            shell.atexit_operations()
 
 
 class PythonHighlighter(QSyntaxHighlighter):
@@ -262,7 +330,8 @@ class PythonTerminalWidget(QWidget):
         self.current_theme = theme
         self.untitled_script_counter = 0
 
-        self.kernel_manager = QtInProcessKernelManager()
+        self._kernel_closed = False
+        self.kernel_manager = _DocumentKernelManager()
         self.kernel_manager.start_kernel()
         self.kernel_client = self.kernel_manager.client()
         self.kernel_client.start_channels()
@@ -780,6 +849,13 @@ class PythonTerminalWidget(QWidget):
 
     def shutdown_kernel(self) -> None:
         """Shut down the Jupyter kernel cleanly on application exit."""
+        if self._kernel_closed:
+            return
+        self._kernel_closed = True
+        if self.kernel_manager.kernel is not None:
+            self.kernel_manager.kernel.shell.events.unregister(
+                "post_execute", self._on_kernel_execute
+            )
         if self.kernel_client and self.kernel_client.channels_running:
             self.kernel_client.stop_channels()
         if self.kernel_manager and self.kernel_manager.is_alive():

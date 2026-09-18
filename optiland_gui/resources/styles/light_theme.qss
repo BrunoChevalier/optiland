@@ -1,4 +1,13 @@
 /* Materials uses model/view tables and plain-text inspection. */
+QWidget#MaterialsPanel QPushButton:enabled {
+    color: #FFFFFF;
+}
+QWidget#MaterialsPanel QPushButton:disabled {
+    color: #626B73;
+    background-color: #E9ECEF;
+    border: 1px dashed #ADB5BD;
+    font-weight: normal;
+}
 QWidget#MaterialsPanel QTableView, QWidget#MaterialsPanel QTreeWidget,
 QWidget#MaterialsPanel QPlainTextEdit {
     background-color: #FFFFFF;

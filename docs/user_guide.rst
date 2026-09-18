@@ -86,3 +86,4 @@ optical system, plus the reference pages you will keep coming back to.
    gui_quickstart
    gui_materials
    gui_materials_tutorial
+   gui_glass_expert_tutorial

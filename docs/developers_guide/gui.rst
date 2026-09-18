@@ -328,8 +328,34 @@ GlassExpert completion retains a frozen result for inspection; it does not
 publish a document. The original optimizer's automatic-if-current behavior is
 unchanged. ``glass_expert_freshness`` is only a diagnostic: optical or metadata
 edits, history, source generations, backend or changed nested definitions can
-make a retained result stale. The subsequent desktop review/Apply workflow is a
-separate integration step, not authority carried by a worker result.
+make a retained result stale. ``glass_expert_acceptance`` checks whether the
+reviewed whole candidate can currently be accepted;
+``apply_glass_expert_candidate`` repeats the checks around restoration and the
+final shared publication boundary. Worker output alone never grants authority.
+
+``GlassExpertPanel`` owns explicit UI target/pool selection, settings drafts and
+frozen review pages. It uses ``GlassExpertPools`` to validate chosen exact records
+in the shared queue. ``MaterialsPanel`` supplies selection, pins or the current
+result set only when the user requests that pool. The existing Optimization
+editor remains the sole live objective/continuous-variable editor.
+
+The strategy retains the exact live optic/surfaces, edit and optical tokens,
+history revision, original definitions, request generation and source payloads.
+Its worker proof binds prepared/native bytes and the displayed review. Apply
+restores and verifies the complete candidate without optical computation on Qt,
+then publishes through ``DocumentAcceptance`` with a final read-only ownership
+predicate. The short publication guard covers silent history/model assignment
+and notifications. Undo/Redo restore the complete document, and a native no-op
+adds no history entry. Close/reentry cannot revive a superseded owner.
+
+The external manifest/replay boundary is separate. ``GlassExpertFiles`` reads and
+prepares supported exports in the same shared queue, then uses the existing
+artifact writer. ``optiland.optimization.glass_expert_replay`` is Qt-free and
+contains only bounded JSON/native reconstruction and public core replay. A loaded
+manifest is detached, including saved results; it cannot recreate an internal
+``CandidateProof`` or current-document owner. Replaying embedded pools does not
+resolve catalog names. Explicit preparation against today's design and source
+generations is required before in-place acceptance can become available.
 
 ``glass_expert_portability`` captures native baseline/candidate bytes in the
 worker, including untouched material and coating slots. Supported-behavior and
@@ -339,6 +365,14 @@ callable, live acceptance token or executable registry alias. If native replay
 cannot preserve the supported state, its reason is explicit and portable output
 is unavailable. Core API usage remains independent of PySide; see
 :doc:`../typed_glass_expert`.
+
+Each application window's embedded Console owns its IPython namespace and
+execution callbacks. Creating or closing a separate candidate window must not
+execute another window's callbacks or invalidate its document. The consoles
+still share the application process and are not isolation boundaries for long
+work or arbitrary native code. Scientific Run and GlassExpert computations use
+their worker services; console callbacks and kernels are cleaned up with their
+owning window before Qt objects are destroyed.
 
 Relevant tests are ``test_glass_expert_service.py``, ``test_glass_expert_jobs.py``
 and ``test_calculation_jobs.py`` under ``tests/gui/``, plus public core tests

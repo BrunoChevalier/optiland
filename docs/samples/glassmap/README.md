@@ -14,6 +14,13 @@ glasses. No commercial optical software is needed.
   `Synthetic crown`, round-trips its pool through JSON, and jointly optimizes
   front radius and material. It requires this revision's typed GlassExpert API,
   prints a bounded finite JSON report, and needs no other sample files or GUI.
+- The desktop GlassExpert tutorial uses `singlet.json` with the two entries in
+  `tutorial.glc`, front radius bounds 20–150 mm and the primary-wavelength `f2`
+  objective at 60 mm. It creates its own run manifest, public-core replay script
+  and complete native candidate through the application's Export controls.
+  Saved setups contain exact embedded definitions, including their original
+  source identities; loading one is detached inspection/replay, never authority
+  to replace a live document.
 - `rii/DEMO-CROWN.yml` is a local RII-format example with
   `n(lambda) = 1.5 + 0.02 / lambda**2`, explicit air-relative index,
   air wavelengths and a 20 degrees Celsius reference. Extinction is unknown.

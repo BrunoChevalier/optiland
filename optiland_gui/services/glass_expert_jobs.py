@@ -6,6 +6,7 @@ import json
 import math
 import pickle
 import time
+from dataclasses import replace
 
 import optiland.backend as be
 from optiland.fileio.optiland_handler import OptilandEncoder
@@ -19,6 +20,7 @@ from optiland.solves.quick_focus import QuickFocusSolve
 from optiland.solves.thickness import ThicknessSolve
 
 from .glass_expert_portability import capture_portable_optic
+from .glass_expert_proof import make_proof, native_fingerprint
 from .glass_expert_records import (
     MAX_DIAGNOSTIC,
     MAX_RUN_BYTES,
@@ -358,6 +360,7 @@ def _prepare(setup, cancelled):
             portable,
             replay_error,
             tuple(dict.fromkeys(warnings)),
+            wavelengths,
         )
     )
     return prepared, optic, problem, original_surfaces, geometry
@@ -389,6 +392,7 @@ def run(snapshot, parameters, progress, cancelled):
     started = time.monotonic()
     setup = _input(snapshot, parameters)
     prepared, optic, problem, surfaces, geometry = _prepare(setup, cancelled)
+    baseline_fingerprint = native_fingerprint(optic)
     last_report = -math.inf
 
     def report(update):
@@ -535,18 +539,23 @@ def run(snapshot, parameters, progress, cancelled):
             replay_error = str(error)[:MAX_DIAGNOSTIC]
             warnings.append("Candidate native export unavailable: " + replay_error)
     check_cancelled(cancelled)
-    return _budget(
-        GlassExpertJobResult(
-            setup.run_id,
-            setup.input_digest,
-            core_report,
-            candidate,
-            native,
-            mapping,
-            prepared.baseline_operands,
-            candidate_operands,
-            tuple(dict.fromkeys(warnings)),
-            replay_error,
-            time.monotonic() - started,
-        )
+    outcome = GlassExpertJobResult(
+        setup.run_id,
+        setup.input_digest,
+        core_report,
+        candidate,
+        native,
+        mapping,
+        prepared.baseline_operands,
+        candidate_operands,
+        tuple(dict.fromkeys(warnings)),
+        replay_error,
+        time.monotonic() - started,
     )
+    if candidate is not None:
+        outcome = replace(
+            outcome, proof=make_proof(outcome, optic, baseline_fingerprint)
+        )
+    outcome = _budget(outcome)
+    check_cancelled(cancelled)
+    return outcome

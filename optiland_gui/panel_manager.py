@@ -213,6 +213,9 @@ class PanelManager:
     def connect_signals(self) -> None:
         """Connect signals for the managed panels."""
         self.connector.requestBrowseMaterials.connect(self._browse_materials)
+        self.materials_panel.edit_objective_requested.connect(
+            lambda: self.on_sidebar_menu_selected("optimization")
+        )
         self.sidebar_content_widget.menuSelected.connect(self.on_sidebar_menu_selected)
         self.sidebar_content_widget.showWipMessage.connect(self._on_sidebar_wip_message)
         self.python_terminal.commandExecuted.connect(self.connector.opticChanged.emit)

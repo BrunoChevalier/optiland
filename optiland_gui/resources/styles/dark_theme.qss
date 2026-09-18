@@ -1,7 +1,14 @@
 /* Optiland Dark Theme */
 
 /* Materials uses model/view tables and plain-text inspection. */
+QWidget#MaterialsPanel QPushButton:disabled {
+    color: #A0A0A0;
+    background-color: #363636;
+    border: 1px dashed #646464;
+    font-weight: normal;
+}
 QWidget#MaterialsPanel, QWidget#MaterialsPanel QTabWidget::pane,
+QWidget#MaterialsPanel QTabWidget, QWidget#MaterialsPanel QTabBar,
 QWidget#MaterialsPanel QScrollArea, QWidget#MaterialsPanel QScrollArea > QWidget > QWidget {
     background-color: #202020;
     color: #E0E0E0;

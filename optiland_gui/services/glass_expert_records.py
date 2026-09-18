@@ -346,11 +346,24 @@ class PreparedGlassExpertSetup:
     portable_baseline: bytes | None
     replay_unavailable: str | None
     warnings: tuple[str, ...]
+    wavelengths_um: tuple[float, ...]
 
     def __post_init__(self):
         _freeze_sequences(
-            self, ("resolved_variables", "resolved_operands", "baseline_operands")
+            self,
+            (
+                "resolved_variables",
+                "resolved_operands",
+                "baseline_operands",
+                "wavelengths_um",
+            ),
         )
+        if not self.wavelengths_um:
+            raise ValueError("Prepared GlassExpert setup requires wavelengths.")
+        for wavelength in self.wavelengths_um:
+            _finite(wavelength, "Wavelength")
+            if wavelength <= 0:
+                raise ValueError("Wavelength must be positive.")
         _finite(self.baseline_merit, "Baseline merit")
         _freeze_diagnostics(self)
 
@@ -380,6 +393,25 @@ class GlassExpertProgress:
 
 
 @dataclass(frozen=True)
+class CandidateProof:
+    """Worker-owned consistency bindings, never imported acceptance authority."""
+
+    prepared_fingerprint: str
+    native_fingerprint: str
+    baseline_fingerprint: str
+    review_fingerprint: str
+
+    def __post_init__(self):
+        for value in vars(self).values():
+            if (
+                not isinstance(value, str)
+                or len(value) != 64
+                or any(character not in "0123456789abcdef" for character in value)
+            ):
+                raise ValueError("Candidate proof requires SHA256 fingerprints.")
+
+
+@dataclass(frozen=True)
 class GlassExpertJobResult:
     """A fully owned terminal candidate/report, never permission to publish it."""
 
@@ -394,6 +426,7 @@ class GlassExpertJobResult:
     warnings: tuple[str, ...]
     replay_unavailable: str | None
     elapsed: float
+    proof: CandidateProof | None = None
 
     def __post_init__(self):
         _freeze_sequences(self, ("baseline_operands", "candidate_operands"))

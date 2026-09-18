@@ -67,7 +67,7 @@ class DocumentAcceptance(QObject):
             return AcceptanceCheck(
                 False, "busy", "Wait for material Apply or cancel it first."
             )
-        if owner == "material":
+        if owner in {"material", "glass-expert"}:
             for attribute, label in (
                 ("history", "Undo/Redo"),
                 ("placement", "surface placement"),
@@ -82,13 +82,24 @@ class DocumentAcceptance(QObject):
                 return AcceptanceCheck(
                     False,
                     "busy",
-                    "Resolve the pending file load before material Apply.",
+                    "Resolve the pending file load before Apply.",
                 )
             optimizer = getattr(connector, "_optimization_service", None)
-            if optimizer is not None and optimizer.is_running:
-                return AcceptanceCheck(
-                    False, "busy", "Stop optimization before applying a material."
+            if optimizer is not None and (
+                optimizer.is_running
+                if owner == "material"
+                else (
+                    optimizer._request is not None
+                    or (
+                        optimizer._glass_expert is not None
+                        and (
+                            optimizer._glass_expert._pending is not None
+                            or optimizer._glass_expert._delivering
+                        )
+                    )
                 )
+            ):
+                return AcceptanceCheck(False, "busy", "Stop optimization before Apply.")
         return AcceptanceCheck(True, "ready", "Ready")
 
     def require_start(self, owner: str):

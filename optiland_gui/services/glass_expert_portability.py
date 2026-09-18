@@ -9,6 +9,7 @@ from optiland.coatings import FresnelCoating, ThinFilmCoating
 from optiland.fileio.optiland_handler import OptilandEncoder
 from optiland.materials.portability import capture_material
 from optiland.optic import Optic
+from optiland.physical_apertures import BaseAperture
 
 from .glass_expert_records import MAX_RUN_BYTES
 from .job_records import OpticSnapshot, check_cancelled
@@ -56,9 +57,24 @@ def _validate_behavior(optic):
                 getattr(coating, "stack", None),
             )
         )
+    components.extend(optic.solves.solves)
+    seen = set()
     for component in components:
         if component is None:
             continue
+        if id(component) in seen:
+            continue
+        seen.add(id(component))
+        if isinstance(component, BaseAperture):
+            components.extend(
+                value
+                for value in vars(component).values()
+                if isinstance(value, BaseAperture)
+            )
+        if type(component).__name__ == "FileAperture":
+            raise ValueError(
+                "File-backed apertures require an embedded native replay adapter."
+            )
         if not type(component).__module__.startswith("optiland."):
             raise ValueError(
                 "A custom optical component needs a native replay adapter."

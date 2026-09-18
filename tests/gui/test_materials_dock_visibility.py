@@ -5,7 +5,8 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import pytest
-from PySide6.QtCore import QCoreApplication, QEvent, QSettings, Qt, QTimer
+from PySide6.QtCore import QCoreApplication, QEvent, QSettings, Qt, QTimer, Signal
+from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QDockWidget, QMainWindow, QWidget
 
 from optiland.materials.registry import MaterialRegistry
@@ -129,12 +130,23 @@ def test_panel_manager_wires_native_tab_visibility(
     qapp, highlighting_connector, tmp_path, monkeypatch
 ):
     import optiland_gui.panel_manager as module
+    from optiland_gui.main_window import MainWindow
+    from optiland_gui.widgets.command_palette import CommandRegistry
 
     class Panel(QWidget):
+        commandExecuted = Signal()
+        _analysis_class_map = {}
+
         def __init__(self, *args, **kwargs):
             super().__init__()
             self.viewer2D = SimpleNamespace(set_interaction_state=lambda _: None)
             self.viewer3D = None
+
+        def update_theme(self, theme):
+            self.theme = theme
+
+        def set_theme(self, theme):
+            self.theme = theme
 
     for name in (
         "ViewerPanel",
@@ -155,6 +167,7 @@ def test_panel_manager_wires_native_tab_visibility(
     window.settings = QSettings(str(tmp_path / "docks.ini"), QSettings.Format.IniFormat)
     manager = PanelManager(window, highlighting_connector)
     manager.create_all_panels(window)
+    manager.connect_signals()
     panel = manager.materials_panel
     panel._query_timer.setInterval(0)
     try:
@@ -165,18 +178,98 @@ def test_panel_manager_wires_native_tab_visibility(
         assert panel.isVisible() and panel.visibleRegion().isEmpty()
         assert not loads and not queries
 
-        manager.on_sidebar_menu_selected("materials")
+        window.panel_manager = manager
+        window.command_registry = CommandRegistry()
+        window.action_manager = SimpleNamespace(get_action=lambda key: None)
+        MainWindow._register_palette_commands(window)
+        command = next(
+            c for c in window.command_registry.all_commands() if c.name == "Materials"
+        )
+        command.callback()
         drain_events(qapp)
         assert panel._dock_visible is True and panel.sources._active
         assert sum(isinstance(source, InstalledSource) for source in loads) == 1
         assert queries
 
+        panel.tabs.setCurrentWidget(panel.expert)
+        QTest.mouseClick(panel.expert.objective_button, Qt.MouseButton.LeftButton)
+        drain_events(qapp)
+        assert not manager.optimization_panel.visibleRegion().isEmpty()
+        manager.on_sidebar_menu_selected("materials")
+        drain_events(qapp)
+
         manager.analysis_dock.raise_()
         drain_events(qapp)
         assert panel._dock_visible is False and not panel.sources._active
         assert not panel._query_timer.isActive()
+
+        surface = highlighting_connector.get_optic().surfaces[1]
+        highlighting_connector.requestBrowseMaterials.emit(surface)
+        drain_events(qapp)
+        assert not panel.visibleRegion().isEmpty()
+        assert highlighting_connector.material_apply.target.surface is surface
+        manager.update_theme("light")
+        assert panel.map.ax.get_facecolor() == (1.0, 1.0, 1.0, 1.0)
     finally:
         window.hide()
         panel.sources.close()
         window.deleteLater()
         QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+
+
+def test_stopped_materials_preserves_layout_before_settings_owner_is_destroyed(
+    qapp, tmp_path
+):
+    from shiboken6 import delete
+
+    settings = QSettings(str(tmp_path / "closed.ini"), QSettings.Format.IniFormat)
+    connector = make_connector()
+    panel = MaterialsPanel(connector, settings=settings, autoload=False)
+    panel.show()
+    qapp.processEvents()
+    connector.calculation_jobs.stopped.emit()
+    assert settings.contains("Materials/browseSplitter")
+    assert settings.contains("Materials/mapSplitter")
+    delete(settings)
+    # A late native Hide/visibility event must not call through the dead borrowed
+    # settings wrapper or restart a stopped owner during parent destruction.
+    panel.hide()
+    panel.set_dock_visible(False)
+    panel.set_dock_visible(True)
+    panel._jobs_stopped()
+    assert not panel._activation_timer.isActive()
+    panel.deleteLater()
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+
+
+def test_accepted_main_window_close_hides_floating_native_docks(qapp):
+    from PySide6.QtGui import QCloseEvent
+
+    from optiland_gui.main_window import MainWindow
+
+    window = QMainWindow()
+    window.connector = SimpleNamespace(file_operations=None)
+    window._calculation_shutdown_complete = True
+    dock = QDockWidget("Floating Materials", window)
+    dock.setWidget(QWidget())
+    window.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, dock)
+    dock.setFloating(True)
+    other = QDockWidget("Docked", window)
+    other.setWidget(QWidget())
+    window.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, other)
+    stopped = []
+    window.panel_manager = SimpleNamespace(
+        all_docks=[dock, other],
+        python_terminal=SimpleNamespace(shutdown_kernel=lambda: stopped.append(True)),
+    )
+    window.show()
+    dock.show()
+    qapp.processEvents()
+    assert dock.isVisible()
+    event = QCloseEvent()
+    MainWindow.closeEvent(window, event)
+    assert event.isAccepted() and not dock.isVisible()
+    assert stopped == [True]
+    window.hide()
+    window.deleteLater()
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)

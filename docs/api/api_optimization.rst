@@ -23,8 +23,6 @@ Core Functionalities
    :caption: Optimization Modules
 
    optimization.problem
-   optimization.material_candidates
-   optimization.glass_expert_records
    optimization.optimizer.scipy.base
    optimization.optimizer.scipy.basin_hopping
    optimization.optimizer.scipy.differential_evolution
@@ -36,6 +34,13 @@ Core Functionalities
    optimization.optimizer.torch.base
    optimization.optimizer.torch.adam
    optimization.optimizer.torch.sgd
+
+.. toctree::
+   :maxdepth: 1
+
+   optimization/optimization.material_candidates
+   optimization/optimization.glass_expert_records
+   optimization/optimization.glass_expert_replay
 
 
 Operands

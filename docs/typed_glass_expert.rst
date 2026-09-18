@@ -11,6 +11,10 @@ catalog registration or network connection. The established catalog-name API is
 still demonstrated in
 :doc:`examples/Tutorial_3e_Glass_Expert_Categorical_Optimization`.
 
+For native desktop configuration, frozen review and explicit whole-candidate
+acceptance, follow :doc:`gui_glass_expert_tutorial`. Exported desktop scripts use
+the Qt-free :doc:`api/optimization/optimization.glass_expert_replay` API.
+
 Download :download:`typed_glass_expert.py <samples/glassmap/typed_glass_expert.py>`
 and run it in an environment containing this development revision:
 

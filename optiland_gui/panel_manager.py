@@ -96,6 +96,7 @@ class PanelManager:
         self.materials_panel = MaterialsPanel(
             self.connector, settings=self.main_window.settings
         )
+        self.materials_panel.update_theme(_DEFAULT_THEME)
         self.materials_dock = self._create_dock(
             self.materials_panel, "MaterialsDock", "Materials"
         )

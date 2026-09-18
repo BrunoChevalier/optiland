@@ -75,7 +75,9 @@ class GlassMap(QWidget):
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self.figure = Figure(figsize=(6, 4), dpi=100)
+        # Tick precision changes during navigation. Measure the labels on each
+        # draw instead of reserving a fixed margin that can clip a wider title.
+        self.figure = Figure(figsize=(6, 4), dpi=100, layout="constrained")
         self.canvas = FigureCanvasQTAgg(self.figure)
         self.canvas.setAccessibleName("Material property map")
         self.canvas.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
@@ -85,7 +87,6 @@ class GlassMap(QWidget):
             "Select a point to inspect it. Use the table for keyboard selection."
         )
         self.ax = self.figure.add_subplot()
-        self.figure.subplots_adjust(left=0.13, right=0.97, bottom=0.16, top=0.96)
         self.toolbar = _MapToolbar(self.canvas, self)
         self.toolbar.setAccessibleName("Material map navigation")
         self.toolbar.addSeparator()
@@ -135,6 +136,7 @@ class GlassMap(QWidget):
             parse_math=False,
         )
         self._annotation.set_clip_on(True)
+        self._annotation.set_in_layout(False)
         self._annotation.set_clip_path(self.ax.patch)
         self._annotation.get_bbox_patch().set_clip_path(self.ax.patch)
         self._target_box = Rectangle(
@@ -380,15 +382,7 @@ class GlassMap(QWidget):
         self._draw_overlays()
 
     def _on_resize(self, _event: ResizeEvent) -> None:
-        """Reserve physical label space even in a short docked canvas."""
-        width, height = self.canvas.get_width_height(physical=True)
-        ratio = self.canvas.device_pixel_ratio
-        self.figure.subplots_adjust(
-            left=min(0.35, 76 * ratio / max(width, 1)),
-            right=1 - min(0.15, 18 * ratio / max(width, 1)),
-            bottom=min(0.40, 56 * ratio / max(height, 1)),
-            top=1 - min(0.15, 18 * ratio / max(height, 1)),
-        )
+        """Invalidate display coordinates; layout measures labels on redraw."""
         self._redraw()
 
     def _refresh_hits(self) -> None:

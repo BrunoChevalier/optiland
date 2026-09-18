@@ -571,6 +571,38 @@ def test_dark_toolbar_icons_follow_local_palette_without_global_change(chart, qa
     assert qapp.palette() == original
 
 
+@pytest.mark.parametrize("ratio", [1, 1.5, 2])
+@pytest.mark.parametrize("size", [(400, 250), (1400, 650)])
+def test_zoom_precision_keeps_multiline_axes_inside_canvas(chart, qapp, ratio, size):
+    chart.resize(*size)
+    chart.set_points(
+        (point("A", 60, 0.55), point("B", 40, 0.65)),
+        ylabel="P_g,F\n(native conditions)",
+    )
+    qapp.processEvents()
+    chart.canvas._set_device_pixel_ratio(ratio)
+
+    def assert_labels_fit():
+        chart.canvas.draw()
+        renderer = chart.canvas.get_renderer()
+        canvas_box = chart.figure.bbox
+        for axis in (chart.ax.xaxis, chart.ax.yaxis):
+            box = axis.get_tightbbox(renderer)
+            assert box.x0 >= 0 and box.y0 >= 0
+            assert box.x1 <= canvas_box.width and box.y1 <= canvas_box.height
+
+    baseline = chart.view_bounds()
+    for ymin, ymax in ((0.525, 0.675), (0.550001, 0.550009), (1e5, 1e5 + 0.001)):
+        chart.set_view_bounds(39, 61, ymin, ymax)
+        assert_labels_fit()
+        assert chart.view_bounds() == (61, 39, ymin, ymax)
+    chart.toolbar.back()
+    assert_labels_fit()
+    chart.toolbar.home()
+    assert_labels_fit()
+    assert chart.view_bounds() == baseline
+
+
 def test_long_hover_label_leaves_no_pixels_outside_retained_blit_region(chart, qapp):
     a = point("LONG NAME " * 50)
     chart.resize(400, 300)

@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 from PySide6.QtCore import QCoreApplication, QEvent, QSettings, Qt, QTimer, Signal
+from PySide6.QtGui import QColor, QPalette
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QDockWidget, QMainWindow, QWidget
 
@@ -130,6 +132,7 @@ def test_panel_manager_wires_native_tab_visibility(
     qapp, highlighting_connector, tmp_path, monkeypatch
 ):
     import optiland_gui.panel_manager as module
+    from optiland_gui.config import THEME_DARK_PATH, THEME_LIGHT_PATH
     from optiland_gui.main_window import MainWindow
     from optiland_gui.widgets.command_palette import CommandRegistry
 
@@ -171,6 +174,9 @@ def test_panel_manager_wires_native_tab_visibility(
     panel = manager.materials_panel
     panel._query_timer.setInterval(0)
     try:
+        # Exercise startup construction plus real inherited QSS, without an
+        # explicit theme switch that would mask a light-only initial canvas.
+        window.setStyleSheet(Path(THEME_DARK_PATH).read_text(encoding="utf-8"))
         assert panel._dock_visible is False
         manager.setup_default_layout()
         window.show()
@@ -191,6 +197,27 @@ def test_panel_manager_wires_native_tab_visibility(
         assert sum(isinstance(source, InstalledSource) for source in loads) == 1
         assert queries
 
+        for plot in (panel.map, panel.compare):
+            assert QColor.fromRgbF(*plot.ax.get_facecolor()).lightness() < 60
+            toolbar = plot.toolbar
+            toolbar.set_message("(x, y) = (20.13, 0.6401)")
+            image = toolbar.grab().toImage()
+            assert image.pixelColor(image.width() // 2, 2).lightness() < 60
+            assert (
+                toolbar.locLabel.palette()
+                .color(QPalette.ColorRole.WindowText)
+                .lightness()
+                > 180
+            )
+            icon = toolbar.actions()[0].icon().pixmap(24, 24).toImage()
+            ink = [
+                icon.pixelColor(x, y).lightness()
+                for y in range(icon.height())
+                for x in range(icon.width())
+                if icon.pixelColor(x, y).alpha() > 200
+            ]
+            assert sum(ink) / len(ink) > 180
+
         panel.tabs.setCurrentWidget(panel.expert)
         QTest.mouseClick(panel.expert.objective_button, Qt.MouseButton.LeftButton)
         drain_events(qapp)
@@ -208,8 +235,10 @@ def test_panel_manager_wires_native_tab_visibility(
         drain_events(qapp)
         assert not panel.visibleRegion().isEmpty()
         assert highlighting_connector.material_apply.target.surface is surface
+        window.setStyleSheet(Path(THEME_LIGHT_PATH).read_text(encoding="utf-8"))
         manager.update_theme("light")
-        assert panel.map.ax.get_facecolor() == (1.0, 1.0, 1.0, 1.0)
+        for plot in (panel.map, panel.compare):
+            assert plot.ax.get_facecolor() == (1.0, 1.0, 1.0, 1.0)
     finally:
         window.hide()
         panel.sources.close()

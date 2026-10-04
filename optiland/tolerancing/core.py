@@ -92,6 +92,9 @@ class Tolerancing:
         Args:
             operand_type (str): The type of the operand.
             target (float): The target value of the operand (equality operand).
+                If target and both bounds are omitted, the current operand
+                value is captured as the target. When bounds are provided,
+                target remains None so compensation uses the allowed range.
             min_val (float): The operand should stay above this
                 value (inequality operand).
             max_val (float): The operand should stay below this
@@ -110,8 +113,6 @@ class Tolerancing:
             weight,
             input_data,
         )
-        if target is None:
-            new_operand.target = new_operand.value
         self.operands.append(new_operand)
 
     def add_perturbation(self, variable_type: str, sampler: BaseSampler, **kwargs):

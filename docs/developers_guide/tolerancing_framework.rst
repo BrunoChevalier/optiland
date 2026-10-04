@@ -14,6 +14,13 @@ The tolerancing framework is built around the following key components:
 
 - **Operands**: Metrics used to quantify the system’s performance or deviations due to perturbations. These are also reused from the optimization framework, enabling compatibility with a wide range of analysis metrics.
 
+  ``Tolerancing.add_operand`` uses the same target rules as optimization operands.
+  An explicit ``target`` defines an equality objective.
+  If ``target``, ``min_val``, and ``max_val`` are all omitted, the current metric value is captured once as the nominal target.
+  Supplying ``min_val`` and/or ``max_val`` instead defines an allowed range: the residual is zero inside the range, including its endpoints, and equals the distance to the nearest bound outside it.
+  Compensators therefore do not drive an acceptable perturbed value back to nominal merely because it differs from the original value.
+  Equality targets and bounds cannot be combined on one operand.
+
 - **Compensators**: Parameters that can be adjusted to minimize the impact of perturbations. Compensators operate by performing an optimization to restore system performance within acceptable limits.
 
 - **Perturbations**: Defined changes to system parameters (e.g., a shift in lens position or a change in curvature) that simulate real-world manufacturing tolerances or environmental variations.

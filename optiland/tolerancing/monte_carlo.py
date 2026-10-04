@@ -74,47 +74,56 @@ class MonteCarlo:
         The final results are converted to a pandas DataFrame and stored in
             the `_results` attribute.
 
+        Registered perturbations and compensators are reset to their nominal
+        values on exit, including when a trial raises an exception or is
+        interrupted. Results retain the trial values. If a run fails before
+        publishing its DataFrame, results from the last completed run remain
+        available and the exception propagates. Samplers are not rewound.
+
         """
         results = []
 
-        for _ in range(num_iterations):
-            # reset the tolerancing system
+        try:
+            for _ in range(num_iterations):
+                # reset the tolerancing system
+                self.tolerancing.reset()
+
+                # apply perturbations
+                for perturbation in self.tolerancing.perturbations:
+                    perturbation.apply()
+
+                # apply compensators
+                compensator_result = self.tolerancing.apply_compensators()
+
+                # evaluate operands
+                operand_values = self.tolerancing.evaluate()
+
+                # save results
+                result = {}
+
+                # save results - perturbation type & value
+                for perturbation in self.tolerancing.perturbations:
+                    key = str(perturbation.variable)
+                    result[key] = float(perturbation.value)
+
+                # save results - operand values
+                result.update(
+                    {
+                        f"{name}": value
+                        for name, value in zip(
+                            self.operand_names, operand_values, strict=False
+                        )
+                    },
+                )
+
+                # save results - compensator values
+                result.update(compensator_result)
+
+                results.append(result)
+
+            self._results = pd.DataFrame(results)
+        finally:
             self.tolerancing.reset()
-
-            # apply perturbations
-            for perturbation in self.tolerancing.perturbations:
-                perturbation.apply()
-
-            # apply compensators
-            compensator_result = self.tolerancing.apply_compensators()
-
-            # evaluate operands
-            operand_values = self.tolerancing.evaluate()
-
-            # save results
-            result = {}
-
-            # save results - perturbation type & value
-            for perturbation in self.tolerancing.perturbations:
-                key = str(perturbation.variable)
-                result[key] = float(perturbation.value)
-
-            # save results - operand values
-            result.update(
-                {
-                    f"{name}": value
-                    for name, value in zip(
-                        self.operand_names, operand_values, strict=False
-                    )
-                },
-            )
-
-            # save results - compensator values
-            result.update(compensator_result)
-
-            results.append(result)
-
-        self._results = pd.DataFrame(results)
 
     def get_results(self) -> pd.DataFrame:
         """Return the Monte Carlo analysis results.

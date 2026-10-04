@@ -63,6 +63,12 @@ class SensitivityAnalysis:
         evaluates operands, and saves the results. The results are stored in a
         pandas DataFrame in the _results attribute.
 
+        Registered perturbations and compensators are reset to their nominal
+        values on exit, including when a trial raises an exception or is
+        interrupted. Results retain the trial values. If a run fails before
+        publishing its DataFrame, results from the last completed run remain
+        available and the exception propagates. Samplers are not rewound.
+
         Raises:
             ValueError: If a perturbation sampler other than RangeSampler is
                 used.
@@ -70,47 +76,49 @@ class SensitivityAnalysis:
         """
         results = []
 
-        for perturbation in self.tolerancing.perturbations:
-            if not isinstance(perturbation.sampler, RangeSampler):
-                raise ValueError("Only range samplers are supported.")
+        try:
+            for perturbation in self.tolerancing.perturbations:
+                if not isinstance(perturbation.sampler, RangeSampler):
+                    raise ValueError("Only range samplers are supported.")
 
-            num_iterations = perturbation.sampler.size
-            for _ in range(num_iterations):
-                # reset system
-                self.tolerancing.reset()
+                num_iterations = perturbation.sampler.size
+                for _ in range(num_iterations):
+                    # reset system
+                    self.tolerancing.reset()
 
-                # apply perturbation
-                perturbation.apply()
+                    # apply perturbation
+                    perturbation.apply()
 
-                # apply compensators & save results
-                compensator_result = self.tolerancing.apply_compensators()
+                    # apply compensators & save results
+                    compensator_result = self.tolerancing.apply_compensators()
 
-                # evaluate operands
-                operand_values = self.tolerancing.evaluate()
+                    # evaluate operands
+                    operand_values = self.tolerancing.evaluate()
 
-                # save results - perturbation type & value
-                result = {
-                    "perturbation_type": str(perturbation.variable),
-                    "perturbation_value": perturbation.value,
-                }
+                    # save results - perturbation type & value
+                    result = {
+                        "perturbation_type": str(perturbation.variable),
+                        "perturbation_value": perturbation.value,
+                    }
 
-                # save results - operand values
-                result.update(
-                    {
-                        f"{name}": value
-                        for name, value in zip(
-                            self.operand_names, operand_values, strict=False
-                        )
-                    },
-                )
+                    # save results - operand values
+                    result.update(
+                        {
+                            f"{name}": value
+                            for name, value in zip(
+                                self.operand_names, operand_values, strict=False
+                            )
+                        },
+                    )
 
-                # save results - compensator values
-                result.update(compensator_result)
+                    # save results - compensator values
+                    result.update(compensator_result)
 
-                results.append(result)
+                    results.append(result)
 
-        self._results = pd.DataFrame(results)
-        self.tolerancing.reset()
+            self._results = pd.DataFrame(results)
+        finally:
+            self.tolerancing.reset()
 
     def get_results(self):
         """Returns the results of the sensitivity analysis.

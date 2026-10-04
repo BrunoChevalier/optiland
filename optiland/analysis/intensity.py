@@ -54,7 +54,9 @@ class RadiantIntensity(BaseAnalysis):
             determines how many rays to generate.
         data (list[list[tuple]]): Stores (intensity_map, angle_X_bin_edges,
             angle_Y_bin_edges, angle_X_bin_centers, angle_Y_bin_centers) for
-            each (field, wavelength).
+            each (field, wavelength). Each map has shape
+            (num_angular_bins_X, num_angular_bins_Y): map[i, j] corresponds
+            to X-angle bin i and Y-angle bin j, including empty maps.
         use_absolute_units (bool): If True (default), calculates intensity in
             W/sr. If False, result is a relative value normalized to the peak.
     """
@@ -191,8 +193,10 @@ class RadiantIntensity(BaseAnalysis):
         angle_X_centers = (angle_X_bins[:-1] + angle_X_bins[1:]) / 2
         angle_Y_centers = (angle_Y_bins[:-1] + angle_Y_bins[1:]) / 2
 
+        # Match histogram2d and the public data/cross-section convention: (X, Y).
+        map_shape = (self.num_angular_bins_X, self.num_angular_bins_Y)
         if not be.any(valid_mask):
-            power_map = be.zeros((self.num_angular_bins_Y, self.num_angular_bins_X))
+            power_map = be.zeros(map_shape)
         else:
             L_f, M_f, N_f, power_f = (
                 arr[valid_mask] for arr in [L_all, M_all, N_all, power_all]
@@ -203,26 +207,17 @@ class RadiantIntensity(BaseAnalysis):
 
             if be.get_backend() == "torch" and be.grad_mode.requires_grad:
                 ray_coords = be.stack([angle_X_deg, angle_Y_deg], axis=1)
-
-                if ray_coords.shape[0] == 0:
-                    power_map = be.zeros(
-                        (self.num_angular_bins_Y, self.num_angular_bins_X)
+                # The valid-mask check above guarantees a nonempty bundle.
+                indices, weights = be.get_bilinear_weights(
+                    ray_coords, (angle_X_bins, angle_Y_bins)
+                )
+                power_map = be.zeros(map_shape)
+                for i in range(4):
+                    power_map = power_map.index_put(
+                        (indices[:, i, 0].long(), indices[:, i, 1].long()),
+                        weights[:, i] * power_f,
+                        accumulate=True,
                     )
-                else:
-                    # call the bilinear weights function, idea from the
-                    # paper in its docstring
-                    indices, weights = be.get_bilinear_weights(
-                        ray_coords, (angle_X_bins, angle_Y_bins)
-                    )
-                    power_map = be.zeros(
-                        (self.num_angular_bins_Y, self.num_angular_bins_X)
-                    )
-                    for i in range(4):
-                        power_map = power_map.index_put(
-                            (indices[:, i, 1].long(), indices[:, i, 0].long()),
-                            weights[:, i] * power_f,
-                            accumulate=True,
-                        )
             else:
                 # Use histogram2d to bin the angles, faster using torch and GPU
                 power_map, _, _ = be.histogram2d(
@@ -237,18 +232,10 @@ class RadiantIntensity(BaseAnalysis):
             dx = be.radians(angle_X_bins[1] - angle_X_bins[0])
             dy = be.radians(angle_Y_bins[1] - angle_Y_bins[0])
 
-            # 2. Create meshgrid of bin centers (in Radians) for
-            # the Jacobian calculation
-            # Note: We must be careful with tensor shapes here to match
-            # power_map (Y, X)
+            # 2. Broadcast bin centers in radians along the map's (X, Y) axes.
             ax_c_rad = be.radians(angle_X_centers)
             ay_c_rad = be.radians(angle_Y_centers)
-
-            # Create grids. Meshgrid usually returns (Y, X) with
-            # indexing='ij' or 'xy' depending on backend
-            # For safety, let's explicitely broadcast
-            # resulting shape (Y, X) usually
-            AX, AY = be.meshgrid(ax_c_rad, ay_c_rad)
+            AX, AY = ax_c_rad[:, None], ay_c_rad[None, :]
 
             # 3. Compute Jacobian terms
             # J = (sec^2(tx) * sec^2(ty)) / (1 + tan^2(tx) + tan^2(ty))^(3/2)

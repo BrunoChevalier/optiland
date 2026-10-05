@@ -24,6 +24,41 @@ from optiland_gui.services.scientific_tasks import (
 from .test_calculation_jobs import wait_for
 
 
+def test_script_worker_crash_reports_failure_without_an_applicable_candidate(
+    qapp, scripts
+):
+    connector, service, output, statuses, results = scripts
+    original = connector.get_optic()
+    service.run("import os\nos._exit(3)")
+    wait_for(qapp, lambda: results, timeout=30)
+    assert results[-1].status == "failed"
+    assert "Calculation worker exited unexpectedly" in output[-1]
+    assert not service.can_apply()
+    assert connector.get_optic() is original
+
+
+def test_script_candidate_restore_failure_preserves_model_and_history(
+    scripts, monkeypatch
+):
+    from optiland_gui.services.job_records import OpticSnapshot
+
+    connector, service, output, statuses, results = scripts
+    original = connector.get_optic()
+    monkeypatch.setattr(service.jobs, "_dispatch", lambda: None)
+    service.run("print('result')")
+    service.candidate = OpticSnapshot.capture(original)
+    revision = connector._undo_redo_manager.revision
+
+    def reject(*args, **kwargs):
+        raise ValueError("candidate restore failed")
+
+    monkeypatch.setattr(OpticSnapshot, "restore", reject)
+    assert not service.apply_candidate()
+    assert connector.get_optic() is original
+    assert connector._undo_redo_manager.revision == revision
+    assert "candidate restore failed" in statuses[-1][0]
+
+
 @pytest.fixture
 def scripts(qapp, minimal_optic):
     connector = OptilandConnector()

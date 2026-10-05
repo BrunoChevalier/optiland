@@ -34,6 +34,40 @@ def parameters(operands):
     }
 
 
+def test_preview_failure_labels_rows_and_replacement_clears_old_values(
+    preview_service, monkeypatch
+):
+    state, jobs, service, definitions = preview_service
+    monkeypatch.setattr(jobs, "_dispatch", lambda: None)
+    service.refresh(explicit=True)
+    service._timer.stop()
+    service._submit()
+    request = service._request
+    service._install([{"index": 0, "value": 50.0, "error": ""}])
+    service._on_finished(
+        JobResult(request, "failed", error="worker failed", current=True)
+    )
+    assert service.rows == [{"value": 50.0, "error": "worker failed", "state": "error"}]
+    state.replace()
+    assert service.rows == [{"value": None, "error": "", "state": "stale"}]
+
+
+def test_preview_row_bound_reports_error_without_submitting(
+    preview_service, monkeypatch
+):
+    import optiland_gui.services.operand_previews as module
+
+    state, jobs, service, definitions = preview_service
+    monkeypatch.setattr(module, "MAX_OPERAND_ROWS", 1)
+    definitions.append({"type": "total_track"})
+    service.refresh(explicit=True)
+    service._timer.stop()
+    service._submit()
+    assert jobs._serial == 0
+    assert all(row["state"] == "error" for row in service.rows)
+    assert all("at most 1" in row["error"] for row in service.rows)
+
+
 def test_worker_matches_owned_reference_once_per_operand(minimal_optic, monkeypatch):
     snapshot = OpticSnapshot.capture(minimal_optic)
     before = pickle.dumps(minimal_optic.to_dict())

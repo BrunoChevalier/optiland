@@ -57,6 +57,75 @@ def edit_comment(connector, text):
     connector.notify_change("metadata", surface_indices=(1,), columns=(1,))
 
 
+def test_close_revision_change_aborts_and_explicit_cancel_resumes_requests(
+    file_operations, monkeypatch, tmp_path
+):
+    connector, operations, _, _, notifications = file_operations
+    dispatch = operations.jobs._dispatch
+    monkeypatch.setattr(operations.jobs, "_dispatch", lambda: None)
+    operations.request_output(tmp_path / "saved.json")
+    assert operations.has_pending_writes
+    operations.begin_close()
+    assert operations.request_load(tmp_path / "other.json") is None
+    assert operations.request_output(tmp_path / "other.json") is None
+    edit_comment(connector, "edit while draining")
+    assert not operations.confirm_close_revision()
+    assert any("Close cancelled" in text for text, _ in notifications)
+    operations.cancel_close()
+    assert operations.request_load(tmp_path / "other.json") is not None
+    monkeypatch.setattr(operations.jobs, "_dispatch", dispatch)
+    operations.cancel_pending()
+
+
+@pytest.mark.parametrize("failure", ["capture", "queue"])
+def test_output_cannot_start_preserves_document_and_destination(
+    file_operations, monkeypatch, tmp_path, failure
+):
+    from optiland_gui.services.job_records import OpticSnapshot
+
+    connector, operations, _, _, notifications = file_operations
+    original = connector.get_optic()
+    path = tmp_path / "saved.json"
+    path.write_bytes(b"previous valid contents")
+
+    def reject(*args, **kwargs):
+        raise RuntimeError("simulated request failure")
+
+    if failure == "capture":
+        monkeypatch.setattr(OpticSnapshot, "capture", reject)
+    else:
+        monkeypatch.setattr(operations.jobs, "submit", reject)
+    assert operations.request_output(path) is None
+    assert not operations.busy
+    assert connector.get_optic() is original and connector.is_modified()
+    assert path.read_bytes() == b"previous valid contents"
+    assert any("simulated request failure" in text for text, _ in notifications)
+
+
+def test_loaded_candidate_install_failure_preserves_current_document(
+    file_operations, monkeypatch, tmp_path
+):
+    from optiland_gui.services.job_records import JobResult, OpticSnapshot
+
+    connector, operations, _, _, notifications = file_operations
+    original = connector.get_optic()
+    token = connector.document_state.edit_token
+    snapshot = OpticSnapshot.capture(original)
+    monkeypatch.setattr(operations.jobs, "_dispatch", lambda: None)
+    request = operations.request_load(tmp_path / "candidate.json")
+
+    def reject(*args, **kwargs):
+        raise ValueError("candidate installation failed")
+
+    monkeypatch.setattr(operations.service, "_publish_candidate", reject)
+    operations._finished(JobResult(request, "succeeded", snapshot, current=True))
+    assert not operations.busy
+    assert connector.get_optic() is original and connector.is_modified()
+    assert connector.document_state.edit_token == token
+    assert operations.service.get_current_filepath() is None
+    assert any("candidate installation failed" in text for text, _ in notifications)
+
+
 def test_worker_staging_collision_keeps_other_writers_file(
     qapp, tmp_path, file_operations
 ):
@@ -89,9 +158,14 @@ def test_staging_receipt_survives_document_change_and_replaced_file_is_preserved
 ):
     connector, operations, progress, results, notifications = file_operations
     stall(operations, "prepare_output", "after", 10)
+    transaction_stages = []
+    operations.jobs.transaction_progress.connect(
+        lambda request, message: transaction_stages.append(message["stage"])
+    )
     request = operations.request_output(tmp_path / "saved.json")
     connector.set_surface_data(1, connector.COL_RADIUS, "55")
-    wait_for(qapp, lambda: request.context.staged_identity is not None)
+    wait_for(qapp, lambda: "Fixture completed prepare_output" in transaction_stages)
+    assert request.context.staged_identity is not None
     stage = Path(request.context.staged_path)
     replacement = tmp_path / "replacement.tmp"
     replacement.write_bytes(b"replacement belonging to another writer")

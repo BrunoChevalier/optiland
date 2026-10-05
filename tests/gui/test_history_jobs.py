@@ -14,6 +14,47 @@ from optiland_gui.services.prepared_optic import PreparedOptic
 from tests.gui.test_calculation_jobs import wait_for
 
 
+def test_history_queue_failure_preserves_model_and_stacks(
+    history_connector, monkeypatch
+):
+    connector = history_connector
+    original = connector.get_optic()
+    manager = connector._undo_redo_manager
+    revision, target = manager.revision, manager.peek("undo")
+    outcomes = []
+    connector.history.finished.connect(lambda *args: outcomes.append(args))
+
+    def reject(*args, **kwargs):
+        raise RuntimeError("Calculation queue is full")
+
+    monkeypatch.setattr(connector.calculation_jobs, "submit", reject)
+    assert connector.request_undo() is None
+    assert not connector.history.busy
+    assert connector.get_optic() is original
+    assert manager.revision == revision and manager.peek("undo") is target
+    assert outcomes == [("failed", "Calculation queue is full")]
+
+
+def test_invalid_prepared_history_result_cannot_advance_stacks(
+    history_connector, monkeypatch
+):
+    from optiland_gui.services.job_records import JobResult
+
+    connector = history_connector
+    original = connector.get_optic()
+    manager = connector._undo_redo_manager
+    revision, target = manager.revision, manager.peek("undo")
+    monkeypatch.setattr(connector.calculation_jobs, "_dispatch", lambda: None)
+    outcomes = []
+    connector.history.finished.connect(lambda *args: outcomes.append(args))
+    request = connector.request_undo()
+    connector.history._finished(JobResult(request, "succeeded", None, current=True))
+    assert not connector.history.busy
+    assert connector.get_optic() is original
+    assert manager.revision == revision and manager.peek("undo") is target
+    assert outcomes == [("failed", "Invalid prepared history result.")]
+
+
 @pytest.fixture
 def history_connector(qapp, minimal_optic):
     connector = OptilandConnector()

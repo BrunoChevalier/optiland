@@ -25,6 +25,30 @@ def parameters(tmp_path, file_format="optiland"):
     }
 
 
+def test_preparation_preserves_original_error_if_cleanup_also_fails(
+    minimal_optic, tmp_path, monkeypatch
+):
+    def broken_encoder(*args):
+        yield "partial contents"
+        raise OSError("simulated full disk")
+
+    def blocked_cleanup(*args, **kwargs):
+        raise PermissionError("staging file is locked")
+
+    monkeypatch.setattr(SpecialFloatEncoder, "iterencode", broken_encoder)
+    monkeypatch.setattr(file_tasks, "cleanup_output", blocked_cleanup)
+    with pytest.raises(OSError, match="simulated full disk") as caught:
+        file_tasks.prepare_output(
+            OpticSnapshot.capture(minimal_optic),
+            parameters(tmp_path),
+            lambda *a, **k: None,
+            threading.Event(),
+        )
+    assert caught.value.__notes__ == ["Staging cleanup failed: staging file is locked"]
+    assert (tmp_path / ".optiland-owned.tmp").exists()
+    assert not (tmp_path / "saved.json").exists()
+
+
 @pytest.mark.parametrize("file_format", ["unsupported", "optiland"])
 def test_failed_preparation_cleans_owned_stage_and_preserves_destination(
     minimal_optic, tmp_path, monkeypatch, file_format

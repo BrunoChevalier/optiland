@@ -264,16 +264,15 @@ class Surface3D(Surface2D):
 
         """
         x, y, z = self._compute_sag_3d()
-        x = be.to_numpy(x)
-        y = be.to_numpy(y)
-        z = be.to_numpy(z)
-
-        # Apply aperture filtering to the grid of points
+        # Aperture predicates operate on the active backend's grid. Convert
+        # coordinates and the resulting mask only at the VTK boundary.
         if self.surf.aperture is not None:
             mask = self.surf.aperture.contains(x, y)
         else:
-            r = np.hypot(x, y)
-            mask = r <= be.to_numpy(self.extent)
+            mask = be.hypot(x, y) <= self.extent
+        x = be.to_numpy(x)
+        y = be.to_numpy(y)
+        z = be.to_numpy(z)
 
         # Preserve the original row-major vertex order and vtkPoints float32
         # precision, but avoid one Python/VTK call per coordinate and quad.

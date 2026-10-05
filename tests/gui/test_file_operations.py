@@ -258,6 +258,27 @@ def test_unknown_publication_reconciles_and_close_drains_without_blocking(
     assert not list(tmp_path.glob(".optiland-*.tmp"))
 
 
+def test_unconfirmed_publication_preserves_destination_and_aborts_close(
+    qapp, tmp_path, file_operations
+):
+    connector, operations, progress, results, notifications = file_operations
+    path = tmp_path / "saved.json"
+    path.write_bytes(b"previous valid contents")
+    stall(operations, "publish_output", "before", 10)
+    operations.jobs._publication_deadline_ms = 500
+    aborted = []
+    operations.close_aborted.connect(lambda: aborted.append(True))
+    operations.request_output(path)
+    wait_for(qapp, lambda: "Fixture entered publish_output" in progress)
+    operations.begin_close()
+    wait_for(qapp, lambda: not operations.busy, timeout=30)
+    assert path.read_bytes() == b"previous valid contents"
+    assert connector.is_modified()
+    assert aborted == [True]
+    assert any("could not be confirmed" in text for text, severity in notifications)
+    assert not list(tmp_path.glob(".optiland-*.tmp"))
+
+
 def test_loaded_candidate_rechecks_edit_token_at_explicit_commit(
     qapp, tmp_path, file_operations, minimal_optic
 ):

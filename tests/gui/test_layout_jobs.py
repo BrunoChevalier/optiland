@@ -285,6 +285,7 @@ def test_window_close_keeps_qt_owners_until_worker_is_reaped(qapp):
     window = Window()
     window.connector = connector
     window.panel_manager = SimpleNamespace(
+        all_docks=[],
         python_terminal=SimpleNamespace(shutdown_kernel=lambda: closed.append(True))
     )
     window.show()

@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import numpy as np
-from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg, NavigationToolbar2QT
+from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
 from matplotlib.figure import Figure
 from matplotlib.patches import Rectangle
 from PySide6.QtCore import QEvent, QPoint, Qt, Signal
@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
 )
 
 from optiland.materials.properties import MaterialKey
+from optiland_gui.widgets.plot_navigation import PlotNavigationToolbar, valid_plot_view
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -49,12 +50,12 @@ class MapPoint:
             raise ValueError("Map coordinates must be finite")
 
 
-class _MapToolbar(NavigationToolbar2QT):
+class _MapToolbar(PlotNavigationToolbar):
     # Output is published by the document's shared artifact writer. Arbitrary
     # figure edits would disconnect displayed axes from their data provenance.
     toolitems = tuple(
         item
-        for item in NavigationToolbar2QT.toolitems
+        for item in PlotNavigationToolbar.toolitems
         if item[3] not in {"save_figure", "edit_parameters", "configure_subplots"}
     )
 
@@ -83,11 +84,13 @@ class GlassMap(QWidget):
         self.canvas.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.canvas.setMinimumSize(220, 160)
         self.canvas.installEventFilter(self)
-        self.canvas.setToolTip(
-            "Select a point to inspect it. Use the table for keyboard selection."
-        )
         self.ax = self.figure.add_subplot()
         self.toolbar = _MapToolbar(self.canvas, self)
+        self.canvas.setToolTip(
+            "Left-click selects a material. "
+            + self.canvas.toolTip()
+            + " Use the table for keyboard selection."
+        )
         self.toolbar.setAccessibleName("Material map navigation")
         self.toolbar.addSeparator()
         self.toolbar.addAction("Bounds…", self._show_bounds)
@@ -160,7 +163,6 @@ class GlassMap(QWidget):
             self.canvas.mpl_connect("button_press_event", self._on_click),
             self.canvas.mpl_connect("motion_notify_event", self._on_motion),
             self.canvas.mpl_connect("figure_leave_event", self._on_leave),
-            self.canvas.mpl_connect("scroll_event", self._on_scroll),
             self.canvas.mpl_connect("resize_event", self._on_resize),
         ]
         self.ax.callbacks.connect("xlim_changed", self._invalidate_view)
@@ -329,7 +331,7 @@ class GlassMap(QWidget):
         width, height = abs(x[1] - x[0]), abs(y[1] - y[0])
         x = (point.x - width / 2, point.x + width / 2)
         y = (point.y - height / 2, point.y + height / 2)
-        if not self._valid_view(x, y):
+        if not valid_plot_view(x, y):
             return False
         self.ax.set_xlim(x[::-1] if self._descending else x)
         self.ax.set_ylim(y)
@@ -420,7 +422,13 @@ class GlassMap(QWidget):
             self.selection_requested.emit(key)
 
     def _on_click(self, event: MouseEvent) -> None:
-        if self.toolbar.mode or event.button != 1 or event.inaxes is not self.ax:
+        if (
+            self.toolbar.mode
+            or self.toolbar.is_dragging
+            or event.button != 1
+            or event.inaxes is not self.ax
+            or not self.canvas.widgetlock.available(self.toolbar)
+        ):
             return
         hits = self._hits(event.x, event.y)
         if len(hits) == 1:
@@ -468,7 +476,9 @@ class GlassMap(QWidget):
     def _on_motion(self, event: MouseEvent) -> None:
         hits = (
             ()
-            if self.toolbar.mode or event.inaxes is not self.ax
+            if self.toolbar.mode
+            or self.toolbar.is_dragging
+            or event.inaxes is not self.ax
             else self._hits(event.x, event.y)
         )
         point = hits[0] if hits else None
@@ -513,48 +523,12 @@ class GlassMap(QWidget):
             self.ax.draw_artist(artist)
         self.canvas.blit(self._blit_bbox)
 
-    @classmethod
-    def _valid_view(cls, x: tuple[float, float], y: tuple[float, float]) -> bool:
-        return all(
-            all(math.isfinite(v) and abs(v) < cls._MAX_VIEW for v in limits)
-            and abs(limits[1] - limits[0])
-            > max(abs(limits[0]), abs(limits[1]), 1.0) * 1e-12
-            for limits in (x, y)
-        )
-
-    def _on_scroll(self, event: MouseEvent) -> None:
-        if (
-            self.toolbar.mode
-            or event.inaxes is not self.ax
-            or event.xdata is None
-            or event.ydata is None
-            or not math.isfinite(event.xdata)
-            or not math.isfinite(event.ydata)
-        ):
-            return
-        step = event.step
-        if not math.isfinite(step) or step == 0:
-            return
-        scale = 1.2 ** -max(-10, min(10, step))
-        x = tuple(
-            event.xdata + (edge - event.xdata) * scale for edge in self.ax.get_xlim()
-        )
-        y = tuple(
-            event.ydata + (edge - event.ydata) * scale for edge in self.ax.get_ylim()
-        )
-        if not self._valid_view(x, y):
-            return
-        self.ax.set_xlim(x)
-        self.ax.set_ylim(y)
-        self.toolbar.push_current()
-        self._redraw()
-
     def set_view_bounds(
         self, xmin: float, xmax: float, ymin: float, ymax: float
     ) -> None:
         """Apply ordered finite numeric bounds without changing selected identity."""
         x, y = (xmin, xmax), (ymin, ymax)
-        if xmin >= xmax or ymin >= ymax or not self._valid_view(x, y):
+        if xmin >= xmax or ymin >= ymax or not valid_plot_view(x, y):
             raise ValueError(
                 "Use finite limits with minimum less than maximum and a nonzero span."
             )
@@ -651,7 +625,7 @@ class GlassMap(QWidget):
             center_x, center_y = (x[0] + x[1]) / 2, (y[0] + y[1]) / 2
             x = tuple(center_x + (edge - center_x) * factor for edge in x)
             y = tuple(center_y + (edge - center_y) * factor for edge in y)
-            if self._valid_view(x, y):
+            if valid_plot_view(x, y):
                 self.set_view_bounds(*sorted(x), *sorted(y))
         elif key in (Qt.Key.Key_Left, Qt.Key.Key_Right, Qt.Key.Key_Up, Qt.Key.Key_Down):
             x, y = self.ax.get_xlim(), self.ax.get_ylim()
@@ -666,7 +640,7 @@ class GlassMap(QWidget):
                 else 0
             )
             moved_x, moved_y = (x[0] + dx, x[1] + dx), (y[0] + dy, y[1] + dy)
-            if self._valid_view(moved_x, moved_y):
+            if valid_plot_view(moved_x, moved_y):
                 self.set_view_bounds(*sorted(moved_x), *sorted(moved_y))
         else:
             return super().eventFilter(watched, event)
@@ -690,7 +664,7 @@ class GlassMap(QWidget):
             palette.setColor(role, QColor(foreground))
         self.toolbar.setPalette(palette)
         self.toolbar.setAutoFillBackground(True)
-        self.toolbar.update()
+        self.toolbar.finish_navigation()
         self.figure.set_facecolor(background)
         self.ax.set_facecolor(background)
         self.ax.tick_params(colors=foreground)

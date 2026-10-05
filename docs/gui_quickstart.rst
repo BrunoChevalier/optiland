@@ -67,7 +67,8 @@ When you first open the Optiland GUI, you'll see a main window containing severa
     All 2D plots share the same direct controls: **right-drag** or
     **middle-drag** pans, and the **mouse wheel** zooms around the pointer.
     Ordinary left-click is available for selection where the plot supports it
-    and does not pan. These defaults also apply to sag plots, analysis plots
+    (for example, selecting a material on the glass map); it does not pan.
+    These defaults also apply to Materials Compare, sag plots, analysis plots
     and optimizer candidate previews. There is currently no mouse-binding
     settings window.
 

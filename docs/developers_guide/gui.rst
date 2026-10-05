@@ -251,6 +251,11 @@ selection coordinates support only Locate and the selected outline; they never
 become matches, hit candidates or reset limits. Themes change local artists and
 toolbar palette without modifying global Matplotlib or application defaults.
 
+The glass map and comparison canvases use the shared
+``widgets.plot_navigation.PlotNavigationToolbar`` described in
+`Shared 2D plot navigation`_. Left-click selects a material on the map;
+right/middle drag and wheel zoom follow the common navigation contract.
+
 ``MaterialComparePanel`` keeps four ordered exact pins and native controls.
 ``MaterialComparisonService`` captures immutable source snapshots and validates
 the shared worker's source/backend/request generations for map coordinates,

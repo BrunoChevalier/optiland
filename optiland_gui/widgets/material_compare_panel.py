@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import numpy as np
-from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg, NavigationToolbar2QT
+from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
 from matplotlib.figure import Figure
 from PySide6.QtCore import (
     QAbstractTableModel,
@@ -51,6 +51,7 @@ from optiland_gui.models.materials_model import (
     MaterialsSortProxyModel,
     MaterialsTableModel,
 )
+from optiland_gui.widgets.plot_navigation import PlotNavigationToolbar
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -82,12 +83,12 @@ class ComparisonPin:
             raise ValueError("Comparison pins require an exact key and text labels")
 
 
-class _CompareToolbar(NavigationToolbar2QT):
+class _CompareToolbar(PlotNavigationToolbar):
     # All file publication belongs to the shared artifact owner. Figure editing
     # would also let the displayed quantity diverge from its immutable result.
     toolitems = tuple(
         item
-        for item in NavigationToolbar2QT.toolitems
+        for item in PlotNavigationToolbar.toolitems
         if item[3] not in {"save_figure", "edit_parameters", "configure_subplots"}
     )
 
@@ -902,6 +903,7 @@ class MaterialComparePanel(QWidget):
         )
 
     def update_theme(self, theme):
+        self.toolbar.finish_navigation()
         self._theme = theme
         dark = "dark" in theme.casefold()
         background, foreground = (

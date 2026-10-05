@@ -85,8 +85,15 @@ selection without changing zoom or filters. **Reveal selected** explicitly clear
 name, patent and wavelength restrictions and enables its catalog. A removed
 source leaves the last inspected information visibly unavailable.
 
-Use the plot toolbar for pan, rectangle zoom, reset and Back/Forward history.
-Mouse-wheel zoom is centered on the pointer. The **Bounds** control sets numeric
+**Left-click** selects a material. **Right-drag** or **middle-drag** pans, and
+the **mouse wheel** zooms around the pointer. These defaults are shared with
+other 2D plots, including the lens layout and Materials Compare; there is
+currently no mouse-binding settings window. Use the **Pan** tool for left-drag
+panning or **Zoom to rectangle** (magnifier with a dotted rectangle) for
+left-drag box zoom. ``Escape`` exits the tool. Right/middle-drag and the wheel
+remain available when a tool is selected; the wheel does not interrupt a drag.
+The toolbar also provides reset and Back/Forward history.
+The **Bounds** control sets numeric
 axis limits. **Apply** or ``Enter`` applies valid bounds and keeps the dialog
 open. Invalid or unordered limits show a message and leave the view unchanged.
 **Close** or ``Escape`` dismisses the dialog.

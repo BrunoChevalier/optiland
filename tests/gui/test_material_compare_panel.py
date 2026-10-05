@@ -28,6 +28,7 @@ from optiland_gui.widgets.material_compare_panel import (
     ComparisonPin,
     MaterialComparePanel,
 )
+from tests.gui.test_calculation_jobs import wait_for
 
 
 @pytest.fixture
@@ -296,7 +297,7 @@ def test_locale_partial_interval_and_zero_thickness(compare, records):
     [("wave_min", "0.52", 0.52), ("thickness", "7.5", 7.5), ("samples", "501", 501)],
 )
 def test_focused_numeric_draft_matches_debounced_request(
-    compare, records, name, text, expected
+    compare, records, name, text, expected, qapp
 ):
     add(compare, records)
     compare.interval_mode.setCurrentIndex(1)
@@ -307,7 +308,11 @@ def test_focused_numeric_draft_matches_debounced_request(
     edit.setFocus()
     QTest.keyClick(edit, Qt.Key.Key_A, Qt.KeyboardModifier.ControlModifier)
     QTest.keyClicks(edit, text)
-    QTest.qWait(180)
+    wait_for(
+        qapp,
+        lambda: compare.request is not None and control.value() == expected,
+        timeout=2,
+    )
     assert edit.hasFocus()  # No Enter or focus-out masked a stale draft.
     assert control.value() == expected
     request = compare.request

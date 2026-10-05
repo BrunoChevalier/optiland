@@ -130,8 +130,13 @@ Recover an empty result and a hidden selection
 Navigate without losing the selected material
 ---------------------------------------------
 
-Use the wheel to zoom around the pointer, the toolbar to pan or rectangle-zoom,
-and Back/Forward to revisit completed views. **Bounds** accepts ordered numeric
+Left-click a point to inspect its material. Right-drag or middle-drag to pan,
+and use the wheel to zoom around the pointer. Try the same gestures in the
+2D lens layout or the Compare plot: they share these fixed defaults, with no
+mouse-binding settings window. To zoom to an area, select **Zoom to rectangle**
+(the magnifier with a dotted rectangle), left-drag a box, then release.
+``Escape`` returns left-click to selection. Back/Forward revisits completed
+views. **Bounds** accepts ordered numeric
 axis limits; invalid values leave the view unchanged. With the plot focused,
 arrow keys pan, ``+``/``-`` zoom and ``Home`` fits the visible results and
 current-design context. ``Escape`` closes an overlap chooser or exits navigation

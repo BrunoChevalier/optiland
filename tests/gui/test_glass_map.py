@@ -8,7 +8,7 @@ from types import SimpleNamespace
 import matplotlib
 import numpy as np
 import pytest
-from matplotlib.backend_bases import MouseEvent
+from matplotlib.backend_bases import MouseButton, MouseEvent
 from PySide6.QtCore import QCoreApplication, QEvent, QLocale, QPoint, Qt
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QDialogButtonBox, QLabel, QLineEdit
@@ -51,6 +51,32 @@ def test_click_requests_exact_identity_without_applying_or_clearing(chart):
     chart._on_click(mouse(chart, point("empty", 50, 1.6)))
     assert chart._selected == a.key and requested == [b.key]
     chart._on_click(mouse(chart, b, button=3))
+    assert requested == [b.key]
+
+
+@pytest.mark.parametrize("button", [MouseButton.RIGHT, MouseButton.MIDDLE])
+def test_pan_does_not_select_and_left_click_still_selects_afterward(chart, button):
+    a, b = point(), point("B", 40, 1.7)
+    chart.set_points((a, b))
+    chart.set_selected(a.key)
+    chart.canvas.draw()
+    requested = []
+    chart.selection_requested.connect(requested.append)
+    pixel = chart.ax.transData.transform((b.x, b.y))
+    for name, position, pressed in [
+        ("button_press_event", pixel, button),
+        ("button_press_event", pixel, MouseButton.LEFT),
+        ("motion_notify_event", pixel + (20, 20), button),
+        ("button_release_event", pixel + (20, 20), button),
+    ]:
+        kwargs = {"buttons": {pressed}} if name == "motion_notify_event" else {}
+        chart.canvas.callbacks.process(
+            name, MouseEvent(name, chart.canvas, *position, button=pressed, **kwargs)
+        )
+    assert requested == [] and chart._selected == a.key
+    assert chart._hovered is None
+    chart.canvas.draw()
+    chart.canvas.callbacks.process("button_press_event", mouse(chart, b))
     assert requested == [b.key]
 
 
@@ -216,7 +242,7 @@ def test_hover_is_transient_and_does_not_retarget_selected_record(chart):
     assert chart._selected == a.key
 
 
-def test_pan_zoom_modes_suppress_selection_and_pointer_zoom(chart):
+def test_pan_zoom_modes_suppress_selection_but_allow_pointer_zoom(chart):
     a = point()
     chart.set_points((a,))
     chart.canvas.draw()
@@ -225,8 +251,8 @@ def test_pan_zoom_modes_suppress_selection_and_pointer_zoom(chart):
     chart.toolbar.pan()
     before = chart.ax.get_xlim()
     chart._on_click(mouse(chart, a))
-    chart._on_scroll(mouse(chart, a, "scroll_event", step=1))
-    assert chart.ax.get_xlim() == before and not requests
+    chart.toolbar._on_scroll(mouse(chart, a, "scroll_event", step=1))
+    assert chart.ax.get_xlim() != before and not requests
     chart.toolbar.pan()
     chart.toolbar.zoom()
     chart._on_click(mouse(chart, a))
@@ -241,7 +267,7 @@ def test_wheel_zooms_about_pointer_and_navigation_back_restores_view(chart):
     before = chart.ax.get_xlim(), chart.ax.get_ylim()
     event = mouse(chart, target, "scroll_event", step=2)
     anchor = chart.ax.transData.transform((event.xdata, event.ydata))
-    chart._on_scroll(event)
+    chart.toolbar._on_scroll(event)
     np.testing.assert_allclose(
         chart.ax.transData.transform((event.xdata, event.ydata)), anchor
     )
@@ -251,22 +277,39 @@ def test_wheel_zooms_about_pointer_and_navigation_back_restores_view(chart):
     np.testing.assert_allclose(chart.ax.get_ylim(), before[1])
 
 
+def test_theme_changes_keep_navigation_history(chart):
+    chart.set_points((point("A", 40, 1.4), point("B", 80, 1.8)))
+    chart.canvas.draw()
+    initial = chart.ax.get_xlim(), chart.ax.get_ylim()
+    chart.toolbar._on_scroll(mouse(chart, point(), "scroll_event", step=1))
+    zoomed = chart.ax.get_xlim(), chart.ax.get_ylim()
+    for theme in ("dark", "light"):
+        chart.update_theme(theme)
+        assert (chart.ax.get_xlim(), chart.ax.get_ylim()) == zoomed
+    chart.toolbar.back()
+    np.testing.assert_allclose((chart.ax.get_xlim(), chart.ax.get_ylim()), initial)
+    chart.toolbar.forward()
+    np.testing.assert_allclose((chart.ax.get_xlim(), chart.ax.get_ylim()), zoomed)
+    chart.toolbar.home()
+    np.testing.assert_allclose((chart.ax.get_xlim(), chart.ax.get_ylim()), initial)
+
+
 def test_zoom_guards_nonfinite_and_deep_spans(chart):
     a = point()
     chart.set_points((a,))
     chart.canvas.draw()
     for _ in range(200):
-        chart._on_scroll(
+        chart.toolbar._on_scroll(
             SimpleNamespace(inaxes=chart.ax, xdata=a.x, ydata=a.y, step=10)
         )
     before = chart.ax.get_xlim(), chart.ax.get_ylim()
     assert all(math.isfinite(value) for limits in before for value in limits)
     assert before[0][0] != before[0][1] and before[1][0] != before[1][1]
     for step in (float("nan"), 0):
-        chart._on_scroll(
+        chart.toolbar._on_scroll(
             SimpleNamespace(inaxes=chart.ax, xdata=a.x, ydata=a.y, step=step)
         )
-    chart._on_scroll(
+    chart.toolbar._on_scroll(
         SimpleNamespace(inaxes=chart.ax, xdata=float("inf"), ydata=a.y, step=1)
     )
     assert (chart.ax.get_xlim(), chart.ax.get_ylim()) == before
@@ -445,7 +488,7 @@ def test_two_view_actions_have_two_distinct_back_and_forward_steps(chart):
     chart.set_points((a, b))
     chart.canvas.draw()
     baseline = chart.ax.get_xlim(), chart.ax.get_ylim()
-    chart._on_scroll(mouse(chart, a, "scroll_event", step=1))
+    chart.toolbar._on_scroll(mouse(chart, a, "scroll_event", step=1))
     zoomed = chart.ax.get_xlim(), chart.ax.get_ylim()
     chart.locate(b.key)
     located = chart.ax.get_xlim(), chart.ax.get_ylim()

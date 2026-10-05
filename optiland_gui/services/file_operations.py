@@ -241,6 +241,9 @@ class FileOperations(QObject):
                 self._cleanup(operation)
             return
         if result.status != "succeeded":
+            if phase == "preparing" and result.error_type == "StagingCollision":
+                # Exclusive creation failed: this operation never owned the file.
+                operation.staged_path = None
             if operation.kind != "open":
                 self._abort_close(f"The write to {operation.path} was {result.status}")
             if result.status == "failed":

@@ -19,6 +19,10 @@ from optiland_gui.services.job_records import OpticSnapshot, check_cancelled
 from optiland_gui.services.model_initialization import initialize_loaded_optic
 
 
+class StagingCollision(FileExistsError):
+    """The proposed staging path already belongs to another writer."""
+
+
 def load_file(snapshot, parameters, progress, cancelled):
     """Parse and validate a candidate without touching the displayed document."""
     from optiland_gui.services.file_service import json_inf_nan_hook
@@ -80,9 +84,11 @@ def prepare_output(snapshot, parameters, progress, cancelled):
     path = _stage_path(parameters)
     progress("Preparing file contents")
     optic = snapshot.restore()
+    created = False
     try:
         # Reserve only our unique sibling file, never truncate the destination.
         with open(path, "x", encoding="utf-8") as stream:
+            created = True
             if parameters["format"] == "optiland":
                 encoder = SpecialFloatEncoder(indent=4)
                 for chunk in encoder.iterencode(optic.to_dict()):
@@ -97,8 +103,11 @@ def prepare_output(snapshot, parameters, progress, cancelled):
         check_cancelled(cancelled)
         progress("Verifying prepared file")
         return {"digest": _digest(path)}
-    except BaseException:
-        path.unlink(missing_ok=True)
+    except BaseException as exc:
+        if created:
+            path.unlink(missing_ok=True)
+        elif isinstance(exc, FileExistsError):
+            raise StagingCollision(str(exc)) from exc
         raise
 
 

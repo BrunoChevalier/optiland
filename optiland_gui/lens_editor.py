@@ -717,6 +717,7 @@ class LensEditor(QWidget):
         self._load_phase = "clear"
         self._display_rows = None
         self._next_load_row = 0
+        self._pending_properties = iter(sorted(self.open_prop_source_rows))
         self._load_progress.setRange(0, 0)
         self._load_progress.setFormat("Updating lens data — %v of %m rows")
         if max(num_surfaces, old_count) <= self._SYNCHRONOUS_ROWS:
@@ -771,7 +772,7 @@ class LensEditor(QWidget):
         if self._next_load_row < count:
             self._load_timer.start(0)
             return
-        for owner in sorted(self.open_prop_source_rows):
+        for owner in self._pending_properties:
             self._insert_properties_widget(owner)
             panel = self.tableWidget.cellWidget(
                 self.map_surface_index_to_ui_row(owner) + 1, 0
@@ -781,6 +782,9 @@ class LensEditor(QWidget):
                     id(self._displayed_surfaces[owner])
                 ]
             )
+            if not synchronous and perf_counter() >= deadline:
+                self._load_timer.start(0)
+                return
         self._restore_table_state()
         self._finish_table_loading()
 

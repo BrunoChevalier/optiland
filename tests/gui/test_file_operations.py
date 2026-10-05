@@ -57,6 +57,21 @@ def edit_comment(connector, text):
     connector.notify_change("metadata", surface_indices=(1,), columns=(1,))
 
 
+def test_worker_staging_collision_keeps_other_writers_file(
+    qapp, tmp_path, file_operations
+):
+    connector, operations, progress, results, notifications = file_operations
+    request = operations.request_output(tmp_path / "saved.json")
+    stage = Path(request.context.staged_path)
+    stage.write_bytes(b"another writer")
+    wait_for(qapp, lambda: not operations.busy)
+    assert stage.read_bytes() == b"another writer"
+    assert not (tmp_path / "saved.json").exists()
+    assert results[0].status == "failed"
+    assert results[0].error_type == "StagingCollision"
+    assert connector.is_modified()
+
+
 def test_save_uses_captured_document_and_keeps_later_edits_dirty(
     qapp, tmp_path, file_operations
 ):

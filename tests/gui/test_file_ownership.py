@@ -3,10 +3,31 @@
 from __future__ import annotations
 
 import pickle
+import threading
 
 import pytest
 
 from optiland_gui.optiland_connector import OptilandConnector
+
+
+def test_staging_collision_preserves_existing_file(minimal_optic, tmp_path):
+    from optiland_gui.services.file_tasks import prepare_output
+    from optiland_gui.services.job_records import OpticSnapshot
+
+    stage = tmp_path / ".optiland-collision.tmp"
+    stage.write_bytes(b"another operation owns this file")
+    with pytest.raises(FileExistsError):
+        prepare_output(
+            OpticSnapshot.capture(minimal_optic),
+            {
+                "staged_path": str(stage),
+                "path": str(tmp_path / "lens.json"),
+                "format": "optiland",
+            },
+            lambda *args: None,
+            threading.Event(),
+        )
+    assert stage.read_bytes() == b"another operation owns this file"
 
 
 def test_undo_capture_is_owned_and_does_not_run_updater(

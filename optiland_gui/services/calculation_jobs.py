@@ -457,6 +457,7 @@ class CalculationJobs(QObject):
                 message.get("data"),
                 message.get("error", ""),
                 outcome_unknown=not request.cancellable and status != "succeeded",
+                error_type=message.get("error_type", ""),
             )
             if self._closed and not self._pending:
                 self._send({"command": "shutdown"})
@@ -472,6 +473,7 @@ class CalculationJobs(QObject):
         *,
         infrastructure_error: bool = False,
         outcome_unknown: bool = False,
+        error_type: str = "",
     ) -> None:
         self.state_changed.emit(request, status)
         self.finished.emit(
@@ -483,6 +485,7 @@ class CalculationJobs(QObject):
                 status != "cancelled" and self.is_current(request),
                 infrastructure_error,
                 outcome_unknown,
+                error_type,
             )
         )
 

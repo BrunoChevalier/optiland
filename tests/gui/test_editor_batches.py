@@ -10,7 +10,7 @@ from PySide6.QtCore import QCoreApplication, QEvent, QTimer
 import optiland.backend as be
 from optiland.optic import Optic
 from optiland.solves import MarginalRayHeightThicknessSolve
-from optiland_gui.lens_editor import LensEditor
+from optiland_gui.lens_editor import LensEditor, SurfacePropertiesWidget
 from optiland_gui.optiland_connector import OptilandConnector
 from tests.gui.test_calculation_jobs import wait_for
 from tests.test_folded_paraxial import folded, straight
@@ -121,6 +121,52 @@ def test_batched_structural_refresh_restores_surviving_surface_selection(qapp):
     assert editor.interaction_state.selected_surfaces == (selected,)
     assert editor.tableWidget.currentRow() == 51
     assert editor.tableWidget.currentColumn() == c.COL_RADIUS
+    editor.deleteLater()
+    c.deleteLater()
+
+
+def test_batched_refresh_preserves_multiple_panels_and_closes_shifted_owner(
+    qapp, monkeypatch
+):
+    from PySide6.QtWidgets import QWidget
+
+    original = SurfacePropertiesWidget._populate_properties_form
+
+    def two_tabs(panel):
+        original(panel)
+        panel.tabs.addTab(QWidget(), "Extra properties")
+
+    monkeypatch.setattr(SurfacePropertiesWidget, "_populate_properties_form", two_tabs)
+    monkeypatch.setattr(LensEditor, "_BATCH_SECONDS", 0)
+    c = make_large_connector()
+    editor = LensEditor(c)
+    wait_for(qapp, lambda: not editor._table_loading)
+    for owner in (20, 50):
+        editor.toggle_properties_widget(owner)
+    editor.tableWidget.cellWidget(
+        editor.map_surface_index_to_ui_row(50) + 1, 0
+    ).tabs.setCurrentIndex(1)
+    selected = c.get_optic().surfaces[50]
+    editor.tableWidget.setCurrentCell(
+        editor.map_surface_index_to_ui_row(50), c.COL_RADIUS
+    )
+    c.add_surface(index=10)
+    wait_for(qapp, lambda: not editor._table_loading)
+    assert editor.open_prop_source_rows == {21, 51}
+    assert editor.interaction_state.selected_surfaces == (selected,)
+    assert editor.tableWidget.currentRow() == editor.map_surface_index_to_ui_row(51)
+    first = editor.tableWidget.cellWidget(editor.map_surface_index_to_ui_row(21) + 1, 0)
+    second = editor.tableWidget.cellWidget(
+        editor.map_surface_index_to_ui_row(51) + 1, 0
+    )
+    assert first.tabs.currentIndex() == 0
+    assert second.tabs.currentIndex() == 1
+    second.close_button.click()
+    assert editor.open_prop_source_rows == {21}
+    assert (
+        editor.tableWidget.cellWidget(editor.map_surface_index_to_ui_row(21) + 1, 0)
+        is first
+    )
     editor.deleteLater()
     c.deleteLater()
 

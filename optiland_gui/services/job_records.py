@@ -191,7 +191,6 @@ class JobResult:
     current: bool = False
     infrastructure_error: bool = False
     outcome_unknown: bool = False
-    error_type: str = ""
 
 
 class CalculationCancelled(Exception):

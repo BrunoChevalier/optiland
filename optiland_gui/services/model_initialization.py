@@ -8,6 +8,7 @@ def ensure_valid_structure(optic, default_wavelength=0.550):
     if optic.surfaces.num_surfaces < 2:
         optic.surfaces.clear()
         optic.surfaces.add(
+            index=0,
             surface_type="standard",
             radius=float("inf"),
             thickness=10.0,
@@ -15,6 +16,7 @@ def ensure_valid_structure(optic, default_wavelength=0.550):
             material="Air",
         )
         optic.surfaces.add(
+            index=1,
             surface_type="standard",
             radius=float("inf"),
             thickness=0.0,

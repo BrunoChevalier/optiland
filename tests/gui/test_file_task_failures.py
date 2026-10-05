@@ -41,7 +41,10 @@ def test_failed_preparation_cleans_owned_stage_and_preserves_destination(
         monkeypatch.setattr(SpecialFloatEncoder, "iterencode", broken_encoder)
     with pytest.raises((ValueError, OSError)):
         file_tasks.prepare_output(
-            OpticSnapshot.capture(minimal_optic), p, lambda *a: None, threading.Event()
+            OpticSnapshot.capture(minimal_optic),
+            p,
+            lambda *a, **k: None,
+            threading.Event(),
         )
     assert destination.read_bytes() == b"previous valid contents"
     assert not (tmp_path / ".optiland-owned.tmp").exists()
@@ -50,13 +53,13 @@ def test_failed_preparation_cleans_owned_stage_and_preserves_destination(
 def test_publication_rejects_changed_staging_contents(minimal_optic, tmp_path):
     p = parameters(tmp_path)
     result = file_tasks.prepare_output(
-        OpticSnapshot.capture(minimal_optic), p, lambda *a: None, threading.Event()
+        OpticSnapshot.capture(minimal_optic), p, lambda *a, **k: None, threading.Event()
     )
-    p["digest"] = result["digest"]
+    p.update(result)
     stage = tmp_path / ".optiland-owned.tmp"
     stage.write_text("modified after preparation")
     with pytest.raises(ValueError, match="changed before publication"):
-        file_tasks.publish_output(None, p, lambda *a: None, threading.Event())
+        file_tasks.publish_output(None, p, lambda *a, **k: None, threading.Event())
     assert not (tmp_path / "saved.json").exists()
     assert stage.read_text() == "modified after preparation"
 
@@ -68,7 +71,7 @@ def test_invalid_stage_and_load_formats_fail_before_file_changes(tmp_path):
         file_tasks.cleanup_output(None, p, None, None)
     p["format"] = "unsupported"
     with pytest.raises(ValueError, match="Unsupported file format"):
-        file_tasks.load_file(None, p, lambda *a: None, threading.Event())
+        file_tasks.load_file(None, p, lambda *a, **k: None, threading.Event())
     assert list(tmp_path.iterdir()) == []
 
 
@@ -79,7 +82,7 @@ def test_gallery_rejects_non_builtin_optical_classes(tmp_path, sample):
     p = parameters(tmp_path, "sample")
     p["load_options"]["sample_class"] = sample
     with pytest.raises(ValueError, match="Gallery|Optic class"):
-        file_tasks.load_file(None, p, lambda *a: None, threading.Event())
+        file_tasks.load_file(None, p, lambda *a, **k: None, threading.Event())
 
 
 def test_loaded_empty_model_gets_valid_minimal_structure():

@@ -123,13 +123,12 @@ def main() -> None:
             )
         except CalculationCancelled:
             send({"event": "result", "job_id": job_id, "status": "cancelled"})
-        except Exception as exc:
+        except Exception:
             send(
                 {
                     "event": "result",
                     "job_id": job_id,
                     "status": "failed",
-                    "error_type": type(exc).__name__,
                     "error": traceback.format_exc(),
                 }
             )

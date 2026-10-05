@@ -19,10 +19,6 @@ from optiland_gui.services.job_records import OpticSnapshot, check_cancelled
 from optiland_gui.services.model_initialization import initialize_loaded_optic
 
 
-class StagingCollision(FileExistsError):
-    """The proposed staging path already belongs to another writer."""
-
-
 def load_file(snapshot, parameters, progress, cancelled):
     """Parse and validate a candidate without touching the displayed document."""
     from optiland_gui.services.file_service import json_inf_nan_hook
@@ -85,10 +81,17 @@ def prepare_output(snapshot, parameters, progress, cancelled):
     progress("Preparing file contents")
     optic = snapshot.restore()
     created = False
+    identity = None
     try:
         # Reserve only our unique sibling file, never truncate the destination.
         with open(path, "x", encoding="utf-8") as stream:
             created = True
+            stat = os.fstat(stream.fileno())
+            identity = (stat.st_dev, stat.st_ino)
+            progress(
+                "Writing owned staging file",
+                details={"staged_identity": identity},
+            )
             if parameters["format"] == "optiland":
                 encoder = SpecialFloatEncoder(indent=4)
                 for chunk in encoder.iterencode(optic.to_dict()):
@@ -102,18 +105,22 @@ def prepare_output(snapshot, parameters, progress, cancelled):
             raise ValueError("Unsupported output format.")
         check_cancelled(cancelled)
         progress("Verifying prepared file")
-        return {"digest": _digest(path)}
-    except BaseException as exc:
+        return {"digest": _digest(path), "staged_identity": identity}
+    except BaseException as error:
         if created:
-            path.unlink(missing_ok=True)
-        elif isinstance(exc, FileExistsError):
-            raise StagingCollision(str(exc)) from exc
+            try:
+                cleanup_output(
+                    None, dict(parameters, staged_identity=identity), None, None
+                )
+            except (OSError, ValueError) as cleanup_error:
+                error.add_note(f"Staging cleanup failed: {cleanup_error}")
         raise
 
 
 def publish_output(snapshot, parameters, progress, cancelled):
     """Called only after the GUI accepts the non-cancellable commit phase."""
     path = _stage_path(parameters)
+    _confirm_ownership(path.stat(), parameters["staged_identity"])
     if _digest(path) != parameters["digest"]:
         raise ValueError("Prepared file contents changed before publication.")
     os.replace(path, parameters["path"])
@@ -128,4 +135,17 @@ def reconcile_output(snapshot, parameters, progress, cancelled):
 
 def cleanup_output(snapshot, parameters, progress, cancelled):
     """Remove only this operation's own staging file, outside the Qt thread."""
-    _stage_path(parameters).unlink(missing_ok=True)
+    path = _stage_path(parameters)
+    try:
+        stat = path.stat()
+    except FileNotFoundError:
+        return
+    _confirm_ownership(stat, parameters["staged_identity"])
+    path.unlink()
+
+
+def _confirm_ownership(stat, identity):
+    if identity is None or tuple(identity) != (stat.st_dev, stat.st_ino):
+        raise ValueError(
+            "Staging ownership is unconfirmed; the file was left untouched."
+        )

@@ -68,8 +68,39 @@ def test_worker_staging_collision_keeps_other_writers_file(
     assert stage.read_bytes() == b"another writer"
     assert not (tmp_path / "saved.json").exists()
     assert results[0].status == "failed"
-    assert results[0].error_type == "StagingCollision"
     assert connector.is_modified()
+
+
+def test_cancellation_before_creation_keeps_an_unowned_staging_file(
+    qapp, tmp_path, file_operations
+):
+    connector, operations, progress, results, notifications = file_operations
+    request = operations.request_output(tmp_path / "saved.json")
+    stage = Path(request.context.staged_path)
+    stage.write_bytes(b"another writer")
+    operations.cancel_pending()
+    wait_for(qapp, lambda: not operations.busy)
+    assert stage.read_bytes() == b"another writer"
+    assert connector.is_modified()
+
+
+def test_staging_receipt_survives_document_change_and_replaced_file_is_preserved(
+    qapp, tmp_path, file_operations
+):
+    connector, operations, progress, results, notifications = file_operations
+    stall(operations, "prepare_output", "after", 10)
+    request = operations.request_output(tmp_path / "saved.json")
+    connector.set_surface_data(1, connector.COL_RADIUS, "55")
+    wait_for(qapp, lambda: request.context.staged_identity is not None)
+    stage = Path(request.context.staged_path)
+    replacement = tmp_path / "replacement.tmp"
+    replacement.write_bytes(b"replacement belonging to another writer")
+    replacement.replace(stage)
+    operations.cancel_pending()
+    wait_for(qapp, lambda: not operations.busy)
+    assert stage.read_bytes() == b"replacement belonging to another writer"
+    assert connector.is_modified()
+    assert any("cleanup failed" in text for text, severity in notifications)
 
 
 @pytest.mark.parametrize("file_format,extension", [("zemax", "zmx"), ("codev", "seq")])
@@ -117,6 +148,7 @@ def test_publication_retries_a_full_queue_without_losing_the_staged_save(
                 {
                     "staged_path": str(tmp_path / f".optiland-unused-{index}.tmp"),
                     "path": str(tmp_path / "unused.json"),
+                    "staged_identity": None,
                 },
                 replace=False,
             )

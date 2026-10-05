@@ -25,6 +25,7 @@ class FileOperation:
     snapshot: OpticSnapshot | None = None
     phase: str = "preparing"
     staged_path: str | None = None
+    staged_identity: tuple[int, int] | None = None
     digest: str | None = None
     load_options: dict = field(default_factory=dict)
     save_sequence: int = 0
@@ -53,6 +54,7 @@ class FileOperations(QObject):
         self._confirmed_save_sequence = {}
         self.jobs.finished.connect(self._finished)
         self.jobs.progress.connect(self._progress)
+        self.jobs.transaction_progress.connect(self._transaction_progress)
 
     @property
     def busy(self):
@@ -121,6 +123,7 @@ class FileOperations(QObject):
             "path": operation.path,
             "format": operation.file_format,
             "staged_path": operation.staged_path,
+            "staged_identity": operation.staged_identity,
             "digest": operation.digest,
             "backend": BackendConfig.capture(),
             "load_options": operation.load_options,
@@ -202,6 +205,13 @@ class FileOperations(QObject):
         self._changed()
 
     @Slot(object, dict)
+    def _transaction_progress(self, request, message):
+        operation = self._requests.get(request.job_id)
+        identity = (message.get("details") or {}).get("staged_identity")
+        if operation is not None and identity is not None:
+            operation.staged_identity = tuple(identity)
+
+    @Slot(object, dict)
     def _progress(self, request, message):
         if request.job_id in self._requests:
             self._changed(message["stage"])
@@ -241,9 +251,6 @@ class FileOperations(QObject):
                 self._cleanup(operation)
             return
         if result.status != "succeeded":
-            if phase == "preparing" and result.error_type == "StagingCollision":
-                # Exclusive creation failed: this operation never owned the file.
-                operation.staged_path = None
             if operation.kind != "open":
                 self._abort_close(f"The write to {operation.path} was {result.status}")
             if result.status == "failed":
@@ -262,6 +269,7 @@ class FileOperations(QObject):
                 self._complete(operation)
         else:
             operation.digest = result.data["digest"]
+            operation.staged_identity = tuple(result.data["staged_identity"])
             operation.phase = "publishing"
             self._queue(operation, "publish_output")
 

@@ -178,6 +178,7 @@ class CalculationJobs(QObject):
 
     state_changed = Signal(object, str)
     progress = Signal(object, dict)
+    transaction_progress = Signal(object, dict)
     finished = Signal(object)
     stopped = Signal()
 
@@ -444,6 +445,9 @@ class CalculationJobs(QObject):
         if request is None or message.get("job_id") != request.job_id:
             return
         if message["event"] == "progress":
+            # Ownership receipts must survive cancellation and document changes.
+            # Presentation consumers still receive only current progress below.
+            self.transaction_progress.emit(request, message)
             if not self._cancelling and self.is_current(request):
                 self.progress.emit(request, message)
         elif message["event"] == "result":
@@ -457,7 +461,6 @@ class CalculationJobs(QObject):
                 message.get("data"),
                 message.get("error", ""),
                 outcome_unknown=not request.cancellable and status != "succeeded",
-                error_type=message.get("error_type", ""),
             )
             if self._closed and not self._pending:
                 self._send({"command": "shutdown"})
@@ -473,7 +476,6 @@ class CalculationJobs(QObject):
         *,
         infrastructure_error: bool = False,
         outcome_unknown: bool = False,
-        error_type: str = "",
     ) -> None:
         self.state_changed.emit(request, status)
         self.finished.emit(
@@ -485,7 +487,6 @@ class CalculationJobs(QObject):
                 status != "cancelled" and self.is_current(request),
                 infrastructure_error,
                 outcome_unknown,
-                error_type,
             )
         )
 

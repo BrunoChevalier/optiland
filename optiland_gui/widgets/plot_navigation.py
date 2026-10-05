@@ -142,8 +142,13 @@ class PlotNavigationToolbar(NavigationToolbar2QT):
         """End gestures before focus changes, scene replacement or tool changes."""
         if self._pan_info is not None:
             self.release_pan(None)
-        if self._zoom_info is not None:
-            self._cleanup_post_zoom()
+        zoom, self._zoom_info = self._zoom_info, None
+        if zoom is not None:
+            # Cancel without applying a rectangle or relying on Matplotlib's
+            # version-specific private zoom-cleanup helper.
+            self.canvas.mpl_disconnect(zoom.cid)
+            self.remove_rubberband()
+            self.canvas.draw_idle()
         pan, self._pointer_pan = self._pointer_pan, None
         if pan is None:
             return

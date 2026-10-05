@@ -148,6 +148,46 @@ def test_wheel_anchor_and_pan_use_axis_scale(plot, scale, inverted):
 
 
 @pytest.mark.parametrize(
+    "interrupt", ["escape", "focus_out", "hide", "deactivate", "update", "pan"]
+)
+def test_interrupted_rectangle_clears_feedback_without_applying_view(
+    plot, monkeypatch, interrupt
+):
+    rectangles = []
+    monkeypatch.setattr(plot.canvas, "drawRectangle", rectangles.append)
+    before = limits(plot)
+    start, end = plot.ax.transData.transform([(3, 3), (7, 7)])
+    plot.toolbar.zoom()
+    emit(plot, "button_press_event", start, MouseButton.LEFT)
+    emit(plot, "motion_notify_event", end, MouseButton.LEFT)
+    assert rectangles[-1] is not None
+    motion_callback = plot.toolbar._zoom_info.cid
+    history_length = len(plot.toolbar._nav_stack)
+
+    if interrupt in ("update", "pan"):
+        getattr(plot.toolbar, interrupt)()
+    elif interrupt == "escape":
+        QApplication.sendEvent(
+            plot.canvas, QKeyEvent(QEvent.KeyPress, Qt.Key_Escape, Qt.NoModifier)
+        )
+    else:
+        event_type = {
+            "focus_out": QEvent.Type.FocusOut,
+            "hide": QEvent.Type.Hide,
+            "deactivate": QEvent.Type.WindowDeactivate,
+        }[interrupt]
+        QApplication.sendEvent(plot.canvas, QEvent(event_type))
+
+    assert not plot.toolbar.is_dragging
+    assert rectangles[-1] is None
+    assert motion_callback not in plot.canvas.callbacks.callbacks["motion_notify_event"]
+    emit(plot, "motion_notify_event", end, MouseButton.LEFT)
+    emit(plot, "button_release_event", end, MouseButton.LEFT)
+    np.testing.assert_array_equal(limits(plot), before)
+    assert len(plot.toolbar._nav_stack) == (0 if interrupt == "update" else history_length)
+
+
+@pytest.mark.parametrize(
     "interrupt", ["update", "pan", "zoom", "home", "back", "forward", "lost_buttons"]
 )
 def test_interrupt_finishes_drag_and_releases_its_lock(plot, interrupt):

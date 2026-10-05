@@ -72,6 +72,64 @@ def test_worker_staging_collision_keeps_other_writers_file(
     assert connector.is_modified()
 
 
+@pytest.mark.parametrize("file_format,extension", [("zemax", "zmx"), ("codev", "seq")])
+def test_real_worker_exports_and_imports_supported_foreign_formats(
+    qapp, tmp_path, file_operations, file_format, extension
+):
+    from optiland.fileio import load_codev_file, load_zemax_file
+
+    connector, operations, progress, results, notifications = file_operations
+    path = tmp_path / f"exported.{extension}"
+    original = connector.get_optic()
+    operations.request_output(path, file_format)
+    wait_for(qapp, lambda: not operations.busy)
+    assert path.is_file(), notifications
+    restored = (load_zemax_file if file_format == "zemax" else load_codev_file)(
+        str(path)
+    )
+    assert float(restored.surfaces[1].geometry.radius) == 50
+    assert connector.get_optic() is original
+    assert connector.is_modified()
+    assert operations.service.get_current_filepath() is None
+    assert not list(tmp_path.glob(".optiland-*.tmp"))
+    operations.request_load(path, file_format)
+    wait_for(qapp, lambda: not operations.busy)
+    assert connector.get_optic() is not original, notifications
+    assert float(connector.get_optic().surfaces[1].geometry.radius) == 50
+    assert connector.is_modified()
+    assert operations.service.get_current_filepath() is None
+
+
+def test_publication_retries_a_full_queue_without_losing_the_staged_save(
+    qapp, tmp_path, file_operations
+):
+    connector, operations, progress, results, notifications = file_operations
+    jobs = operations.jobs
+
+    def fill_queue(request, state):
+        if state != "succeeded" or not request.handler.endswith(":prepare_output"):
+            return
+        for index in range(jobs.max_pending):
+            jobs.submit(
+                f"queue-filler-{index}",
+                "optiland_gui.services.file_tasks:cleanup_output",
+                None,
+                {
+                    "staged_path": str(tmp_path / f".optiland-unused-{index}.tmp"),
+                    "path": str(tmp_path / "unused.json"),
+                },
+                replace=False,
+            )
+
+    jobs.state_changed.connect(fill_queue)
+    path = tmp_path / "saved.json"
+    operations.request_output(path)
+    wait_for(qapp, lambda: not operations.busy, timeout=30)
+    assert read_optic(path).surfaces[1].geometry.radius == 50
+    assert not connector.is_modified()
+    assert not list(tmp_path.glob(".optiland-*.tmp"))
+
+
 def test_save_uses_captured_document_and_keeps_later_edits_dirty(
     qapp, tmp_path, file_operations
 ):

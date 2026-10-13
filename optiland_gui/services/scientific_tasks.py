@@ -7,8 +7,9 @@ import time
 import traceback
 from contextlib import redirect_stderr, redirect_stdout
 
-from optiland_gui.services.job_records import OpticSnapshot, check_cancelled
+from optiland_gui.services.job_records import check_cancelled
 from optiland_gui.services.model_initialization import initialize_loaded_optic
+from optiland_gui.services.prepared_optic import PreparedOptic
 
 OUTPUT_BYTES = 64 * 1024
 OUTPUT_LINES = 1000
@@ -114,7 +115,7 @@ def execute_scientific(snapshot, parameters, progress, cancelled):
             check_cancelled(cancelled)
             progress("Preparing script result")
             initialize_loaded_optic(namespace["optic"])
-            candidate = OpticSnapshot.capture(namespace["optic"])
+            candidate = PreparedOptic.capture(namespace["optic"])
         except BaseException as exc:
             check_cancelled(cancelled)
             error_output = BoundedOutput()
@@ -124,6 +125,6 @@ def execute_scientific(snapshot, parameters, progress, cancelled):
     return {
         "output": output.value,
         "error": error,
-        "snapshot": candidate,
+        "candidate": candidate,
         "commands": tuple(commands.commands) if not error else (),
     }

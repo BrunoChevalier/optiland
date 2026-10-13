@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import replace
-
-from PySide6.QtCore import QObject, Signal, Slot
+from PySide6.QtCore import QObject, QSignalBlocker, Signal, Slot
 
 from optiland_gui.services.calculation_jobs import CalculationJobs
 from optiland_gui.services.job_records import BackendConfig, OpticSnapshot
@@ -102,6 +100,7 @@ class ScientificScripts(QObject):
             and self.request is not None
             and self.jobs.is_current(self.request)
             and self.request.context == self.connector.document_state.edit_token
+            and self.candidate.backend == BackendConfig.capture()
         )
 
     @Slot()
@@ -112,19 +111,31 @@ class ScientificScripts(QObject):
             )
             return False
         try:
-            candidate = replace(
-                self.candidate, backend=BackendConfig.capture()
-            ).restore()
+            request, owned = self.request, self.candidate
+            candidate = owned.restore()
             undo = self.connector._capture_optic_state()
-            if not self.can_apply():
+            if (
+                self.request is not request
+                or self.candidate is not owned
+                or not self.can_apply()
+            ):
                 return False
-            self.connector._undo_redo_manager.add_state(undo)
+            manager = self.connector._undo_redo_manager
+            # Availability listeners must observe the installed model and its
+            # matching history entry together, never an intermediate state.
+            with QSignalBlocker(manager):
+                manager.add_state(undo)
             self.connector._optic = candidate
             self.connector.set_modified(True)
             self.candidate = None
             self.connector.notify_change("replacement")
-            self.candidate_changed.emit(False)
-            self.status_changed.emit("Script result applied. Undo is available.", False)
+            manager.undoStackAvailabilityChanged.emit(manager.can_undo())
+            manager.redoStackAvailabilityChanged.emit(manager.can_redo())
+            if self.request is request:
+                self.candidate_changed.emit(False)
+                self.status_changed.emit(
+                    "Script result applied. Undo is available.", False
+                )
             return True
         except Exception as exc:
             self.status_changed.emit(f"Unable to apply script result: {exc}", False)
@@ -136,22 +147,26 @@ class ScientificScripts(QObject):
 
     @Slot(object, dict)
     def _progress(self, request, message):
-        if self.request is None or request.job_id != self.request.job_id:
+        if request is not self.request:
             return
         details = message.get("details") or {}
         if "output" in details:
             self._output = details["output"]
             self.output_changed.emit(self._output)
-        self.status_changed.emit(message["stage"], True)
+        if request is self.request:
+            self.status_changed.emit(message["stage"], True)
 
     @Slot(object)
     def _finished(self, result):
-        if self.request is None or result.request.job_id != self.request.job_id:
+        request = result.request
+        if request is not self.request:
             return
         if result.status != "succeeded":
             if result.status == "failed":
                 self._output += "\n" + result.error[:16000]
                 self.output_changed.emit(self._output)
+                if request is not self.request:
+                    return
             self.status_changed.emit(
                 "Script cancelled."
                 if result.status == "cancelled"
@@ -160,10 +175,14 @@ class ScientificScripts(QObject):
             )
             return
         self._output = result.data["output"] + result.data["error"]
+        self.candidate = result.data["candidate"]
         self.output_changed.emit(self._output)
-        self.candidate = result.data["snapshot"]
+        if request is not self.request:
+            return
         applicable = self.can_apply()
         self.candidate_changed.emit(applicable)
+        if request is not self.request:
+            return
         self.status_changed.emit(
             "Script failed; the current document was preserved."
             if result.data["error"]
@@ -172,6 +191,6 @@ class ScientificScripts(QObject):
             else "Result is from an earlier document revision; rerun to apply.",
             False,
         )
-        if applicable:
+        if request is self.request and self.can_apply():
             # The receiving GUI slot rechecks currency before each command.
             self.commands_ready.emit(result.data["commands"])

@@ -40,22 +40,24 @@ def test_script_worker_crash_reports_failure_without_an_applicable_candidate(
 def test_script_candidate_restore_failure_preserves_model_and_history(
     scripts, monkeypatch
 ):
-    from optiland_gui.services.job_records import OpticSnapshot
+    from optiland_gui.services.prepared_optic import PreparedOptic
 
     connector, service, output, statuses, results = scripts
     original = connector.get_optic()
     monkeypatch.setattr(service.jobs, "_dispatch", lambda: None)
     service.run("print('result')")
-    service.candidate = OpticSnapshot.capture(original)
-    revision = connector._undo_redo_manager.revision
+    service.candidate = PreparedOptic.capture(original)
+    undo = list(connector._undo_redo_manager._undo_stack)
+    redo = list(connector._undo_redo_manager._redo_stack)
 
     def reject(*args, **kwargs):
         raise ValueError("candidate restore failed")
 
-    monkeypatch.setattr(OpticSnapshot, "restore", reject)
+    monkeypatch.setattr(PreparedOptic, "restore", reject)
     assert not service.apply_candidate()
     assert connector.get_optic() is original
-    assert connector._undo_redo_manager.revision == revision
+    assert connector._undo_redo_manager._undo_stack == undo
+    assert connector._undo_redo_manager._redo_stack == redo
     assert "candidate restore failed" in statuses[-1][0]
 
 

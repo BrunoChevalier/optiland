@@ -68,13 +68,19 @@ class ScientificScripts(QObject):
 
     @Slot()
     def cancel(self):
+        request = self.request
         self.candidate = None
-        self.candidate_changed.emit(False)
         self.jobs.cancel_target("scientific-script")
+        if self.request is request:
+            self.candidate_changed.emit(False)
+        if self.request is request:
+            self.status_changed.emit("Script cancelled.", False)
 
     @Slot()
     def restart(self):
-        if self._restarting:
+        if self._restarting or getattr(
+            self.connector, "_calculation_shutdown_started", False
+        ):
             return
         self._restarting = True
         self.cancel()
@@ -175,13 +181,13 @@ class ScientificScripts(QObject):
             )
             return
         self._output = result.data["output"] + result.data["error"]
-        self.candidate = result.data["candidate"]
+        candidate = self.candidate = result.data["candidate"]
         self.output_changed.emit(self._output)
-        if request is not self.request:
+        if request is not self.request or self.candidate is not candidate:
             return
         applicable = self.can_apply()
         self.candidate_changed.emit(applicable)
-        if request is not self.request:
+        if request is not self.request or self.candidate is not candidate:
             return
         self.status_changed.emit(
             "Script failed; the current document was preserved."

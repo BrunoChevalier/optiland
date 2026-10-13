@@ -7,8 +7,11 @@ import time
 import traceback
 from contextlib import redirect_stderr, redirect_stdout
 
-from optiland_gui.services.job_records import check_cancelled
-from optiland_gui.services.model_initialization import initialize_loaded_optic
+from optiland_gui.services.job_records import OpticSnapshot, check_cancelled
+from optiland_gui.services.model_initialization import (
+    ensure_valid_structure,
+    initialize_loaded_optic,
+)
 from optiland_gui.services.prepared_optic import PreparedOptic
 
 OUTPUT_BYTES = 64 * 1024
@@ -95,6 +98,7 @@ def execute_scientific(snapshot, parameters, progress, cancelled):
     code = parameters["code"]
     if len(code.encode("utf-8")) > SCRIPT_BYTES:
         raise ValueError("Scientific scripts are limited to 1 MiB of source text.")
+    check_cancelled(cancelled)
     output = BoundedOutput(progress)
     commands = GuiCommands()
     error = ""
@@ -114,8 +118,14 @@ def execute_scientific(snapshot, parameters, progress, cancelled):
             exec(compile(code, "<scientific-script>", "exec"), namespace)
             check_cancelled(cancelled)
             progress("Preparing script result")
-            initialize_loaded_optic(namespace["optic"])
-            candidate = PreparedOptic.capture(namespace["optic"])
+            ensure_valid_structure(namespace["optic"])
+            # Keep the public snapshot's supported gallery/model contract. Any
+            # normalization and reconstruction stays in this worker, including
+            # the update of the exact owned model returned for GUI installation.
+            owned = OpticSnapshot.capture(namespace["optic"]).restore()
+            initialize_loaded_optic(owned)
+            check_cancelled(cancelled)
+            candidate = PreparedOptic.capture(owned)
         except BaseException as exc:
             check_cancelled(cancelled)
             error_output = BoundedOutput()

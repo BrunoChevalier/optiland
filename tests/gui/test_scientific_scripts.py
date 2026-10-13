@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+import threading
 import time
 from pathlib import Path
 from types import SimpleNamespace
@@ -83,8 +84,8 @@ def scripts(qapp, minimal_optic):
 
 @pytest.mark.parametrize(
     "text",
-    ["😀" * 100000, "x\n" * 100000, "z" * 1000000],
-    ids=["unicode", "many-lines", "long-line"],
+    ["😀" * 100000, "x\n" * 100000, "z" * 1000000, ("€" * 3000 + "\n") * 10],
+    ids=["unicode", "many-lines", "long-line", "byte-limit"],
 )
 def test_output_limits_bytes_lines_and_single_line(text):
     output = BoundedOutput()
@@ -278,6 +279,14 @@ def test_original_console_keeps_real_connector_iface_and_editor_execution(
         widget._run_script_from_editor()
         assert submitted == ["connector.get_optic()"]
         assert widget.scientific_panel.service.jobs is not connector.calculation_jobs
+        scientific = []
+        monkeypatch.setattr(widget.scientific_panel.service, "run", scientific.append)
+        widget._run_scientific_from_editor()
+        assert scientific == ["connector.get_optic()"]
+        widget._get_current_editor().setPlainText("   ")
+        widget._run_scientific_from_editor()
+        assert len(scientific) == 1
+        widget._get_current_editor().setPlainText("connector.get_optic()")
         widget.scientific_panel.service.restart()
         assert widget._get_current_editor().toPlainText() == "connector.get_optic()"
     finally:
@@ -290,3 +299,350 @@ def test_original_console_keeps_real_connector_iface_and_editor_execution(
         )
         widget.shutdown_kernel()
         widget.deleteLater()
+
+
+@pytest.mark.parametrize(
+    "signal_name", ["output_changed", "candidate_changed", "status_changed"]
+)
+def test_completion_listener_starting_new_run_cannot_publish_old_candidate(
+    scripts, monkeypatch, signal_name
+):
+    from optiland_gui.services.job_records import JobResult
+    from optiland_gui.services.prepared_optic import PreparedOptic
+
+    connector, service, output, statuses, results = scripts
+    monkeypatch.setattr(service.jobs, "_dispatch", lambda: None)
+    old = service.run("print('older')")
+    candidate = PreparedOptic.capture(connector.get_optic())
+    newer = []
+    commands = []
+    service.commands_ready.connect(commands.append)
+
+    def restart_once(*args):
+        if not newer:
+            newer.append(None)
+            newer[0] = service.run("print('newer')")
+
+    getattr(service, signal_name).connect(restart_once)
+    service._finished(
+        JobResult(
+            old,
+            "succeeded",
+            {
+                "output": "older output",
+                "error": "",
+                "candidate": candidate,
+                "commands": (("show_panel", "viewer"),),
+            },
+            current=True,
+        )
+    )
+    assert service.request is newer[0]
+    assert service.candidate is None
+    assert not service.can_apply()
+    assert not commands
+    assert statuses[-1] == ("Running scientific script…", True)
+
+
+@pytest.mark.parametrize("notification", ["progress", "failure"])
+def test_output_listener_starting_new_run_keeps_new_status(
+    scripts, monkeypatch, notification
+):
+    from optiland_gui.services.job_records import JobResult
+
+    connector, service, output, statuses, results = scripts
+    monkeypatch.setattr(service.jobs, "_dispatch", lambda: None)
+    old = service.run("print('older')")
+    newer = []
+
+    def restart_once(text):
+        if not newer:
+            newer.append(None)
+            newer[0] = service.run("print('newer')")
+
+    service.output_changed.connect(restart_once)
+    if notification == "progress":
+        service._progress(old, {"stage": "Older stage", "details": {"output": "old"}})
+    else:
+        service._finished(JobResult(old, "failed", error="old failure"))
+    assert service.request is newer[0]
+    assert statuses[-1] == ("Running scientific script…", True)
+    service._progress(old, {"stage": "stale"})
+    service._finished(JobResult(old, "failed", error="late failure"))
+    assert statuses[-1] == ("Running scientific script…", True)
+
+
+def test_apply_installs_prepared_model_without_gui_catalog_or_optical_work(
+    qapp, scripts, monkeypatch
+):
+    from optiland.materials.base import BaseMaterial
+    from optiland.optic import Optic
+
+    connector, service, output, statuses, results = scripts
+    service.run("optic.surfaces[1].comment = 'prepared candidate'")
+    wait_for(qapp, lambda: service.candidate is not None)
+    original = connector.get_optic()
+    observed = []
+    connector._undo_redo_manager.undoStackAvailabilityChanged.connect(
+        lambda available: observed.append(
+            (available, connector.get_optic().surfaces[1].comment)
+        )
+    )
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("Apply reconstructed or solved the model on the GUI thread")
+
+    monkeypatch.setattr(Optic, "from_dict", forbidden)
+    monkeypatch.setattr(BaseMaterial, "from_dict", forbidden)
+    monkeypatch.setattr(type(original.updater), "update", forbidden)
+    assert service.apply_candidate()
+    assert connector.get_optic() is not original
+    assert connector.get_optic().surfaces[1].comment == "prepared candidate"
+    assert observed and all(comment == "prepared candidate" for _, comment in observed)
+    assert connector._undo_redo_manager.can_undo()
+
+
+def test_apply_rechecks_revision_after_capture_and_backend_before_restore(
+    scripts, monkeypatch
+):
+    from dataclasses import replace
+
+    from optiland_gui.services.job_records import BackendConfig
+    from optiland_gui.services.prepared_optic import PreparedOptic
+
+    connector, service, output, statuses, results = scripts
+    monkeypatch.setattr(service.jobs, "_dispatch", lambda: None)
+    service.run("print('candidate')")
+    original = connector.get_optic()
+    candidate = PreparedOptic.capture(original)
+    service.candidate = replace(candidate, backend=BackendConfig("unavailable"))
+    assert not service.can_apply()
+    assert not service.apply_candidate()
+    service.candidate = candidate
+    capture = connector._capture_optic_state
+
+    def changed_capture():
+        state = capture()
+        connector.notify_change("metadata", surface_indices=(1,), columns=(1,))
+        return state
+
+    monkeypatch.setattr(connector, "_capture_optic_state", changed_capture)
+    assert not service.apply_candidate()
+    assert connector.get_optic() is original
+    assert not connector._undo_redo_manager.can_undo()
+
+
+@pytest.mark.parametrize("action", ["cancel", "apply_candidate"])
+def test_completion_callback_can_stop_or_apply_without_overwriting_its_status(
+    scripts, monkeypatch, action
+):
+    from optiland_gui.services.job_records import JobResult
+    from optiland_gui.services.prepared_optic import PreparedOptic
+
+    connector, service, output, statuses, results = scripts
+    monkeypatch.setattr(service.jobs, "_dispatch", lambda: None)
+    request = service.run("print('candidate')")
+    candidate = PreparedOptic.capture(connector.get_optic())
+    service.output_changed.connect(lambda text: getattr(service, action)())
+    service._finished(
+        JobResult(
+            request,
+            "succeeded",
+            {
+                "output": "complete",
+                "error": "",
+                "candidate": candidate,
+                "commands": (),
+            },
+            current=True,
+        )
+    )
+    assert service.candidate is None
+    assert statuses[-1][1] is False
+    assert statuses[-1][0] == (
+        "Script cancelled."
+        if action == "cancel"
+        else "Script result applied. Undo is available."
+    )
+
+
+def test_restart_and_run_are_guarded_during_restart_and_shutdown(scripts, monkeypatch):
+    connector, service, output, statuses, results = scripts
+    monkeypatch.setattr(service.jobs, "shutdown", lambda: None)
+    service.restart()
+    old = service.jobs
+    service.restart()
+    assert service.run("print('too soon')") is None
+    assert service.jobs is old
+    connector._calculation_shutdown_started = True
+    service._restart_finished()
+    assert old not in connector.calculation_services
+    assert service.run("print('after close')") is None
+    service.restart()
+    assert not service._restarting
+
+
+def test_scientific_panel_activity_is_delayed_and_stops_cleanly(qapp):
+    from optiland_gui.widgets.scientific_script_panel import ScientificScriptPanel
+
+    connector = OptilandConnector()
+    panel = ScientificScriptPanel(connector)
+    try:
+        panel.show()
+        panel._status_changed("Working", True)
+        assert panel.cancel.isEnabled()
+        assert not panel.activity.isVisible()
+        panel._status_changed("Still working", True)
+        wait_for(qapp, panel.activity.isVisible)
+        panel._status_changed("Finished", False)
+        assert not panel.cancel.isEnabled()
+        assert not panel.activity.isVisible()
+        assert not panel.timer.isActive()
+    finally:
+        for jobs in tuple(connector.calculation_services):
+            jobs.shutdown()
+        wait_for(
+            qapp,
+            lambda: all(j._process is None for j in connector.calculation_services),
+        )
+        panel.close()
+        panel.deleteLater()
+
+
+def test_gui_commands_recheck_currency_between_actions(qapp, scripts, monkeypatch):
+    from optiland_gui.widgets.python_terminal import PythonTerminalWidget
+
+    connector, service, output, statuses, results = scripts
+    actions = []
+    current = [True]
+    monkeypatch.setattr(service, "can_apply", lambda: current[0])
+    dock = SimpleNamespace(
+        show=lambda: actions.append("show"), raise_=lambda: actions.append("raise")
+    )
+    window = SimpleNamespace(
+        panel_manager=SimpleNamespace(
+            viewer_dock=dock,
+            analysis_dock=dock,
+            lens_editor_dock=dock,
+        )
+    )
+    iface = SimpleNamespace(
+        get_main_window=lambda: window,
+        get_viewer_panel=lambda: SimpleNamespace(
+            update=lambda: actions.append("repaint")
+        ),
+    )
+    host = SimpleNamespace(
+        scientific_panel=SimpleNamespace(service=service),
+        injected_variables={"iface": iface},
+    )
+    PythonTerminalWidget._apply_scientific_commands(
+        host,
+        (
+            ("refresh_views",),
+            ("show_panel", "analysis"),
+            ("show_panel", "invalid"),
+            ("unknown",),
+        ),
+    )
+    assert actions == ["repaint", "show", "raise"]
+    dock.show = lambda: current.__setitem__(0, False)
+    PythonTerminalWidget._apply_scientific_commands(
+        host,
+        (
+            ("show_panel", "viewer"),
+            ("refresh_views",),
+        ),
+    )
+    assert actions == ["repaint", "show", "raise", "raise"]
+    current[0] = True
+    host.injected_variables.clear()
+    PythonTerminalWidget._apply_scientific_commands(
+        host, (("refresh_views",), ("show_panel", "viewer"))
+    )
+    assert len(actions) == 4
+
+
+def test_worker_prepares_owned_candidate_for_each_backend(
+    set_test_backend, minimal_optic
+):
+    from optiland_gui.services.job_records import BackendConfig, OpticSnapshot
+    from optiland_gui.services.scientific_tasks import execute_scientific
+
+    original_comment = minimal_optic.surfaces[1].comment
+    backend = BackendConfig.capture()
+    result = execute_scientific(
+        OpticSnapshot.capture(minimal_optic),
+        {"code": "optic.surfaces[1].comment = 'worker result'\nprint('done')"},
+        lambda *a, **kw: None,
+        threading.Event(),
+    )
+    assert not result["error"]
+    assert result["output"] == "done\n"
+    assert result["candidate"].backend == backend
+    restored = result["candidate"].restore()
+    assert restored.surfaces[1].comment == "worker result"
+    assert minimal_optic.surfaces[1].comment == original_comment
+
+
+def test_worker_rejects_oversized_or_cancelled_source_before_restoring():
+    from optiland_gui.services.job_records import CalculationCancelled
+    from optiland_gui.services.scientific_tasks import SCRIPT_BYTES, execute_scientific
+
+    with pytest.raises(ValueError, match="1 MiB"):
+        execute_scientific(
+            None, {"code": "x" * (SCRIPT_BYTES + 1)}, None, threading.Event()
+        )
+    cancelled = threading.Event()
+    cancelled.set()
+    with pytest.raises(CalculationCancelled):
+        execute_scientific(
+            None, {"code": "raise RuntimeError('should not run')"}, None, cancelled
+        )
+
+
+def test_worker_normalizes_gallery_subclass_and_rejects_custom_trace(minimal_optic):
+    from optiland.optic import Optic
+    from optiland_gui.services.job_records import OpticSnapshot
+    from optiland_gui.services.scientific_tasks import execute_scientific
+
+    snapshot = OpticSnapshot.capture(minimal_optic)
+    result = execute_scientific(
+        snapshot,
+        {
+            "code": "from optiland.samples.objectives import CookeTriplet\n"
+            "optic = CookeTriplet()"
+        },
+        lambda *a, **kw: None,
+        threading.Event(),
+    )
+    assert not result["error"]
+    assert type(result["candidate"].restore()) is Optic
+    assert result["candidate"].restore().surfaces.num_surfaces == 8
+    result = execute_scientific(
+        snapshot,
+        {"code": "optic.trace = lambda *a, **kw: None"},
+        lambda *a, **kw: None,
+        threading.Event(),
+    )
+    assert result["candidate"] is None
+    assert "owned snapshot adapter" in result["error"]
+
+
+def test_cancel_during_worker_preparation_does_not_return_candidate(
+    minimal_optic, monkeypatch
+):
+    import optiland_gui.services.scientific_tasks as module
+    from optiland_gui.services.job_records import CalculationCancelled, OpticSnapshot
+
+    cancelled = threading.Event()
+    monkeypatch.setattr(
+        module, "initialize_loaded_optic", lambda optic: cancelled.set()
+    )
+    with pytest.raises(CalculationCancelled):
+        module.execute_scientific(
+            OpticSnapshot.capture(minimal_optic),
+            {"code": "print('prepared')"},
+            lambda *a, **kw: None,
+            cancelled,
+        )

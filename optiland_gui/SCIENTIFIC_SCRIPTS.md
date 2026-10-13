@@ -27,6 +27,10 @@ not change the current design. **Apply Script Result** explicitly installs the
 candidate and records Undo. If the document has changed, including a comment,
 the result cannot replace those edits; run the script again against the current
 document. A backend change, Stop or Restart also revokes application permission.
+The worker normalizes and prepares the returned model before Apply installs it;
+Apply does not reload material catalogs or run an optical update on the GUI thread.
+Serializable gallery models are supported. Custom tracing implementations still
+require an owned snapshot adapter and are reported as unsupported.
 
 The `gui` recorder supports `show_panel("viewer" | "analysis" | "lens_editor")`
 and `refresh_views()` (repaint retained views). At most 32 commands can be recorded.

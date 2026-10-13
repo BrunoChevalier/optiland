@@ -433,8 +433,9 @@ def test_apply_rechecks_revision_after_capture_and_backend_before_restore(
 
 
 @pytest.mark.parametrize("action", ["cancel", "apply_candidate"])
+@pytest.mark.parametrize("signal_name", ["output_changed", "candidate_changed"])
 def test_completion_callback_can_stop_or_apply_without_overwriting_its_status(
-    scripts, monkeypatch, action
+    scripts, monkeypatch, action, signal_name
 ):
     from optiland_gui.services.job_records import JobResult
     from optiland_gui.services.prepared_optic import PreparedOptic
@@ -443,7 +444,14 @@ def test_completion_callback_can_stop_or_apply_without_overwriting_its_status(
     monkeypatch.setattr(service.jobs, "_dispatch", lambda: None)
     request = service.run("print('candidate')")
     candidate = PreparedOptic.capture(connector.get_optic())
-    service.output_changed.connect(lambda text: getattr(service, action)())
+    handled = []
+
+    def handle_once(*args):
+        if not handled:
+            handled.append(True)
+            getattr(service, action)()
+
+    getattr(service, signal_name).connect(handle_once)
     service._finished(
         JobResult(
             request,
@@ -646,3 +654,53 @@ def test_cancel_during_worker_preparation_does_not_return_candidate(
             lambda *a, **kw: None,
             cancelled,
         )
+
+
+@pytest.mark.parametrize("signal_name", ["candidate_changed", "status_changed"])
+def test_cancellation_listener_can_start_a_new_run(scripts, monkeypatch, signal_name):
+    connector, service, output, statuses, results = scripts
+    monkeypatch.setattr(service.jobs, "_dispatch", lambda: None)
+    old = service.run("print('old')")
+    newer = []
+
+    def new_run_once(*args):
+        if not newer:
+            newer.append(None)
+            newer[0] = service.run("print('new')")
+
+    getattr(service, signal_name).connect(new_run_once)
+    service.cancel()
+    assert service.request is newer[0] and service.request is not old
+    assert statuses[-1] == ("Running scientific script…", True)
+
+
+def test_apply_listener_can_start_new_run_after_atomic_install(scripts, monkeypatch):
+    from optiland_gui.services.prepared_optic import PreparedOptic
+
+    connector, service, output, statuses, results = scripts
+    monkeypatch.setattr(service.jobs, "_dispatch", lambda: None)
+    old = service.run("print('old')")
+    service.candidate = PreparedOptic.capture(connector.get_optic())
+    newer = []
+
+    def committed(change):
+        newer.append(service.run("print('next')"))
+
+    connector.document_state.committed.connect(committed)
+    assert service.apply_candidate()
+    assert service.request is newer[0] and service.request is not old
+    assert statuses[-1] == ("Running scientific script…", True)
+    assert connector._undo_redo_manager.can_undo()
+
+
+def test_console_without_document_disables_scientific_run(qapp):
+    from optiland_gui.widgets.python_terminal import PythonTerminalWidget
+
+    widget = PythonTerminalWidget()
+    try:
+        assert widget.scientific_panel is None
+        assert not widget.btn_run_scientific.isEnabled()
+        widget._run_scientific_from_editor()
+    finally:
+        widget.shutdown_kernel()
+        widget.deleteLater()

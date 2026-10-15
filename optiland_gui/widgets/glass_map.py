@@ -455,7 +455,10 @@ class GlassMap(QWidget):
             size = max(50, math.ceil(len(hits) / 50))
             for start in range(0, len(hits), size):
                 group = hits[start : start + size]
-                child = menu.addMenu(f"Materials {start + 1}–{start + len(group)}")
+                # Explicit parenting keeps the callback's Python wrapper alive
+                # when Qt returns the submenu through its associated QAction.
+                child = QMenu(f"Materials {start + 1}–{start + len(group)}", menu)
+                menu.addMenu(child)
                 child.aboutToShow.connect(
                     lambda group=group, child=child: self._populate_choices(
                         child, group

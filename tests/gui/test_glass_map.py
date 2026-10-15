@@ -433,11 +433,16 @@ def test_reopening_overlap_menu_replaces_choices_and_deep_locate_is_guarded(char
     assert not chart.locate(a.key)
 
 
-def test_dense_overlap_chooser_is_lazy_complete_and_keyboard_navigable(chart):
+@pytest.mark.parametrize("reopen", [False, True])
+def test_dense_overlap_chooser_is_lazy_complete_and_keyboard_navigable(chart, reopen):
     points = tuple(point(f"Record {i:04}") for i in range(125))
     chart.set_points(points)
     chart.canvas.draw()
     chart._on_click(mouse(chart, points[0]))
+    if reopen:
+        chart._chooser.close()
+        chart._on_click(mouse(chart, points[0]))
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
     menu = chart._chooser
     assert len(menu.actions()) == 3
     assert all(action.menu() is not None for action in menu.actions())

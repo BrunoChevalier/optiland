@@ -46,6 +46,7 @@ def owner(qapp, minimal_optic, monkeypatch):
     window = ClosingWindow()
     window.connector = connector
     window.panel_manager = SimpleNamespace(
+        all_docks=[],
         python_terminal=SimpleNamespace(shutdown_kernel=lambda: None)
     )
     yield connector, operations, window, messages, results, progress

@@ -242,6 +242,7 @@ def test_main_window_close_waits_for_both_services(qapp, scripts):
     window = Window()
     window.connector = connector
     window.panel_manager = SimpleNamespace(
+        all_docks=[],
         python_terminal=SimpleNamespace(shutdown_kernel=lambda: closed.append(True))
     )
     window.show()

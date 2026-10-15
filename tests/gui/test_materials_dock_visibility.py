@@ -278,6 +278,8 @@ def test_accepted_main_window_close_hides_floating_native_docks(qapp):
 
     window = QMainWindow()
     window.connector = SimpleNamespace(file_operations=None)
+    window._file_operations_settled = True
+    window._calculation_shutdown_requested = True
     window._calculation_shutdown_complete = True
     dock = QDockWidget("Floating Materials", window)
     dock.setWidget(QWidget())

@@ -8,6 +8,7 @@ from unittest.mock import MagicMock
 import numpy as np
 import pytest
 from matplotlib.patches import Polygon
+from PySide6.QtCore import QSettings
 from PySide6.QtWidgets import QMainWindow, QVBoxLayout, QWidget
 
 from optiland_gui.surface_interaction import SurfaceInteractionState
@@ -83,7 +84,7 @@ def test_reject_mismatched_scene_identity_and_nonfinite_reference(
 
 @pytest.mark.parametrize("with_3d", [False, True])
 def test_panel_manager_connects_actual_editor_and_views_to_one_state(
-    qapp, highlighting_connector, monkeypatch, with_3d
+    qapp, highlighting_connector, monkeypatch, with_3d, tmp_path
 ):
     from optiland_gui import panel_manager
     from tests.gui.test_calculation_jobs import wait_for
@@ -112,6 +113,7 @@ def test_panel_manager_connects_actual_editor_and_views_to_one_state(
     connector = highlighting_connector
     window = QMainWindow()
     window.iface = SimpleNamespace()
+    window.settings = QSettings(str(tmp_path / "settings.ini"), QSettings.IniFormat)
     manager = panel_manager.PanelManager(window, connector)
     manager.create_all_panels(window)
     viewer = manager.viewer_panel.viewer2D

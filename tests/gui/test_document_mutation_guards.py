@@ -396,7 +396,7 @@ def test_accepted_write_may_drain_but_not_during_publication(
     result = SimpleNamespace(
         request=SimpleNamespace(job_id="prepare"),
         status="succeeded",
-        data={"digest": "abc"},
+        data={"digest": "abc", "staged_identity": (1, 2)},
     )
     operations._finished(result)
     assert queued == ["publish_output"]

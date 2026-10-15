@@ -50,7 +50,7 @@ def encode(artifact, tmp_path, extension):
     prepare_artifact_output(
         None,
         {"path": str(target), "staged_path": str(staged), "artifact": artifact},
-        lambda *args: None,
+        lambda *args, **kwargs: None,
         threading.Event(),
     )
     assert not target.exists()

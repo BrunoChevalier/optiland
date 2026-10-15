@@ -197,7 +197,7 @@ def prepare_artifact_output(
     parameters: dict[str, Any],
     progress: Callable[[str], None],
     cancelled: Event,
-) -> dict[str, str]:
+) -> dict[str, Any]:
     """Encode detached output into an owned sibling, preserving the destination."""
     check_cancelled(cancelled)
     artifact = parameters.get("artifact")
@@ -205,10 +205,17 @@ def prepare_artifact_output(
     check_cancelled(cancelled)
     path = _stage_path(parameters)
     created = False
+    identity = None
     progress("Preparing captured export")
     try:
         with open(path, "xb") as stream:
             created = True
+            stat = os.fstat(stream.fileno())
+            identity = (stat.st_dev, stat.st_ino)
+            progress(
+                "Writing owned staging file",
+                details={"staged_identity": identity},
+            )
             writer = _ArtifactWriter(stream, cancelled)
             if isinstance(artifact, BytesArtifact):
                 for start in range(0, len(artifact.data), 1024 * 1024):
@@ -246,10 +253,15 @@ def prepare_artifact_output(
                     image.save(writer, format="PNG", pnginfo=metadata)
             check_cancelled(cancelled)
         progress("Verifying captured export")
-        return {"digest": _digest(path)}
-    except BaseException:
+        return {"digest": _digest(path), "staged_identity": identity}
+    except BaseException as error:
         if created:
-            path.unlink(missing_ok=True)
+            try:
+                cleanup_output(
+                    None, dict(parameters, staged_identity=identity), None, None
+                )
+            except (OSError, ValueError) as cleanup_error:
+                error.add_note(f"Staging cleanup failed: {cleanup_error}")
         raise
 
 

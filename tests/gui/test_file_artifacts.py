@@ -32,7 +32,7 @@ def parameters(tmp_path, artifact):
 def prepare(tmp_path, artifact, *, cancelled=None):
     params = parameters(tmp_path, artifact)
     result = file_tasks.prepare_artifact_output(
-        None, params, lambda *_: None, cancelled or Event()
+        None, params, lambda *_, **__: None, cancelled or Event()
     )
     return params, result
 
@@ -197,6 +197,41 @@ def test_stage_collision_does_not_remove_preexisting_file(tmp_path):
     with pytest.raises(FileExistsError):
         prepare(tmp_path, BytesArtifact(b"new"))
     assert stage.read_bytes() == b"previous stage"
+
+
+def test_artifact_reports_ownership_before_encoding_and_returns_same_receipt(tmp_path):
+    params = parameters(tmp_path, BytesArtifact(b"captured"))
+    receipts = []
+
+    def progress(stage, **details):
+        if "details" in details:
+            stat = (tmp_path / ".optiland-artifact.tmp").stat()
+            receipt = details["details"]["staged_identity"]
+            assert receipt == (stat.st_dev, stat.st_ino)
+            receipts.append(receipt)
+
+    result = file_tasks.prepare_artifact_output(None, params, progress, Event())
+    assert receipts == [result["staged_identity"]]
+    file_tasks.publish_output(None, {**params, **result}, None, Event())
+    assert (tmp_path / "destination.dat").read_bytes() == b"captured"
+
+
+def test_artifact_failure_preserves_a_replaced_staging_file(tmp_path, monkeypatch):
+    stage = tmp_path / ".optiland-artifact.tmp"
+    retained = tmp_path / "original-stage.tmp"
+
+    def replace_stage_and_fail(path):
+        path.rename(retained)
+        path.write_bytes(b"another owner")
+        raise OSError("verification failed")
+
+    monkeypatch.setattr(file_tasks, "_digest", replace_stage_and_fail)
+    with pytest.raises(OSError, match="verification failed") as raised:
+        prepare(tmp_path, BytesArtifact(b"captured"))
+    assert stage.read_bytes() == b"another owner"
+    assert retained.read_bytes() == b"captured"
+    assert "Staging cleanup failed" in raised.value.__notes__[0]
+    assert not (tmp_path / "destination.dat").exists()
 
 
 def test_cancel_during_csv_output_cleans_only_owned_stage(tmp_path, monkeypatch):

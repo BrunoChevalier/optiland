@@ -195,7 +195,7 @@ class _CsvWriter:
 def prepare_artifact_output(
     snapshot: None,
     parameters: dict[str, Any],
-    progress: Callable[[str], None],
+    progress: Callable[..., None],
     cancelled: Event,
 ) -> dict[str, Any]:
     """Encode detached output into an owned sibling, preserving the destination."""

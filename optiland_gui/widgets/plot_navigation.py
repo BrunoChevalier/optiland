@@ -111,7 +111,12 @@ class PlotNavigationToolbar(NavigationToolbar2QT):
             self.update_icon_theme()
 
     def update_icon_theme(self) -> None:
-        """Match the vector glyph to the toolbar's local foreground palette."""
+        """Refresh toolbar glyphs using the current local palette."""
+        # Matplotlib may cache the standard icons at toolbar construction.
+        # Regenerate them as well as our rectangle glyph after a palette change.
+        for _text, _tooltip, image, callback in self.toolitems:
+            if image and callback != "zoom":
+                self._actions[callback].setIcon(self._icon(image + ".png"))
         self._actions["zoom"].setIcon(
             _rectangle_zoom_icon(self.palette().color(self.foregroundRole()))
         )

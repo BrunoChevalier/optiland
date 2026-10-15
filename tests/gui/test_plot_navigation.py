@@ -311,6 +311,26 @@ def test_3d_axes_keep_their_existing_navigation(plot):
     emit(plot, "button_release_event", pixel)
 
 
+def test_standard_icons_follow_repeated_light_and_dark_palette_changes(plot):
+    toolbar = plot.toolbar
+    custom = toolbar.addAction("Local export")
+    for background, foreground in (("#202124", "#eeeeee"), ("#ffffff", "#202020"),
+                                   ("#202124", "#eeeeee")):
+        palette = toolbar.palette()
+        palette.setColor(toolbar.backgroundRole(), QColor(background))
+        palette.setColor(toolbar.foregroundRole(), QColor(foreground))
+        toolbar.setPalette(palette)
+        for name in ("home", "back", "forward", "pan", "zoom"):
+            image = toolbar._actions[name].icon().pixmap(24, 24).toImage()
+            ink = [image.pixelColor(x, y).lightness()
+                   for x in range(image.width()) for y in range(image.height())
+                   if image.pixelColor(x, y).alpha() > 200]
+            assert ink
+            lightness = sum(ink) / len(ink)
+            assert lightness > 180 if background == "#202124" else lightness < 80
+        assert custom.icon().isNull()
+
+
 @pytest.mark.parametrize("foreground", ["#eeeeee", "#202020"])
 def test_rectangle_icon_follows_palette_and_has_accessible_name(plot, foreground):
     original_icon = plot.toolbar._actions["zoom"].icon().cacheKey()

@@ -181,6 +181,52 @@ Let's modify a surface and see the update:
 *   Click the triangular "Run" button to execute the analysis.
 *   The results will be displayed in the Analysis Panel, showing a plot of RMS spot size against field angle.
 
+5. Running a Scientific Script
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The script editor offers two ways to run Python:
+
+* **Run Script / F5** executes in the interactive Console. Its ``connector`` and
+  ``iface`` variables provide direct GUI access for extensions. Long calculations
+  in this console can block the window.
+* **Scientific Run** executes in a separate process using an independent copy of
+  the current optic, keeping the window and optical previews responsive. Each run
+  starts with a fresh local namespace. **Restart** also resets the process and its
+  imported module state. **Stop** and **Restart** preserve your editor text.
+
+Scientific code receives ``optic``, ``np`` (NumPy), ``be`` (the Optiland backend),
+``optiland`` and ``gui``. Ordinary Python imports work. Console variables and GUI
+objects are not copied into this process. Use Scientific Run for trusted local
+code; process isolation does not restrict its access to files or other resources.
+
+For example, with a lens loaded, enter this code and click **Scientific Run**:
+
+.. code-block:: python
+
+   optic.surfaces[1].comment = "Scientific candidate"
+   optic.trace(0, 0, 0.55, 101, "line_y")
+   print(optic.surfaces.y)
+   gui.show_panel("viewer")
+
+Output appears in **Scientific Results**. A successful run does not replace your
+current design until you click **Apply Script Result**, which also records Undo.
+If you edit the document, even a comment, or change the backend, rerun the script
+before applying its result. Stop and Restart also revoke the previous result.
+Serializable gallery models are supported; custom tracing implementations require
+an owned snapshot adapter and are reported as unsupported.
+
+The ``gui`` recorder offers ``show_panel("viewer")``, ``show_panel("analysis")``,
+``show_panel("lens_editor")`` and ``refresh_views()``. These commands run only after
+successful execution against the current document. ``refresh_views()`` repaints
+the retained views; it does not apply the pending script result or trigger a new
+optical calculation. Use **Apply Script Result** to update the displayed design.
+
+Scientific source text is limited to 1 MiB. Output is bounded and displays a
+truncation marker when necessary. Stop requests cancellation and terminates an
+unresponsive scientific process after the cancellation grace period. The next run
+starts a replacement process when needed, and closing the application waits for
+its scientific processes to stop.
+
 Explore Further
 ---------------
 

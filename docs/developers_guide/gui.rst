@@ -107,6 +107,25 @@ Key Widgets
     *   An embedded IPython terminal.
     *   Provides direct access to the `OptilandConnector` instance (via the `connector` variable), allowing advanced users to interact with the optical system programmatically.
     *   Commands executed in the terminal can trigger GUI updates if they modify the `Optic` object.
+    *   **Scientific Run** uses a separate ``CalculationJobs`` service registered
+        with the connector for backend invalidation and asynchronous shutdown.
+        Its worker receives an owned snapshot and returns a ``PreparedOptic``;
+        normalization, material reconstruction and optical initialization happen
+        in the worker. The GUI checks request identity, whole-document edit token
+        and backend before installing the result with one Undo entry.
+    *   The scientific worker receives no Qt objects, ``connector``, ``iface`` or
+        interactive Console namespace. It executes trusted local Python, so this
+        process boundary is not a security sandbox. A fresh execution namespace
+        is created for each run; Restart also discards process and module state.
+    *   ``gui.show_panel()`` and ``gui.refresh_views()`` record at most 32 commands
+        for GUI-thread delivery after successful current execution. Currency is
+        rechecked before each command. ``refresh_views()`` only repaints retained
+        views; it neither applies a candidate nor schedules an optical solve.
+    *   Source is limited to 1 MiB. Standard output and the formatted traceback
+        each retain at most 64 KiB, 1,000 lines and 4,096 characters per line, plus
+        a truncation marker. Progress updates are rate limited before reaching Qt.
+        Stop revokes result application immediately and uses the existing worker
+        cancellation grace period to retire an unresponsive process.
 
 *   **Command Palette (`widgets/command_palette.py`)**:
 

@@ -24,6 +24,7 @@ class ScientificScripts(QObject):
         self._create_jobs()
         self.request = None
         self.candidate = None
+        self._run_generation = 0
         self._edit_token = None
         self._output = ""
         connector.document_state.committed.connect(self._document_changed)
@@ -43,14 +44,18 @@ class ScientificScripts(QObject):
                 "Wait for the scientific process to restart.", True
             )
             return None
+        # Cancel and output notifications can synchronously start a newer run.
+        generation = self._run_generation + 1
         self.cancel()
+        if self._run_generation != generation:
+            return None
         self.request = None
         try:
             if len(code.encode("utf-8")) > SCRIPT_BYTES:
                 raise ValueError("Scientific scripts are limited to 1 MiB.")
             snapshot = OpticSnapshot.capture(self.connector.get_optic())
             self._edit_token = self.connector.document_state.edit_token
-            self.request = self.jobs.submit(
+            request = self.jobs.submit(
                 "scientific-script",
                 "optiland_gui.services.scientific_tasks:execute_scientific",
                 snapshot,
@@ -58,16 +63,21 @@ class ScientificScripts(QObject):
                 cancel_on_document_change=False,
                 context=self._edit_token,
             )
+            if self._run_generation != generation:
+                return None
+            self.request = request
         except Exception as exc:
             self.status_changed.emit(f"Unable to run: {exc}", False)
             return None
         self._output = ""
         self.output_changed.emit("")
-        self.status_changed.emit("Running scientific script…", True)
-        return self.request
+        if self._run_generation == generation:
+            self.status_changed.emit("Running scientific script…", True)
+        return request
 
     @Slot()
     def cancel(self):
+        self._run_generation += 1
         request = self.request
         self.candidate = None
         self.jobs.cancel_target("scientific-script")
@@ -149,7 +159,13 @@ class ScientificScripts(QObject):
 
     @Slot(object)
     def _document_changed(self, change):
-        self.candidate_changed.emit(self.can_apply())
+        candidate = self.candidate
+        applicable = self.can_apply()
+        self.candidate_changed.emit(applicable)
+        if candidate is not None and self.candidate is candidate and not applicable:
+            self.status_changed.emit(
+                "Document or backend changed; rerun the script before applying.", False
+            )
 
     @Slot(object, dict)
     def _progress(self, request, message):

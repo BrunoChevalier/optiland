@@ -704,3 +704,113 @@ def test_console_without_document_disables_scientific_run(qapp):
     finally:
         widget.shutdown_kernel()
         widget.deleteLater()
+
+
+@pytest.mark.parametrize("action", ["cancel", "restart"])
+def test_initial_output_listener_can_stop_without_restoring_running_status(
+    scripts, monkeypatch, action
+):
+    connector, service, output, statuses, results = scripts
+    monkeypatch.setattr(service.jobs, "_dispatch", lambda: None)
+    handled = []
+
+    def stop_once(text):
+        if not handled:
+            handled.append(True)
+            getattr(service, action)()
+
+    service.output_changed.connect(stop_once)
+    service.run("print('cancel at startup')")
+    assert statuses[-1][0] != "Running scientific script…"
+    assert not service.can_apply()
+
+
+def test_new_run_from_cancellation_notification_owns_latest_intent(
+    scripts, monkeypatch
+):
+    connector, service, output, statuses, results = scripts
+    monkeypatch.setattr(service.jobs, "_dispatch", lambda: None)
+    service.run("print('first')")
+    newer = []
+
+    def start_once(available):
+        if not newer:
+            newer.append(None)
+            newer[0] = service.run("print('newest')")
+
+    service.candidate_changed.connect(start_once)
+    assert service.run("print('superseded during cancellation')") is None
+    assert service.request is newer[0]
+    assert service.jobs.is_current(newer[0])
+
+
+def test_new_run_from_queue_notification_does_not_receive_older_request(
+    scripts, monkeypatch
+):
+    connector, service, output, statuses, results = scripts
+    monkeypatch.setattr(service.jobs, "_dispatch", lambda: None)
+    newer = []
+
+    def start_once(request, state):
+        if state == "queued" and not newer:
+            newer.append(None)
+            newer[0] = service.run("print('newest queued request')")
+
+    service.jobs.state_changed.connect(start_once)
+    assert service.run("print('older queued request')") is None
+    assert service.request is newer[0]
+    assert service.jobs.is_current(newer[0])
+
+
+def test_stale_result_notification_cannot_overwrite_a_listener_started_run(
+    scripts, monkeypatch
+):
+    from optiland_gui.services.prepared_optic import PreparedOptic
+
+    connector, service, output, statuses, results = scripts
+    monkeypatch.setattr(service.jobs, "_dispatch", lambda: None)
+    service.run("print('old candidate')")
+    service.candidate = PreparedOptic.capture(connector.get_optic())
+    newer = []
+
+    def start_once(available):
+        if not available and not newer:
+            newer.append(None)
+            newer[0] = service.run("print('new candidate')")
+
+    service.candidate_changed.connect(start_once)
+    connector.notify_change("metadata", surface_indices=(1,), columns=(1,))
+    assert service.request is newer[0]
+    assert statuses[-1] == ("Running scientific script…", True)
+
+
+@pytest.mark.parametrize("change", ["metadata", "backend"])
+def test_ready_result_explains_why_it_is_stale(scripts, monkeypatch, change):
+    from optiland_gui.services.job_records import BackendConfig, JobResult
+    from optiland_gui.services.prepared_optic import PreparedOptic
+
+    connector, service, output, statuses, results = scripts
+    monkeypatch.setattr(service.jobs, "_dispatch", lambda: None)
+    request = service.run("print('candidate')")
+    service._finished(
+        JobResult(
+            request,
+            "succeeded",
+            {
+                "output": "complete",
+                "error": "",
+                "candidate": PreparedOptic.capture(connector.get_optic()),
+                "commands": (),
+            },
+            current=True,
+        )
+    )
+    assert service.can_apply()
+    if change == "metadata":
+        connector.notify_change("metadata", surface_indices=(1,), columns=(1,))
+    else:
+        monkeypatch.setattr(BackendConfig, "capture", lambda: BackendConfig("torch"))
+        connector._check_calculation_backend()
+    assert not service.can_apply()
+    assert "rerun" in statuses[-1][0].lower()
+    assert not statuses[-1][1]

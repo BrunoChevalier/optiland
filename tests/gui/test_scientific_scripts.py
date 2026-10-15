@@ -814,3 +814,111 @@ def test_ready_result_explains_why_it_is_stale(scripts, monkeypatch, change):
     assert not service.can_apply()
     assert "rerun" in statuses[-1][0].lower()
     assert not statuses[-1][1]
+
+
+@pytest.mark.parametrize("action", ["cancel", "restart"])
+@pytest.mark.parametrize("notification", ["progress", "failure"])
+def test_output_listener_can_stop_progress_or_failure_notification(
+    scripts, monkeypatch, action, notification
+):
+    from optiland_gui.services.job_records import JobResult
+
+    connector, service, output, statuses, results = scripts
+    monkeypatch.setattr(service.jobs, "_dispatch", lambda: None)
+    request = service.run("print('candidate')")
+    handled = []
+
+    def stop_once(text):
+        if not handled:
+            handled.append(True)
+            getattr(service, action)()
+
+    service.output_changed.connect(stop_once)
+    if notification == "progress":
+        service._progress(request, {"stage": "Old stage", "details": {"output": "old"}})
+    else:
+        service._finished(JobResult(request, "failed", error="old failure"))
+    assert statuses[-1][0] not in {
+        "Old stage",
+        "Script failed. See scientific output for details.",
+    }
+
+
+def test_progress_after_stop_does_not_restore_activity(scripts, monkeypatch):
+    connector, service, output, statuses, results = scripts
+    monkeypatch.setattr(service.jobs, "_dispatch", lambda: None)
+    request = service.run("print('candidate')")
+    service.cancel()
+    service._progress(request, {"stage": "Queued before Stop"})
+    assert statuses[-1] == ("Script cancelled.", False)
+
+
+def test_progress_callback_distinguishes_document_edits_from_stop(scripts, monkeypatch):
+    connector, service, output, statuses, results = scripts
+    monkeypatch.setattr(service.jobs, "_dispatch", lambda: None)
+    request = service.run("print('detached candidate')")
+    connector.notify_change("optical")
+    assert not service.jobs.is_current(request)
+    service._progress(
+        request, {"stage": "Still running", "details": {"output": "useful output"}}
+    )
+    assert statuses[-1] == ("Still running", True)
+    assert output[-1] == "useful output"
+
+
+@pytest.mark.parametrize("signal_name", ["output_changed", "candidate_changed"])
+def test_error_result_listener_can_stop_even_without_a_candidate(
+    scripts, monkeypatch, signal_name
+):
+    from optiland_gui.services.job_records import JobResult
+
+    connector, service, output, statuses, results = scripts
+    monkeypatch.setattr(service.jobs, "_dispatch", lambda: None)
+    request = service.run("raise ValueError('failure')")
+    handled = []
+
+    def stop_once(*args):
+        if not handled:
+            handled.append(True)
+            service.cancel()
+
+    getattr(service, signal_name).connect(stop_once)
+    service._finished(
+        JobResult(
+            request,
+            "succeeded",
+            {
+                "output": "",
+                "error": "script failure",
+                "candidate": None,
+                "commands": (),
+            },
+        )
+    )
+    assert statuses[-1] == ("Script cancelled.", False)
+
+
+@pytest.mark.parametrize("action", ["cancel", "restart"])
+def test_apply_notification_can_stop_without_overwriting_its_status(
+    scripts, monkeypatch, action
+):
+    from PySide6.QtCore import QSignalBlocker
+
+    from optiland_gui.services.prepared_optic import PreparedOptic
+
+    connector, service, output, statuses, results = scripts
+    monkeypatch.setattr(service.jobs, "_dispatch", lambda: None)
+    service.run("print('candidate')")
+    service.candidate = PreparedOptic.capture(connector.get_optic())
+    handled = []
+
+    def stop_once(available):
+        if not handled:
+            handled.append(True)
+            getattr(service, action)()
+
+    service.candidate_changed.connect(stop_once)
+    # Isolate the final candidate notification, after document publication.
+    with QSignalBlocker(connector.document_state):
+        assert service.apply_candidate()
+    assert statuses[-1][0] != "Script result applied. Undo is available."

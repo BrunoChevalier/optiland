@@ -25,6 +25,7 @@ class ScientificScripts(QObject):
         self.request = None
         self.candidate = None
         self._run_generation = 0
+        self._request_generation = None
         self._edit_token = None
         self._output = ""
         connector.document_state.committed.connect(self._document_changed)
@@ -66,6 +67,7 @@ class ScientificScripts(QObject):
             if self._run_generation != generation:
                 return None
             self.request = request
+            self._request_generation = generation
         except Exception as exc:
             self.status_changed.emit(f"Unable to run: {exc}", False)
             return None
@@ -78,12 +80,13 @@ class ScientificScripts(QObject):
     @Slot()
     def cancel(self):
         self._run_generation += 1
+        generation = self._run_generation
         request = self.request
         self.candidate = None
         self.jobs.cancel_target("scientific-script")
-        if self.request is request:
+        if self.request is request and self._run_generation == generation:
             self.candidate_changed.emit(False)
-        if self.request is request:
+        if self.request is request and self._run_generation == generation:
             self.status_changed.emit("Script cancelled.", False)
 
     @Slot()
@@ -128,6 +131,7 @@ class ScientificScripts(QObject):
             return False
         try:
             request, owned = self.request, self.candidate
+            generation = self._run_generation
             candidate = owned.restore()
             undo = self.connector._capture_optic_state()
             if (
@@ -147,8 +151,9 @@ class ScientificScripts(QObject):
             self.connector.notify_change("replacement")
             manager.undoStackAvailabilityChanged.emit(manager.can_undo())
             manager.redoStackAvailabilityChanged.emit(manager.can_redo())
-            if self.request is request:
+            if self.request is request and self._run_generation == generation:
                 self.candidate_changed.emit(False)
+            if self.request is request and self._run_generation == generation:
                 self.status_changed.emit(
                     "Script result applied. Undo is available.", False
                 )
@@ -169,13 +174,17 @@ class ScientificScripts(QObject):
 
     @Slot(object, dict)
     def _progress(self, request, message):
-        if request is not self.request:
+        if (
+            request is not self.request
+            or self._request_generation != self._run_generation
+        ):
             return
+        generation = self._run_generation
         details = message.get("details") or {}
         if "output" in details:
             self._output = details["output"]
             self.output_changed.emit(self._output)
-        if request is self.request:
+        if request is self.request and self._run_generation == generation:
             self.status_changed.emit(message["stage"], True)
 
     @Slot(object)
@@ -183,11 +192,12 @@ class ScientificScripts(QObject):
         request = result.request
         if request is not self.request:
             return
+        generation = self._run_generation
         if result.status != "succeeded":
             if result.status == "failed":
                 self._output += "\n" + result.error[:16000]
                 self.output_changed.emit(self._output)
-                if request is not self.request:
+                if request is not self.request or self._run_generation != generation:
                     return
             self.status_changed.emit(
                 "Script cancelled."
@@ -199,11 +209,19 @@ class ScientificScripts(QObject):
         self._output = result.data["output"] + result.data["error"]
         candidate = self.candidate = result.data["candidate"]
         self.output_changed.emit(self._output)
-        if request is not self.request or self.candidate is not candidate:
+        if (
+            request is not self.request
+            or self.candidate is not candidate
+            or self._run_generation != generation
+        ):
             return
         applicable = self.can_apply()
         self.candidate_changed.emit(applicable)
-        if request is not self.request or self.candidate is not candidate:
+        if (
+            request is not self.request
+            or self.candidate is not candidate
+            or self._run_generation != generation
+        ):
             return
         self.status_changed.emit(
             "Script failed; the current document was preserved."
@@ -213,6 +231,10 @@ class ScientificScripts(QObject):
             else "Result is from an earlier document revision; rerun to apply.",
             False,
         )
-        if request is self.request and self.can_apply():
+        if (
+            request is self.request
+            and self._run_generation == generation
+            and self.can_apply()
+        ):
             # The receiving GUI slot rechecks currency before each command.
             self.commands_ready.emit(result.data["commands"])

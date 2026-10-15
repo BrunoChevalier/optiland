@@ -141,7 +141,7 @@ def test_loaded_candidate_install_failure_preserves_current_document(
     connector, operations, _, _, notifications = file_operations
     original = connector.get_optic()
     token = connector.document_state.edit_token
-    snapshot = PreparedOptic.capture(original)
+    snapshot = {"snapshot": PreparedOptic.capture(original), "diagnostics": []}
     monkeypatch.setattr(operations.jobs, "_dispatch", lambda: None)
     request = operations.request_load(tmp_path / "candidate.json")
 

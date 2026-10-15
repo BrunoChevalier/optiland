@@ -124,7 +124,8 @@ def test_object_load_owns_its_snapshot(minimal_optic):
         lambda *a: None,
         threading.Event(),
     )
-    restored = prepared.restore()
+    assert prepared["diagnostics"] == []
+    restored = prepared["snapshot"].restore()
     assert type(restored) is Optic
     assert restored is not minimal_optic
     assert restored.wavelengths.primary_index == 0
@@ -150,7 +151,7 @@ def test_late_successful_load_cannot_replace_a_superseded_document(
     original = connector.get_optic()
     monkeypatch.setattr(operations.jobs, "_dispatch", lambda: None)
     first = operations.request_load(tmp_path / "older.json")
-    prepared = PreparedOptic.capture(original)
+    prepared = {"snapshot": PreparedOptic.capture(original), "diagnostics": []}
     # Completion was already en route when the user changed their intent.
     monkeypatch.setattr(operations.jobs, "cancel_target", lambda *a: None)
     if invalidated == "cancel":
@@ -174,7 +175,7 @@ def test_discarded_candidate_cannot_be_accepted_later(
     original = connector.get_optic()
     monkeypatch.setattr(operations.jobs, "_dispatch", lambda: None)
     request = operations.request_load(tmp_path / "candidate.json")
-    prepared = PreparedOptic.capture(original)
+    prepared = {"snapshot": PreparedOptic.capture(original), "diagnostics": []}
     edit_comment(connector, "keep this edit")
     operations._finished(JobResult(request, "succeeded", prepared, current=False))
     identifier = request.context.identifier

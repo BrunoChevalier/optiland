@@ -60,7 +60,8 @@ def test_incompatible_prepared_result_cannot_replace_the_live_document(
         if invalid == "backend"
         else {"unexpected": "payload"}
     )
-    operations._finished(JobResult(request, "succeeded", candidate, current=True))
+    prepared = {"snapshot": candidate, "diagnostics": []}
+    operations._finished(JobResult(request, "succeeded", prepared, current=True))
     assert not operations.busy
     assert connector.get_optic() is original
     assert connector.document_state.edit_token == token

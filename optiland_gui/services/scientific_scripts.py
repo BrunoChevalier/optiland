@@ -164,7 +164,9 @@ class ScientificScripts(QObject):
             if self.request is request and self._run_generation == generation:
                 self.candidate_changed.emit(False)
             if self.request is request and self._run_generation == generation:
-                self.status_changed.emit("Script result applied. Undo is available.", False)
+                self.status_changed.emit(
+                    "Script result applied. Undo is available.", False
+                )
             return True
         except Exception as exc:
             self.status_changed.emit(f"Unable to apply script result: {exc}", False)

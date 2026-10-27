@@ -39,7 +39,15 @@ def test_worker_load_never_reconstructs_materials_or_prescription_in_gui(
     restored = connector.get_optic()
     assert restored is not original, notifications
     assert float(restored.surfaces[1].geometry.radius) == 50
-    assert restored.polarization.to_dict() == original.polarization.to_dict()
+    actual_polarization = restored.polarization.to_dict()
+    expected_polarization = original.polarization.to_dict()
+    assert actual_polarization.pop("is_polarized") is expected_polarization.pop(
+        "is_polarized"
+    )
+    # Re-normalizing float64 amplitudes in the worker can differ by a few ULPs.
+    assert actual_polarization == pytest.approx(
+        expected_polarization, rel=1e-14, abs=1e-15
+    )
     assert isinstance(restored.polarization.phase_y, type(be.cast(0.0)))
     assert connector.get_current_filepath() == str(path)
     assert not connector.is_modified()

@@ -65,8 +65,10 @@ class ThinLensInteractionModel(BaseInteractionModel):
             RealRays: The refracted rays.
 
         """
-        h2 = rays.x**2 + rays.y**2
-        rays.opd = rays.opd + self.f - be.copysign(be.sqrt(h2 + self.f**2), self.f)
+        # A zero-power lens adds no phase; inf - inf would destroy the OPD.
+        if not be.isinf(self.f):
+            h2 = rays.x**2 + rays.y**2
+            rays.opd = rays.opd + self.f - be.copysign(be.sqrt(h2 + self.f**2), self.f)
 
         n1 = self.material_pre.n(rays.w)
         n2 = n1 if self.is_reflective else self.material_post.n(rays.w)

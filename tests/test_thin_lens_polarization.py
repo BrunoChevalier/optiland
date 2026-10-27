@@ -116,3 +116,27 @@ def test_thin_lens_does_not_overwrite_scattered_direction(set_test_backend):
         0,
         atol=1e-14,
     )
+
+
+@pytest.mark.parametrize("focal_length", [float("inf"), -float("inf")])
+@pytest.mark.parametrize("reflect", [False, True])
+@pytest.mark.parametrize("ray_type", [RealRays, PolarizedRays])
+def test_zero_power_thin_lens_preserves_optical_path(
+    focal_length, reflect, ray_type, set_test_backend
+):
+    optic = Optic()
+    optic.surfaces.add(index=0, thickness=1)
+    optic.surfaces.add(
+        index=1,
+        surface_type="paraxial",
+        f=focal_length,
+        material="mirror" if reflect else "air",
+    )
+    rays = bundle(ray_type)
+    rays.opd = be.array([7.0])
+    optic.surfaces[1].interaction_model.interact_real_rays(rays)
+    assert_allclose(rays.opd, [7.0])
+    assert_allclose(rays.N, [-1.0 if reflect else 1.0])
+    if ray_type is PolarizedRays:
+        fields = rays.get_exit_fields(create_polarization("H"))[0]
+        assert_allclose(be.sum(be.abs(fields) ** 2, axis=1), [2.0])

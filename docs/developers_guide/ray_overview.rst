@@ -139,6 +139,8 @@ incident direction at every lens, so a first polarized thin lens and chained
 lenses work without missing or stale incident-direction data. The outgoing
 direction is established before scalar or Jones coating evaluation. Scattering
 acts on that outgoing direction and is no longer overwritten by the lens.
+An infinite focal length is a zero-power lens: it contributes no lens phase
+and preserves the incoming optical path, including for a reflective surface.
 
 Changes to existing results
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^
